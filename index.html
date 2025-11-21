@@ -1,0 +1,86 @@
+<!doctype html>
+<html>
+    <head>
+        <title>Teammater - Twitch Stream Control</title>
+        <link rel="stylesheet" href="index.css" />
+    </head>
+    <body>
+        <div class="main-content">
+            <h1>Twitch Chat</h1>
+            <div id="output"></div>
+        </div>
+
+        <div class="control-panel">
+            <audio id="myAudio" src="mp3/boo.mp3" preload="auto"></audio>
+            <button class="test-button" onclick="test();">TEST</button>
+
+            <div class="control-section">
+                <h3>Connection Status</h3>
+                <div>
+                    <span id="twitchStatus" class="status-indicator"></span>
+                    Twitch Chat
+                </div>
+                <div class="status-item">
+                    <span id="minaretStatus" class="status-indicator"></span>
+                    Minaret Server
+                </div>
+            </div>
+            <div class="control-section">
+                <a
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    href="https://localhost:8443/neco.html?t=300"
+                    >neco 5m
+                </a>
+                <a
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    href="https://localhost:8443/neco.html"
+                    >neco 10m
+                </a>
+            </div>
+
+            <div class="control-section">
+                <h3>
+                    <span id="streamStatus" class="status-indicator"></span>
+                    Stream Control
+                </h3>
+                <select id="presetSelector" class="preset-selector">
+                    <option value="">Select preset...</option>
+                </select>
+                <div id="presetInfo" class="preset-info preset-info-hidden">
+                    <div class="field">
+                        <span class="label">Title:</span>
+                        <span id="presetTitle">-</span>
+                    </div>
+                    <div class="field">
+                        <span class="label">Game:</span>
+                        <span id="presetGame">-</span>
+                    </div>
+                    <div class="field">
+                        <span class="label">Tags:</span>
+                        <span id="presetTags">-</span>
+                    </div>
+                    <div class="field">
+                        <span class="label">Pin:</span>
+                        <span id="presetPin">-</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="control-section">
+                <h3>🎯 Channel Point Rewards</h3>
+                <div id="rewardsList" class="rewards-list"></div>
+            </div>
+        </div>
+
+        <script src="index.js"></script>
+    </body>
+</html>
+
+<!--
+!song https://music.yandex.ru/album/10085696/track/63405148
+!song https://music.yandex.ru/album/8152969/track/55592501
+!song https://music.yandex.ru/album/8152969/track/55592501
+
+-->

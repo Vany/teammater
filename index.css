@@ -1,0 +1,169 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+    background: #1a1a1a;
+    color: #ffffff;
+    height: 100vh;
+    display: flex;
+}
+
+.main-content {
+    flex: 1;
+    padding: 20px;
+    overflow-y: auto;
+}
+
+a:visited {
+    color: #eeffff;
+    text-decoration-color: hotpink;
+}
+
+.control-panel {
+    width: 320px;
+    background: #2a2a2a;
+    border-left: 2px solid #444;
+    padding: 20px;
+    overflow-y: auto;
+}
+
+.control-section {
+    margin-bottom: 30px;
+}
+
+.control-section h3 {
+    color: #9147ff;
+    margin-bottom: 15px;
+    font-size: 16px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.preset-selector {
+    width: 100%;
+    padding: 10px;
+    background: #333;
+    border: 1px solid #555;
+    border-radius: 6px;
+    color: #fff;
+    font-size: 14px;
+    margin-bottom: 15px;
+}
+
+.preset-info {
+    background: #333;
+    padding: 15px;
+    border-radius: 6px;
+    margin-bottom: 15px;
+    font-size: 13px;
+}
+
+.preset-info .field {
+    margin-bottom: 8px;
+}
+
+.preset-info .label {
+    color: #aaa;
+    font-weight: bold;
+    display: inline-block;
+    width: 70px;
+}
+
+.control-button {
+    width: 100%;
+    padding: 12px;
+    background: #9147ff;
+    border: none;
+    border-radius: 6px;
+    color: white;
+    font-size: 14px;
+    font-weight: bold;
+    cursor: pointer;
+    margin-bottom: 10px;
+    transition: background-color 0.2s;
+}
+
+.control-button:hover {
+    background: #7d39e0;
+}
+
+.control-button:disabled {
+    background: #555;
+    cursor: not-allowed;
+}
+
+.status-indicator {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-right: 8px;
+    background: #ff4757;
+}
+
+.status-indicator.connected {
+    background: #2ed573;
+}
+
+#output {
+    background: #000;
+    padding: 15px;
+    border-radius: 6px;
+    font-family: "Consolas", "Monaco", monospace;
+    font-size: 12px;
+    max-height: 400px;
+    overflow-y: auto;
+    border: 1px solid #333;
+}
+
+#output div {
+    margin-bottom: 5px;
+    padding: 2px 0;
+    border-bottom: 1px solid #222;
+}
+
+.test-button {
+    background: #ff6b6b;
+    padding: 10px 20px;
+    border: none;
+    border-radius: 6px;
+    color: white;
+    font-weight: bold;
+    cursor: pointer;
+    margin-bottom: 20px;
+}
+
+/* Additional utility classes for inline styles */
+.status-item {
+    margin-top: 8px;
+}
+
+.preset-info-hidden {
+    display: none;
+}
+
+.rewards-list {
+    font-size: 12px;
+    margin-top: 10px;
+    max-height: 150px;
+    overflow-y: auto;
+}
+
+.test-redemption-button {
+    background: #ff6b6b;
+}
+
+.no-rewards {
+    color: #aaa;
+}
+
+.reward-item {
+    margin-bottom: 8px;
+    padding: 5px;
+    background: #333;
+    border-radius: 3px;
+}

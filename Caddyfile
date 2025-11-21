@@ -1,0 +1,9 @@
+localhost:8443 {
+  root * .
+  file_server
+  tls {
+    issuer internal {
+      lifetime 8760h
+    }
+}
+}
