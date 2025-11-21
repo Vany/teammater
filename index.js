@@ -4,7 +4,8 @@
 
 // Twitch API Configuration
 const CLIENT_ID = persistentValue("twitch_client_id");
-const CHANNEL = "vanyserezhkin";
+const urlParams = new URLSearchParams(window.location.search);
+const CHANNEL = urlParams.get('channel') || 'vanyserezhkin';  // Default: vanyserezhkin, override via ?channel=name
 const REDIRECT_URI = window.location.origin;
 const SCOPES = [
   "chat:read",
@@ -24,10 +25,7 @@ const SCOPES = [
 // - Following elements are regexes that ALL must match (AND logic)
 // - Rules are combined with OR logic (any rule triggers action)
 const BAN_RULES = [
-  // Example rules (modify as needed):
-  // [ban(), /very bad word/i],
-  // [mute(600), /spam/i, /pattern/i],  // 10 minute timeout if both match
-  // [delete(), /mild offense/i],
+  [ban(), /viewers/i, /nezhna.+\.com/i],  // Ban spam with "viewers" + nezhna*.com
 ];
 
 // Stream Presets Configuration
@@ -1074,6 +1072,8 @@ function connectEventSub() {
 
 async function startChat(token) {
   const username = await fetchUsername(token);
+
+  log(`🎯 Connecting to channel: #${CHANNEL}`);
 
   ws = new WebSocket("wss://irc-ws.chat.twitch.tv:443");
   ws.onerror = (error) => {
