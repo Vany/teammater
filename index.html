@@ -20,6 +20,13 @@
             </button>
 
             <div class="control-section">
+                <label class="checkbox-label">
+                    <input type="checkbox" stored_as="loud" checked id="loudCheckbox" />
+                    🌸 loud
+                </label>
+            </div>
+
+            <div class="control-section">
                 <h3>Connection Status</h3>
                 <div>
                     <span id="twitchStatus" class="status-indicator"></span>
@@ -76,6 +83,27 @@
             <div class="control-section">
                 <h3>🎯 Channel Point Rewards</h3>
                 <div id="rewardsList" class="rewards-list"></div>
+            </div>
+
+            <div class="control-section">
+                <label class="input-label">
+                    <span class="label-text">Twitch Client ID</span>
+                    <input
+                        type="text"
+                        stored_as="twitch_client_id"
+                        class="client-id-input"
+                        placeholder="Enter Client ID..."
+                    />
+                </label>
+                <div class="hint-text">
+                    Get from:
+                    <a
+                        href="https://dev.twitch.tv/console/apps"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        >dev.twitch.tv</a
+                    >
+                </div>
             </div>
         </div>
 

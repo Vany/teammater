@@ -482,6 +482,109 @@ window.getState();
 
 ## Recent Improvements (2025-11-22)
 
+### Automatic Stored Elements System
+
+**Added:**
+1. **Generic stored_as attribute system**
+   - Custom HTML attribute `stored_as="key"` enables automatic localStorage persistence
+   - On page load: restores value from `localStorage[key]`
+   - On change: writes value to `localStorage[key]`
+   - Supports: checkbox (checked state), input/textarea (value), select (value)
+   - Zero manual localStorage calls needed in application code
+
+2. **index.js: initializeStoredElements() function**
+   - Queries all `[stored_as]` elements on page load
+   - Restores saved state from localStorage
+   - Attaches change listeners for automatic write-through
+   - Logs all storage operations for debugging
+
+3. **🌸 Loud mode checkbox**
+   - Located above Connection Status section
+   - Controls ICQ notification sound on chat messages
+   - Checked by default (loud mode enabled)
+   - State persisted across page reloads
+   - Uses `stored_as="loud"` attribute
+
+4. **Twitch Client ID input field**
+   - Located at bottom of control panel
+   - Replaces prompt-based persistentValue() system
+   - Uses `stored_as="twitch_client_id"` for automatic persistence
+   - Includes helpful link to dev.twitch.tv/console/apps
+   - Requires page reload after entering new Client ID
+   - Shows error message if CLIENT_ID is empty on authentication
+
+**Usage Pattern:**
+```html
+<!-- Checkbox with automatic persistence -->
+<input type="checkbox" stored_as="loud" checked />
+
+<!-- Text input with automatic persistence -->
+<input type="text" stored_as="username" />
+
+<!-- Select with automatic persistence -->
+<select stored_as="theme">
+  <option value="dark">Dark</option>
+  <option value="light">Light</option>
+</select>
+```
+
+**Behavior:**
+- ICQ sound plays on non-command messages when checkbox is checked
+- ICQ sound is silent when checkbox is unchecked
+- Checkbox state persists across page reloads via localStorage
+- All storage operations logged: `💾 Stored loud = true`
+
+**Benefits:**
+- Declarative persistence - no manual localStorage code
+- Reusable for any form element
+- Type-safe (checkbox vs input handled correctly)
+- Single source of truth in HTML
+- Easy to add new persisted elements
+
+### Moderator Rights Enforcement
+
+**Added:**
+1. **index.js: checkModeratorStatus() function**
+   - Checks if authenticated user has moderator rights in target channel
+   - Uses `/helix/moderation/moderators` API endpoint
+   - Returns true if user is broadcaster or moderator
+   - Handles errors gracefully with fallback to false
+   - Logs detailed status messages for debugging
+
+2. **index.js: initializeMinecraftConnector() function**
+   - Extracted Minecraft connector initialization into dedicated function
+   - Checks if already initialized to prevent duplicates
+   - Called conditionally based on moderator permissions
+   - Logs initialization status
+
+3. **index.js: Conditional EventSub and Minecraft connection**
+   - Modified `ws.onopen` handler to check channel ownership
+   - Always connects EventSub and Minecraft for own channel
+   - Checks moderator status for non-default channels
+   - Skips both EventSub and Minecraft if no moderator rights detected
+   - Logs clear warning messages when permissions missing
+
+**Behavior:**
+- Own channel (default): EventSub and Minecraft always enabled
+- Other channel with moderator rights: EventSub and Minecraft enabled
+- Other channel without moderator rights: Both disabled, warnings logged
+- Prevents both reward listener and game server connection when lacking permissions
+- Music queue still initializes (not permission-dependent)
+
+**Example Log Output:**
+```
+✅ Connected to #otherchannel as myusername
+⚠️ You are NOT a moderator in #otherchannel
+⚠️ Connected to non-default channel (#otherchannel) without moderator rights
+ℹ️ Channel point reward listener disabled
+ℹ️ Minecraft connector disabled
+```
+
+**Rationale:**
+- No point connecting to Minecraft server if we can't use channel point rewards
+- Prevents unnecessary WebSocket connections and potential confusion
+- Clear separation between own channel (full control) and other channels (limited)
+
 ### Automatic Language Detection for TTS
 
 **Added:**

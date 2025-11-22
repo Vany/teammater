@@ -35,7 +35,7 @@ import { MusicQueue, MinecraftConnector } from "./connectors.js";
 import { voice } from "./actions.js";
 
 // Twitch API Configuration
-const CLIENT_ID = persistentValue(TWITCH_CLIENT_ID_KEY);
+const CLIENT_ID = localStorage.getItem(TWITCH_CLIENT_ID_KEY) || "";
 const REDIRECT_URI = window.location.origin;
 const urlParams = new URLSearchParams(window.location.search);
 let CHANNEL; // Set after authentication: URL parameter or authenticated user's channel
@@ -77,6 +77,7 @@ const DOM = {
   presetPin: null,
   rewardsList: null,
   audio: null,
+  loudCheckbox: null,
 };
 
 /**
@@ -96,23 +97,49 @@ function cacheDOMElements() {
   DOM.presetPin = document.getElementById("presetPin");
   DOM.rewardsList = document.getElementById("rewardsList");
   DOM.audio = document.getElementById("myAudio");
+  DOM.loudCheckbox = document.getElementById("loudCheckbox");
+}
+
+/**
+ * Initialize stored elements system
+ * All elements with stored_as="key" attribute are automatically persisted to localStorage
+ * - On page load: restore value from localStorage[key]
+ * - On change: save value to localStorage[key]
+ * Supports: checkbox (checked state), input/textarea (value), select (value)
+ */
+function initializeStoredElements() {
+  const elements = document.querySelectorAll("[stored_as]");
+
+  elements.forEach((el) => {
+    const key = el.getAttribute("stored_as");
+    const storedValue = localStorage.getItem(key);
+
+    // Restore from storage
+    if (storedValue !== null) {
+      if (el.type === "checkbox") {
+        el.checked = storedValue === "true";
+      } else if (el.tagName === "SELECT" || el.tagName === "INPUT" || el.tagName === "TEXTAREA") {
+        el.value = storedValue;
+      }
+    }
+
+    // Set up automatic write-through on change
+    el.addEventListener("change", () => {
+      if (el.type === "checkbox") {
+        localStorage.setItem(key, el.checked);
+        log(`💾 Stored ${key} = ${el.checked}`);
+      } else {
+        localStorage.setItem(key, el.value);
+        log(`💾 Stored ${key} = ${el.value}`);
+      }
+    });
+  });
+
+  log(`✅ Initialized ${elements.length} stored elements`);
 }
 // ============================
 // UTILITY FUNCTIONS
 // ============================
-
-function persistentValue(K) {
-  let v = localStorage.getItem(K);
-  if (!v) {
-    // Provide helpful hint for Twitch Client ID
-    const hint = K === 'twitch_client_id' 
-      ? '\n\nGet your Client ID from: https://dev.twitch.tv/console/apps\n(Register app, set redirect to https://localhost:8443)\n\n'
-      : '';
-    v = prompt(`Enter param for ${K}${hint}`);
-    if (v) localStorage.setItem(K, v);
-  }
-  return v;
-}
 
 function log(msg) {
   const div = document.createElement("div");
@@ -153,12 +180,9 @@ function checkBanRules(message) {
     const actionClosure = rule[0];
     const patterns = rule.slice(1);
 
-    log(`  🔎 Testing rule with ${patterns.length} pattern(s): ${patterns.map(p => p.toString()).join(', ')}`);
-
     // Check if ALL patterns match (AND logic)
     const allMatch = patterns.every((pattern) => {
       const matches = pattern.test(message);
-      log(`    Pattern ${pattern} ${matches ? '✅ MATCH' : '❌ NO MATCH'}`);
       return matches;
     });
 
@@ -381,6 +405,12 @@ function extractToken() {
 }
 
 function authenticate() {
+  if (!CLIENT_ID) {
+    log("❌ Twitch Client ID is not set!");
+    log("📝 Please enter your Client ID in the input field at the bottom of the panel");
+    log("🔄 Then reload the page");
+    return;
+  }
   const authURL = `https://id.twitch.tv/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=token&scope=${SCOPES.join("+")}`;
   window.location.href = authURL;
 }
@@ -391,6 +421,46 @@ async function fetchUsername(token) {
   const user = data.data[0];
   currentUserId = user.id; // Store user ID for stream updates
   return user.login;
+}
+
+/**
+ * Check if authenticated user is a moderator in the target channel
+ * @param {string} channelName - Channel login name to check
+ * @returns {Promise<boolean>} - True if user is moderator or broadcaster
+ */
+async function checkModeratorStatus(channelName) {
+  try {
+    // Get channel user ID
+    const channelUserId = await getUserId(channelName);
+    if (!channelUserId) {
+      log(`❌ Could not get user ID for channel: ${channelName}`);
+      return false;
+    }
+
+    // If we're the broadcaster, we always have rights
+    if (currentUserId === channelUserId) {
+      log(`✅ You are the broadcaster of #${channelName}`);
+      return true;
+    }
+
+    // Check if we're in the moderators list
+    const response = await request(
+      `https://api.twitch.tv/helix/moderation/moderators?broadcaster_id=${channelUserId}&user_id=${currentUserId}`,
+    );
+    const data = await response.json();
+
+    const isModerator = data.data && data.data.length > 0;
+    if (isModerator) {
+      log(`✅ You are a moderator in #${channelName}`);
+    } else {
+      log(`⚠️ You are NOT a moderator in #${channelName}`);
+    }
+
+    return isModerator;
+  } catch (error) {
+    log(`❌ Error checking moderator status: ${error.message}`);
+    return false;
+  }
 }
 
 // Get user ID from username (required for API whispers)
@@ -439,6 +509,26 @@ function updateMinaretStatus(connected) {
   } else {
     DOM.minaretStatus.classList.remove("connected");
   }
+}
+
+/**
+ * Initialize Minecraft connector if not already initialized
+ * Called conditionally based on moderator permissions
+ */
+function initializeMinecraftConnector() {
+  if (minecraft) {
+    log("ℹ️ Minecraft connector already initialized");
+    return;
+  }
+
+  minecraft = new MinecraftConnector({
+    url: WEBSOCKET_URLS.MINARET_SERVER,
+    reconnectDelay: TIMING.RECONNECT_DELAY_MS,
+    log: log,
+    onStatusChange: updateMinaretStatus,
+  });
+  minecraft.connect();
+  log("🎮 Minecraft connector initialized");
 }
 
 async function sendPinnedMessage(message) {
@@ -898,7 +988,27 @@ async function startChat(token) {
     updateTwitchStatus(true);
     // await checkAndSetDefaultPinnedMessage();
     await initializeRewards(); // Initialize Channel Point Rewards
-    connectEventSub(); // Connect EventSub for real-time redemptions
+
+    // Check if we should connect to EventSub and Minecraft
+    const isOwnChannel = CHANNEL.toLowerCase() === username.toLowerCase();
+    if (isOwnChannel) {
+      // Own channel - always connect everything
+      connectEventSub();
+      initializeMinecraftConnector();
+    } else {
+      // Not own channel - check moderator status first
+      const isModerator = await checkModeratorStatus(CHANNEL);
+      if (isModerator) {
+        connectEventSub();
+        initializeMinecraftConnector();
+      } else {
+        log(
+          `⚠️ Connected to non-default channel (#${CHANNEL}) without moderator rights`,
+        );
+        log(`ℹ️ Channel point reward listener disabled`);
+        log(`ℹ️ Minecraft connector disabled`);
+      }
+    }
   };
 
   ws.onmessage = async (event) => {
@@ -930,19 +1040,12 @@ async function startChat(token) {
       const messageId = tags?.id;
 
       // Check ban rules (skip if it's our own message or a broadcaster)
-      if (
-        userId &&
-        // && userId !== currentUserId
-        BAN_RULES.length > 0
-      ) {
-        log(`🔍 Checking message: "${msg}" | userId: ${userId} | rules: ${BAN_RULES.length}`);
+      if (userId && userId !== currentUserId && BAN_RULES.length > 0) {
         const action = checkBanRules(msg);
         if (action) {
           log(`⚠️ BAN RULE MATCHED! Executing moderation action...`);
           await executeModerationAction(action, userId, messageId, user, msg);
           return; // Stop processing this message
-        } else {
-          log(`✅ No ban rules matched for: "${msg}"`);
         }
       }
 
@@ -950,7 +1053,9 @@ async function startChat(token) {
       if (msg.startsWith("!")) {
         minecraft?.sendMessage(user, log(msg));
       } else {
-        mp3("icq");
+        if (DOM.loudCheckbox?.checked) {
+          mp3("icq");
+        }
         minecraft?.sendMessage(user, log(msg));
       }
     } else {
@@ -1046,17 +1151,22 @@ function handleRewardRedemption(redemption) {
 (async () => {
   // Check for ?wipe parameter to clear all localStorage
   const urlParams = new URLSearchParams(window.location.search);
-  if (urlParams.has('wipe')) {
+  if (urlParams.has("wipe")) {
     localStorage.clear();
-    console.log('✅ localStorage wiped via ?wipe parameter');
+    console.log("✅ localStorage wiped via ?wipe parameter");
     // Remove ?wipe from URL
-    urlParams.delete('wipe');
-    const newUrl = window.location.pathname + (urlParams.toString() ? '?' + urlParams.toString() : '');
-    window.history.replaceState({}, '', newUrl);
+    urlParams.delete("wipe");
+    const newUrl =
+      window.location.pathname +
+      (urlParams.toString() ? "?" + urlParams.toString() : "");
+    window.history.replaceState({}, "", newUrl);
   }
-  
+
   // Cache DOM elements first
   cacheDOMElements();
+
+  // Initialize stored elements system
+  initializeStoredElements();
 
   // Setup page unload handler to flush music queue
   window.addEventListener("beforeunload", () => {
@@ -1072,16 +1182,7 @@ function handleRewardRedemption(redemption) {
     await startChat(existingToken);
   }
 
-  // Initialize Minecraft connector
-  minecraft = new MinecraftConnector({
-    url: WEBSOCKET_URLS.MINARET_SERVER,
-    reconnectDelay: TIMING.RECONNECT_DELAY_MS,
-    log: log,
-    onStatusChange: updateMinaretStatus,
-  });
-  minecraft.connect();
-
-  // Initialize Music Queue
+  // Initialize Music Queue (always enabled, not permission-dependent)
   musicQueue = new MusicQueue({
     emptyUrl: EMPTY_MUSIC_URL,
     voteSkipThreshold: VOTE_SKIP_THRESHOLD,
@@ -1134,18 +1235,18 @@ window.speak = speak;
 
 // Configuration management
 window.clearClientId = () => {
-  localStorage.removeItem('twitch_client_id');
-  log('✅ Client ID cleared. Reload page to enter new one.');
+  localStorage.removeItem("twitch_client_id");
+  log("✅ Client ID cleared. Reload page to enter new one.");
 };
 
 window.clearToken = () => {
-  localStorage.removeItem('twitch_token');
-  log('✅ OAuth token cleared. Reload page to re-authenticate.');
+  localStorage.removeItem("twitch_token");
+  log("✅ OAuth token cleared. Reload page to re-authenticate.");
 };
 
 window.clearAll = () => {
   localStorage.clear();
-  log('✅ All localStorage cleared. Reload page.');
+  log("✅ All localStorage cleared. Reload page.");
 };
 
 // TIP: You can also use ?wipe URL parameter to clear everything on page load

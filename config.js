@@ -12,8 +12,6 @@ import { mute, ban, delete_message, delete_ } from "./actions.js";
 // - Rules are combined with OR logic (any rule triggers action)
 export const BAN_RULES = [
   [ban(), /viewers/i, /nezhna.+\.com/i], // Ban spam with "viewers" + nezhna*.com
-  [mute(600), /mute me/i], // test
-  [voice(), /^!voice/],
 ];
 
 // ============================
@@ -46,8 +44,7 @@ export const TWITCH_API_BASE = "https://api.twitch.tv/helix";
 // MUSIC CONFIGURATION
 // ============================
 
-export const MUSIC_URL_PATTERN =
-  /^https:\/\/music\.yandex\.(ru|com)\/(album\/\d+\/)?track\/\d+/;
+export const MUSIC_URL_PATTERN = /^https:\/\/music\.yandex\.(ru|com)\/(album\/\d+\/)?track\/\d+/;
 export const EMPTY_MUSIC_URL = "https://music.yandex.ru/";
 export const INITIAL_SONG_NAME = "Silence by silencer";
 export const VOTE_SKIP_THRESHOLD = 3;
@@ -74,8 +71,7 @@ export const MINECRAFT_PLAYER_NAME = "vany_serezhkin";
 
 export const MINECRAFT_COMMANDS = {
   HEAL: "effect give vany_serezhkin minecraft:instant_health 3 255 true",
-  LIGHTNING:
-    "execute at vany_serezhkin run summon minecraft:lightning_bolt ~ ~ ~",
+  LIGHTNING: "execute at vany_serezhkin run summon minecraft:lightning_bolt ~ ~ ~",
 };
 
 // ============================
@@ -199,11 +195,11 @@ export const DEFAULT_REWARDS = {
     is_user_input_required: true,
     is_global_cooldown_enabled: true,
     global_cooldown_seconds: 60,
-    action: voice({
-      type: "default",
-      language: "en-US",
-      rate: 1.0,
-      pitch: 1.0,
+    action: voice({ 
+      type: "default", 
+      language: "en-US", 
+      rate: 1.0, 
+      pitch: 1.0 
     }),
   },
 };

@@ -94,6 +94,13 @@
 - Fully automatic pinned message system with API integration
 - Channel Point Rewards system with automatic redemption handling
 - Message moderation system with configurable ban rules (BAN_RULES)
+- **Moderator Rights Enforcement:**
+  * Automatic detection when connected to non-default channel (via ?channel=name)
+  * Checks moderator status via Twitch API `/helix/moderation/moderators`
+  * EventSub connection (channel point rewards) disabled if no moderator rights
+  * Minecraft connector (minaret WebSocket) disabled if no moderator rights
+  * Logs warning messages when connecting without permissions
+  * Always allows EventSub and Minecraft for authenticated user's own channel
 
 ## Environment
 - Web-based client-side application
