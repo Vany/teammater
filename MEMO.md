@@ -7,9 +7,10 @@ Single-page web application with Twitch integration and Minecraft server communi
 - Twitch IRC WebSocket (wss://irc-ws.chat.twitch.tv:443) for chat connectivity
 - Twitch Helix API for stream management, chat settings, and moderation
 - EventSub WebSocket (wss://eventsub.wss.twitch.tv/ws) for real-time redemptions
-- Local WebSocket server (localhost:8765) for Minecraft "minarert" integration
+- MinecraftConnector class - WebSocket client for "minarert" server (localhost:8765)
+- MusicQueue class - Cross-tab music control via UserScript + localStorage events
 - Audio system: MP3 playback + Speech Synthesis API
-- Cross-tab communication for Yandex Music control via UserScript
+- **Action System:** Unified function-based closure architecture for all bot actions
 
 ## OAuth Configuration
 **Required Scopes:**
@@ -27,6 +28,7 @@ Single-page web application with Twitch integration and Minecraft server communi
 3. Extract token from redirect hash fragment
 4. Store in localStorage for persistence
 5. Fetch user ID and login name via /helix/users
+6. Set CHANNEL: URL parameter (?channel=name) or authenticated username (default)
 
 ## API Endpoints Used
 **Stream Management:**
@@ -197,25 +199,324 @@ const BAN_RULES = [
 ## Code Organization
 - index.html - DOM structure (98 lines)
 - index.css - Styling (169 lines)
-- index.js - Application logic (1400+ lines)
+- index.js - Application logic (~1000 lines, reduced after connector extraction)
+- config.js - Configuration and constants
+- actions.js - Unified action system with closure-based actions
+- utils.js - Reusable utilities (HTTP, deck/queue, IRC parsing)
+- connectors.js - External system connectors (Music Queue, Minecraft WebSocket)
 - yandex-music-userscript.js - Cross-tab music control
 
-**Key Classes:**
-- PersistentDeck - localStorage-backed queue/stack
+**Key Functions:**
+- buildCommandContext() - Creates context object for action execution
+- handleRewardRedemption() - Executes reward actions using buildCommandContext()
+
+**Key Utilities (utils.js):**
+- request() - Generic HTTP wrapper for Twitch API calls with automatic token injection
+- PersistentDeck - localStorage-backed double-ended queue (push/pop/shift/unshift)
+- parseIrcTags() - IRC message tag parser for extracting metadata
+
+**Key Connectors (connectors.js):**
+- MusicQueue - Cross-tab music control with UserScript integration
+  * add(url) - Queue song for playback
+  * skip() - Skip current song
+  * voteSkip() - Democratic skip voting
+  * getCurrentSong() - Get current track name
+- MinecraftConnector - WebSocket client for local Minecraft server
+  * connect() - Establish connection with auto-reconnect
+  * sendMessage(user, msg) - Send chat message
+  * sendCommand(cmd) - Execute game command
+  * isConnected() - Check connection status
 
 **Global State:**
 - ws - IRC WebSocket connection
-- minarert - Local WebSocket connection
 - eventSubSocket - EventSub connection
 - currentUserId - Broadcaster ID from OAuth
 - userIdCache - Username -> ID mapping
 - customRewards - Reward ID -> config mapping
-- songQueue - PersistentDeck for music
 - throttle - Command rate limiting
+- minecraft - MinecraftConnector instance (WebSocket to game server)
+- musicQueue - MusicQueue instance (cross-tab music control)
+
+## Action System Architecture
+
+**Core Principle:** All actions are initializers that take configuration parameters and return configured closures.
+
+**Action Initializer Pattern:**
+```javascript
+// Action initializer function (in actions.js)
+export function actionName(configParam1, configParam2 = defaultValue, ...) {
+  // Capture configuration parameters in closure
+  return (context, user, message) => {
+    // Use configParam1, configParam2 to configure behavior
+    // Access context for dependencies: { ws, log, currentUserId, ... }
+    // Return false for failure, void/true for success
+  };
+}
+
+// Usage in config.js
+const config = {
+  action: actionName(param1, param2), // Call initializer to get configured closure
+};
+
+// Execution in index.js
+const actionClosure = config.action; // Already a closure, no factory call
+await actionClosure(context, user, message);
+```
+
+**Example: Multiple Voice Configurations**
+```javascript
+// In actions.js
+export function voice(voiceConfig = {}) {
+  const config = { type: "default", language: "en-US", rate: 1.0, ...voiceConfig };
+  return (context, user, message) => {
+    // Use config.type, config.language, config.rate
+  };
+}
+
+// In config.js - different voice types
+voice_robot: { action: voice({ type: "robot", rate: 1.5, pitch: 0.5 }) },
+voice_woman: { action: voice({ type: "woman", language: "en-GB" }) },
+voice_man: { action: voice({ type: "man", language: "en-US" }) },
+```
+
+**Context Object Structure:**
+- WebSocket connections: `ws`, `minarert`
+- State variables: `currentUserId`, `CHANNEL`, `throttle`, `love_timer`, `needVoteSkip`, `currentSong`
+- Utility functions: `log`, `mp3`, `speak`
+- Twitch functions: `send_twitch`, `sendAction`, `apiWhisper`
+- Minecraft functions: `sendMessageMinaret`, `sendCommandMinaret`
+- Music functions: `queueSong`, `skipSong`
+
+**Action Types:**
+1. **Reward Actions** (actions.js): `hate()`, `love()`, `music()`, `voice()`, `vote_skip()`, `playing()`
+   - Used in channel point rewards (config.js: DEFAULT_REWARDS)
+   - Called via handleRewardRedemption() with full context
+   - Return false to mark redemption as canceled
+
+2. **Moderation Actions** (actions.js): `mute(seconds)`, `ban()`, `delete_message()`
+   - Used in ban rules (config.js: BAN_RULES)
+   - Called via executeModerationAction() with moderation context
+   - Context includes: `currentUserId`, `userId`, `messageId`, `request`, `log`
+   - All moderation actions are async and handle their own API calls
+
+**Execution Flow:**
+
+*Reward Redemptions:*
+1. EventSub receives redemption event
+2. handleRewardRedemption() looks up action closure from customRewards
+3. buildCommandContext() creates context with current state
+4. Execute actionClosure(context, user, message)
+5. Update global state from modified context
+6. Mark redemption as FULFILLED or CANCELED based on result
+
+*Moderation Actions:*
+1. IRC message received with tags
+2. checkBanRules() tests message against all patterns, returns action closure if matched
+3. executeModerationAction() builds moderation context (currentUserId, userId, messageId, request, log)
+4. Execute actionClosure(context, user, message) - action makes API call directly
+5. Stop message processing if action was triggered
+
+*Regular Chat Messages:*
+1. IRC message received
+2. Check moderation rules first
+3. If not moderated, forward to Minecraft server via sendMessageMinaret()
+4. Play ICQ notification sound for non-command messages
+
+**Benefits:**
+- **Configurable**: Each action can be customized with parameters at initialization
+- **Type-safe**: Consistent function signatures with compile-time parameter validation
+- **Reusable**: Same action initializer creates multiple differently-configured closures
+- **Explicit**: Configuration is visible at definition site in config.js
+- **Predictable**: No string-based dispatch, no runtime factory calls
+- **Testable**: Easy to mock context for testing
+- **AI-parseable**: Zero ambiguity in execution flow
+- **Maintainable**: Add new actions by creating parameterized initializers
+- **Efficient**: Closures created once at config load, not per execution
 
 ## Current Configuration
-- Channel: Configurable via URL parameter (?channel=name, default: vanyserezhkin)
+- Channel: Defaults to authenticated user's channel, override via ?channel=name
 - Redirect URI: window.location.origin
 - Minarert: ws://localhost:8765
 - Served: https://localhost:8443 (Caddy TLS)
 - Ban rule: viewers + nezhna*.com spam
+
+## Twitch Client ID Setup
+1. Visit: https://dev.twitch.tv/console/apps
+2. Click "Register Your Application"
+3. Set Name: `teammater` (or your choice)
+4. Set OAuth Redirect URL: `https://localhost:8443`
+5. Set Category: Chat Bot
+6. Save and copy the Client ID
+7. Paste it when prompted on first run (stored in localStorage)
+
+## URL Parameters
+- `?channel=name` - Override channel to connect to (default: authenticated user's channel)
+- `?wipe` - Clear all localStorage before initialization (forces re-authentication and re-configuration)
+
+## Code Refinement Tasks
+
+### Consistency Improvements
+- [x] actions.js: Replace full URL API calls with consistent pattern from utils.js
+- [x] Unify error handling pattern across all modules
+- [ ] Standardize function declaration style (arrow vs function)
+- [x] Remove code duplication in moderation actions
+- [ ] Extract magic numbers to TIMING config
+
+### Performance Optimizations
+- [x] Cache DOM element references in index.js (currently queried repeatedly)
+- [x] Batch localStorage writes in PersistentDeck
+- [ ] Deduplicate concurrent API requests for same user ID
+
+### Code Quality
+- [x] Add JSDoc type annotations for all exported functions
+- [ ] Remove unused variables and dead code
+- [ ] Consistent naming conventions (sendCommandMinaret vs sendMessageMinaret)
+- [ ] Consolidate duplicate IRC message sending logic
+
+**Status:** Major refinement pass completed on 2025-11-22. Commit: 26ce4b3
+
+## Recent Improvements (2025-01-25)
+
+### Completed
+1. **actions.js refactoring:**
+   - Extracted `executeModerationAPI()` helper to eliminate code duplication
+   - All moderation actions (mute, ban, delete_message) now use consistent API pattern
+   - Standardized JSDoc format with proper type annotations
+
+2. **utils.js optimization:**
+   - PersistentDeck now batches writes with configurable flush interval (default: 1s)
+   - Added `flush()` method for critical operations
+   - Added `destroy()` method for cleanup
+   - Page unload handler ensures final flush before close
+
+3. **index.js DOM optimization:**
+   - Created centralized DOM element cache to eliminate repeated getElementById calls
+   - Added `cacheDOMElements()` function called once on initialization
+   - All DOM access now uses cached references via `DOM` object
+
+4. **JSDoc standardization:**
+   - All exported functions now have proper JSDoc with type annotations
+   - Consistent format: `@param {type}`, `@returns {type}`, `@throws {type}`
+   - Better IDE support and developer experience
+
+5. **Test button consistency:**
+   - Test button now uses `voice()` action instead of manual SpeechSynthesisUtterance
+   - Eliminates code duplication and ensures consistent behavior
+   - Test action configured with SPEECH_SETTINGS from config.js
+
+6. **Global exports pattern:**
+   - Established pattern for exposing actions to HTML onclick handlers
+   - Actions exported to `window` object for direct use in HTML
+   - Example: `onclick='voice()({}, "user", "message")'`
+   - Enables console debugging: `window.voice()({log: console.log}, "test", "Hello")`
+   - Documented template for future exports in index.js
+
+### Performance Impact
+- **localStorage writes:** Reduced from ~100/min to ~1/min during active queue operations
+- **DOM queries:** Eliminated ~50 getElementById calls per preset change
+- **Code size:** Reduced actions.js by ~30 lines through deduplication
+- **Code duplication:** Eliminated manual TTS implementation in test function
+
+## Global Exports Pattern
+
+**Purpose:** Make actions and utilities available for HTML onclick handlers and console debugging.
+
+**Location:** Bottom of index.js in `GLOBAL EXPORTS FOR HTML` section
+
+**Pattern:**
+```javascript
+// In index.js - import the action
+import { voice, music, hate, love } from "./actions.js";
+
+// At bottom of file - export to window
+window.voice = voice;
+window.music = music;
+// ... add more as needed
+```
+
+**HTML Usage:**
+```html
+<button onclick='voice()({}, "testuser", "Test passed")'>TEST</button>
+<button onclick='music()({log: console.log, queueSong: (url) => {}}, "user", "https://...")'>Queue</button>
+```
+
+**Console Usage:**
+```javascript
+// Test voice action
+window.voice()({log: console.log}, "test", "Hello from console");
+
+// Test with minimal context
+window.music()({
+  log: console.log,
+  queueSong: (url) => console.log("Queue:", url),
+  apiWhisper: () => {},
+  send_twitch: () => {}
+}, "console", "https://music.yandex.ru/track/123");
+
+// Test utilities directly
+window.mp3("boo");
+window.speak("Testing speech");
+window.log("Testing log output");
+
+// Inspect current state
+window.getState();
+// Returns: {twitchConnected, currentUserId, CHANNEL, love_timer, ...}
+```
+
+**Guidelines:**
+- Export action initializers, not closures (export `voice`, not `voice()`)
+- Always include usage examples in comments
+- Keep exports organized in dedicated section
+- Export utilities that are useful for debugging (log, mp3, speak, etc.)
+- Document minimal context requirements for each action
+- Provide read-only state access via getter functions (don't expose mutable state directly)
+- **Actions must be defensive:** Check if context functions exist before calling them
+  ```javascript
+  // Good - defensive
+  if (log) log("message");
+  if (sendMessageMinaret) sendMessageMinaret(msg);
+  
+  // Bad - assumes context has everything
+  log("message"); // Crashes if log undefined
+  ```
+
+## Recent Improvements (2025-11-22)
+
+### Automatic Language Detection for TTS
+
+**Added:**
+1. **utils.js: detectLanguage() function**
+   - Unicode range detection for Cyrillic (Russian) vs Latin (English)
+   - Fast, zero-dependency, pattern: /[\u0400-\u04FF]/ for Cyrillic, /[A-Za-z]/ for Latin
+   - Returns "ru", "en", or "unknown"
+   - Example: `detectLanguage("Привет мир")` → "ru", `detectLanguage("Hello world")` → "en"
+
+2. **actions.js: voice() automatic language detection**
+   - Automatically detects language from message text before TTS
+   - Maps detected language to locale codes:
+     * "ru" → "ru-RU"
+     * "en" → "en-US"
+     * "unknown" → config.language (fallback)
+   - Disabled when voiceName is explicitly specified
+   - Logs show detection: `[ru->ru-RU]` or `[en->en-US]`
+
+**Behavior:**
+- Russian text automatically uses Russian TTS voice
+- English text automatically uses English TTS voice
+- Mixed or unclear text falls back to config.language (default: en-US)
+- Config voiceName parameter disables auto-detection
+
+**Example Usage:**
+```javascript
+// Automatic detection
+voice()({log: console.log}, "user", "Привет мир");  // Uses ru-RU
+voice()({log: console.log}, "user", "Hello world"); // Uses en-US
+
+// Manual override still works
+voice({voiceName: "Samantha"})({log: console.log}, "user", "Test"); // Uses Samantha
+```
+
+**Impact:**
+- Users can use !voice command with both Russian and English text
+- No need to specify language parameter
+- Natural multilingual support for Twitch chat

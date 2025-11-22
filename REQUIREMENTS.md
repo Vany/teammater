@@ -99,7 +99,7 @@
 - Web-based client-side application
 - Served via Caddy on localhost:8443 with TLS
 - Connects to localhost:8765 WebSocket server
-- Channel configurable via URL parameter (?channel=name, default: vanyserezhkin)
+- Channel defaults to authenticated user's channel (override via ?channel=name)
 - Twitch API integration for stream management and chat settings
 - Fully automatic pinned message workflow with IRC tags
 - UserScript manager required (Tampermonkey/Greasemonkey) for Yandex Music integration

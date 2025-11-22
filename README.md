@@ -2,6 +2,8 @@
 
 Advanced Twitch streaming assistant with Minecraft integration, channel point rewards, automated moderation, and music control.
 
+**Quick Start:** Authenticate once and the bot connects to your own channel automatically. No configuration needed.
+
 ## Features
 
 ### Stream Management
@@ -190,19 +192,24 @@ const BAN_RULES = [
 
 ### Channel Selection
 
-The bot connects to a channel specified via URL parameter:
+The bot connects to a channel based on URL parameter or defaults to your own channel:
 
-**Default channel (vanyserezhkin):**
+**Your own channel (default):**
 ```
 https://localhost:8443/
 ```
+Bot connects to the authenticated user's channel automatically.
 
-**Custom channel:**
+**Another channel:**
 ```
-https://localhost:8443/?channel=your_channel_name
+https://localhost:8443/?channel=other_channel_name
 ```
+Use this to moderate another channel where you have mod permissions.
 
-The selected channel will be logged on connection: `🎯 Connecting to channel: #your_channel_name`
+The selected channel will be logged on connection:
+```
+🎯 Connecting to channel: #channelname (authenticated as: your_username)
+```
 
 ### Starting the Bot
 
