@@ -69,9 +69,15 @@ Single-page web application with Twitch integration and Minecraft server communi
 - **gaming**: Minecraft gameplay (rewards: voice, hate, love)
 - **dooming**: All rewards hidden
 
+**Application Timing:**
+1. Page load: Restore preset selector UI state from localStorage (dropdown value + info display)
+2. Twitch connection: Apply preset after all connectors initialized (ws.onopen)
+3. Manual change: Apply immediately via change event listener
+4. Reconnection: Preset reapplied automatically (treats connection like fresh switch)
+
 **Workflow:**
-1. User selects preset from dropdown
-2. PATCH /helix/channels updates stream info
+1. User selects preset from dropdown (or page loads with saved preset)
+2. On Twitch connection: PATCH /helix/channels updates stream info
 3. applyRewardConfig() enables/disables rewards via PATCH
 4. Pinned message auto-sent and pinned (temporarily disabled in code)
 
@@ -110,9 +116,9 @@ Single-page web application with Twitch integration and Minecraft server communi
 - Throttle object tracks per-user cooldowns (60s for hate command)
 
 ## Message Moderation System
-**BAN_RULES Configuration (index.js):**
+**CHAT_ACTIONS Configuration (config.js):**
 ```javascript
-const BAN_RULES = [
+const CHAT_ACTIONS = [
   [action(), /pattern1/, /pattern2/],  // All patterns must match (AND)
   [action(), /pattern3/]                // Single pattern
   // Rules evaluated in order, first match wins (OR)
@@ -127,8 +133,8 @@ const BAN_RULES = [
 **Processing Flow:**
 1. IRC message received with tags
 2. parseIrcTags() extracts user-id and message id
-3. checkBanRules() tests message against all patterns
-4. If match: executeModerationAction() calls Twitch API
+3. checkChatActions() tests message against all patterns
+4. If match: executeChatAction() builds full context and executes action
 5. Stop processing (return early, no mp3/minecraft forward)
 6. If no match: normal command/message handling
 
@@ -139,7 +145,7 @@ const BAN_RULES = [
 
 **Safety:**
 - Skip moderation if userId === currentUserId (don't ban self)
-- Skip if BAN_RULES.length === 0 (no rules configured)
+- Skip if CHAT_ACTIONS.length === 0 (no rules configured)
 
 ## Yandex Music Integration
 **Architecture:**
@@ -226,6 +232,226 @@ const BAN_RULES = [
   * sendMessage(user, msg) - Send chat message
   * sendCommand(cmd) - Execute game command
   * isConnected() - Check connection status
+- LLMConnector - HTTP client for local Ollama LLM server
+  * connect() - Initialize and verify server health, start health checks
+  * chat(messages, options) - OpenAI-compatible chat API (/v1/chat/completions)
+  * generate(prompt, options) - Ollama native generation API (/api/generate)
+  * listModels() - Get available models from server
+  * checkHealth() - Verify server is responding
+  * isConnected() - Check connection status
+  * disconnect() - Stop health checks and disconnect
+
+## LLM (Ollama) Connector
+**Purpose:** Local LLM integration for chat companion, automoderator, and general helper functionality.
+
+**API Support:**
+- Ollama native API: `/api/generate` for text generation
+- OpenAI-compatible API: `/v1/chat/completions` for chat-style interactions
+- Model management: `/api/tags` for listing available models
+
+**Configuration:**
+```javascript
+const llm = new LLMConnector({
+  baseUrl: "http://localhost:11434",  // Ollama server URL
+  model: "llama3.2",                   // Default model name
+  temperature: 0.7,                    // Generation temperature (0.0-1.0)
+  timeout: 30000,                      // Request timeout (ms)
+  maxTokens: 512,                      // Max tokens to generate
+  healthCheckInterval: 30000,          // Health check interval (ms, 0 = disabled)
+  log: console.log,                    // Logging function
+  onStatusChange: (connected) => {},   // Status callback
+});
+```
+
+**Connection Management:**
+- `connect()` - Verifies Ollama server is running via health check
+- Automatic periodic health checks every 30s (configurable)
+- Status tracking: `connected` property and `onStatusChange` callback
+- Graceful degradation: marks as disconnected if health check fails
+- Clean disconnect: stops health checks and updates status
+
+**Generation Methods:**
+
+*Ollama Native API (generate):*
+```javascript
+// Non-streaming
+const text = await llm.generate("Explain quantum computing", {
+  model: "llama3.2",        // Override default model
+  temperature: 0.9,         // Override default temperature
+  maxTokens: 1024,          // Override default max tokens
+  system: "You are expert", // System prompt for context
+});
+
+// Streaming
+const text = await llm.generate("Write a story", {
+  stream: true,
+  onChunk: (chunk) => console.log(chunk), // Required for streaming
+});
+```
+
+*OpenAI-Compatible API (chat):*
+```javascript
+// Non-streaming
+const messages = [
+  { role: "system", content: "You are a helpful assistant" },
+  { role: "user", content: "Hello!" },
+];
+const response = await llm.chat(messages, {
+  model: "llama3.2",
+  temperature: 0.7,
+  maxTokens: 512,
+});
+
+// Streaming
+const response = await llm.chat(messages, {
+  stream: true,
+  onChunk: (chunk) => process.stdout.write(chunk),
+});
+```
+
+**Health Management:**
+- Health checks ping `/api/tags` endpoint (5s timeout)
+- Updates connection status automatically
+- Logs status changes: `✅ Ollama server is back online` / `⚠️ Ollama server stopped responding`
+- `getLastHealthCheckAge()` returns milliseconds since last successful check
+- Throws errors if trying to use disconnected connector
+
+**Error Handling:**
+- All methods throw descriptive errors on failure
+- Request timeouts enforced via AbortController
+- Graceful stream cleanup with `reader.releaseLock()`
+- Malformed JSON chunks ignored in streaming responses
+- Connection checks before all operations
+
+**Use Cases:**
+1. **Chat Companion:** Respond to user messages with conversational AI
+2. **Automoderator:** Analyze messages for moderation decisions
+3. **General Helper:** Generate responses, summaries, translations, etc.
+
+**Integration Pattern:**
+```javascript
+// Initialize with status callback
+const llm = new LLMConnector({
+  baseUrl: "http://localhost:11434",
+  model: "llama3.2",
+  log: (msg) => log(msg),
+  onStatusChange: (connected) => {
+    DOM.llmStatus.className = connected ? "status-connected" : "status-disconnected";
+  },
+});
+
+// Connect on startup
+await llm.connect();
+
+// Use in chat handler
+if (llm.isConnected()) {
+  const response = await llm.chat([
+    { role: "system", content: "You are a Twitch chat assistant" },
+    { role: "user", content: message },
+  ], { maxTokens: 256 });
+  
+  send_twitch(response);
+}
+```
+
+**Current Status:** Fully integrated with automatic chat monitoring system.
+
+## LLM Chat Monitoring System
+
+**Purpose:** Automatic LLM-powered chat companion that monitors all chat messages and decides when to respond naturally.
+
+**Architecture:**
+- **Buffer:** Sliding window of last 50 messages (configurable via CHAT_HISTORY_SIZE)
+- **Marker:** Position in buffer separating processed messages from new ones
+- **Two-stage decision:** LLM decides whether to respond, then generates response
+- **Async processing:** Messages accumulate while LLM is busy, processed in batches
+
+**Message Flow:**
+```
+Chat message arrives
+  ↓
+Add to chatHistory buffer (keeps last 50)
+  ↓
+Trigger processChatWithLLM() if LLM not busy
+  ↓
+Stage 1: "Should I respond? yes/no"
+  ↓ (if yes)
+Stage 2: "What should I say?"
+  ↓
+Post response to Twitch chat (no prefix)
+  ↓
+Move marker to end of buffer
+  ↓
+Check for more messages, repeat if needed
+```
+
+**Buffer Management:**
+- `chatHistory` - Array of `{timestamp: Date, username: string, message: string}`
+- `chatMarkerPosition` - Index where marker sits (messages after are "new")
+- `llmProcessing` - Flag indicating LLM is currently working
+- Buffer auto-trims to CHAT_HISTORY_SIZE (oldest messages removed)
+- Marker position adjusts when messages are removed from start
+
+**LLM Prompt Format:**
+```
+[HH:MM:SS] username: message
+[HH:MM:SS] username: message
+[HH:MM:SS] username: message
+ -> new messages
+[HH:MM:SS] username: message (new)
+[HH:MM:SS] username: message (new)
+```
+
+**Configuration (UI):**
+- Chat monitoring enabled: `stored_as="llm_chat_monitoring"` checkbox (unchecked by default = OFF)
+- System prompt: `stored_as="llm_system_prompt"` textarea
+- Model: Dynamic dropdown populated from Ollama server
+- Temperature: 0.7 default (configurable)
+- Max tokens: 256 for responses
+
+**Processing Behavior:**
+- **Stage 1:** Low temperature (0.3), max 10 tokens, expects only "yes" or "no"
+- **Stage 2:** Normal temperature (0.7), max 256 tokens, full response
+  * Explicit prompt: "Write ONLY your response text, without any timestamp, username, or prefix"
+  * Safety regex strips any `[HH:MM:SS] username: ` prefix LLM might add
+- **Batching:** If messages arrive during processing, schedules next batch after 1s delay
+- **Natural responses:** No prefix (🤖), LLM writes like a human
+- **Self-awareness:** LLM's own responses added to chat history
+
+**Safety & Performance:**
+- Disabled by default (checkbox unchecked) - user must explicitly enable
+- **Immediate processing:** When checkbox is checked, immediately processes any accumulated messages
+- Graceful degradation when Ollama unavailable
+- Error handling with logging, doesn't crash on LLM failures
+- Rate limiting via single-processing flag (no concurrent batches)
+- Automatic retry if new messages arrive during processing
+- Messages always added to history (checkbox only controls processing/responses)
+
+**Example Log Flow:**
+```
+📨 user123: hello
+🤖 LLM processing chat batch...
+🤖 Stage 1: Asking LLM if it should respond...
+🤖 Stage 1 answer: "yes"
+🤖 Stage 2: Asking LLM what to respond...
+🤖 LLM response: "Hey there! How's it going?"
+📤 Sent: Hey there! How's it going?
+🤖 LLM processing complete
+```
+
+**Integration Points:**
+- Uses existing LLMConnector with health checks
+- Respects system prompt from UI config panel
+- Works with any Ollama-compatible model
+- Adds messages to history regardless of LLM connection status
+- No interference with command processing or moderation
+
+**Benefits:**
+- Natural conversation without explicit commands
+- Context-aware responses (last 50 messages)
+- Efficient batching reduces API calls
+- Two-stage decision prevents spam
+- Seamless integration with existing chat system
 
 **Global State:**
 - ws - IRC WebSocket connection
@@ -288,16 +514,17 @@ voice_man: { action: voice({ type: "man", language: "en-US" }) },
 - Music functions: `queueSong`, `skipSong`
 
 **Action Types:**
-1. **Reward Actions** (actions.js): `hate()`, `love()`, `music()`, `voice()`, `vote_skip()`, `playing()`
+1. **Reward Actions** (actions.js): `hate()`, `love()`, `music()`, `voice()`, `vote_skip()`, `playing()`, `neuro()`
    - Used in channel point rewards (config.js: DEFAULT_REWARDS)
    - Called via handleRewardRedemption() with full context
    - Return false to mark redemption as canceled
 
-2. **Moderation Actions** (actions.js): `mute(seconds)`, `ban()`, `delete_message()`
-   - Used in ban rules (config.js: BAN_RULES)
-   - Called via executeModerationAction() with moderation context
-   - Context includes: `currentUserId`, `userId`, `messageId`, `request`, `log`
-   - All moderation actions are async and handle their own API calls
+2. **Chat Actions** (actions.js): `mute(seconds)`, `ban()`, `delete_message()`, `voice()`, `neuro()`
+   - Used in chat message triggers (config.js: CHAT_ACTIONS)
+   - Called via executeChatAction() with full context
+   - Context includes: full buildCommandContext() + `userId`, `messageId`
+   - All actions receive same rich context (llm, ws, minecraft, etc.)
+   - Moderation actions are async and handle their own API calls
 
 **Execution Flow:**
 
@@ -309,17 +536,18 @@ voice_man: { action: voice({ type: "man", language: "en-US" }) },
 5. Update global state from modified context
 6. Mark redemption as FULFILLED or CANCELED based on result
 
-*Moderation Actions:*
+*Chat Actions:*
 1. IRC message received with tags
-2. checkBanRules() tests message against all patterns, returns action closure if matched
-3. executeModerationAction() builds moderation context (currentUserId, userId, messageId, request, log)
-4. Execute actionClosure(context, user, message) - action makes API call directly
-5. Stop message processing if action was triggered
+2. checkChatActions() tests message against all patterns, returns {action, message}
+3. executeChatAction() builds full context via buildCommandContext()
+4. Adds moderation-specific fields (userId, messageId) to context
+5. Execute actionClosure(context, user, extractedMessage) - action uses full context
+6. Stop message processing if action was triggered
 
 *Regular Chat Messages:*
 1. IRC message received
-2. Check moderation rules first
-3. If not moderated, forward to Minecraft server via sendMessageMinaret()
+2. Check chat actions first
+3. If not triggered, forward to Minecraft server via sendMessageMinaret()
 4. Play ICQ notification sound for non-command messages
 
 **Benefits:**
@@ -355,6 +583,14 @@ voice_man: { action: voice({ type: "man", language: "en-US" }) },
 
 ## Code Refinement Tasks
 
+### Current Task
+- [x] Neuro Action: LLM chat integration for channel point rewards
+  * Create neuro() action in actions.js
+  * Send user message to LLM via chat API
+  * Post LLM response to Twitch chat
+  * Add to DEFAULT_REWARDS configuration
+  * Handle errors and connection failures gracefully
+
 ### Consistency Improvements
 - [x] actions.js: Replace full URL API calls with consistent pattern from utils.js
 - [x] Unify error handling pattern across all modules
@@ -374,6 +610,44 @@ voice_man: { action: voice({ type: "man", language: "en-US" }) },
 - [ ] Consolidate duplicate IRC message sending logic
 
 **Status:** Major refinement pass completed on 2025-11-22. Commit: 26ce4b3
+
+## Recent Improvements (2025-12-10)
+
+### IRC Message Parsing Fix
+
+**Problem:**
+- When Twitch messages contained emotes, username sent to Minecraft became corrupted
+- Example: Instead of "vanyserezhkin", received entire IRC tags string: "0-10;first-msg=0;flags=;id=..."
+- Root cause: Greedy regex `:(.+) PRIVMSG` captured IRC tags as part of username
+
+**IRC Format:**
+```
+@badge-info=;badges=broadcaster/1;emotes=0-10:555555555 :nick!nick@nick.tmi.twitch.tv PRIVMSG #channel :message
+```
+
+**Solution:**
+1. **utils.js: Added parseIrcMessage() function**
+   - Properly strips IRC tags before parsing
+   - Extracts username from IRC prefix format `:nick!user@host`
+   - Returns `{username, message}` or `null` for non-PRIVMSG
+   - Handles all IRC tag scenarios (emotes, badges, etc.)
+
+2. **index.js: Replaced regex with parseIrcMessage()**
+   - Old: `event.data.match(/:(.+) PRIVMSG #[^\s]+ :(.+)/)`
+   - New: `parseIrcMessage(event.data)`
+   - Correct username extraction regardless of tag content
+
+**Behavior:**
+- Messages with emotes: username extracted correctly
+- Messages without emotes: username extracted correctly
+- Non-PRIVMSG messages: returns null (handled gracefully)
+- Minecraft connector receives clean usernames
+
+**Benefits:**
+- Robust IRC protocol compliance
+- Handles all Twitch IRC tag scenarios
+- No username corruption
+- Clean separation of tag parsing and message parsing
 
 ## Recent Improvements (2025-01-25)
 
@@ -480,7 +754,186 @@ window.getState();
   log("message"); // Crashes if log undefined
   ```
 
+## Recent Fixes (2025-11-22)
+
+### Chat Actions System Refactoring
+
+**Change:** Renamed `BAN_RULES` → `CHAT_ACTIONS` to reflect broader purpose.
+
+**Motivation:**
+- Original "BAN_RULES" name implied only moderation actions
+- System can handle both moderation (ban/mute/delete) AND interactive actions (voice/neuro)
+- User requested: "let's rename BAN_RULES to CHAT_ACTIONS. Meaning is react to messages in chat."
+
+**Implementation:**
+
+1. **config.js: CHAT_ACTIONS configuration**
+```javascript
+export const CHAT_ACTIONS = [
+  [ban(), /viewers/i, /nezhna.+\.com/i],  // Moderation: ban spam
+  [mute(30), /zhopa/i, /spam/i],          // Moderation: timeout profanity
+  [voice(), /^!voice\s+(.+)/i],           // Interactive: TTS command
+  [neuro(), /^!neuro\s+(.+)/i],           // Interactive: LLM chat
+];
+```
+
+2. **index.js: Full context for all actions**
+- Renamed `checkBanRules()` → `checkChatActions()`
+- Renamed `executeModerationAction()` → `executeChatAction()`
+- **Critical change:** `executeChatAction()` now uses `buildCommandContext()` for full context
+  * Includes: `llm`, `send_twitch`, `ws`, `minecraft`, `mp3`, `speak`, etc.
+  * Adds moderation fields: `userId`, `messageId`
+  * All actions get same rich context whether triggered by chat or rewards
+
+3. **index.js: Regex capture group extraction**
+- `checkChatActions()` now extracts text from capture groups
+- Example: `!voice hello world` → action receives `"hello world"` (not full message)
+- Pattern: `/^!voice\s+(.+)/i` captures `(.+)` as the extracted message
+- Moderation patterns without groups still receive full message
+
+**Benefits:**
+- **Unified context**: All actions (moderation, interactive, rewards) use same context builder
+- **Clean command syntax**: Actions receive extracted text, not command prefix
+- **Accurate naming**: "CHAT_ACTIONS" describes what it does
+- **Extensible**: Easy to add new chat-triggered actions (polls, games, etc.)
+- **Type-safe**: No special cases, consistent execution path
+
+**Example Flow:**
+```
+User: "!neuro what is rust?"
+↓
+checkChatActions() → {action: neuro(), message: "what is rust?"}
+↓
+executeChatAction() → buildCommandContext() → {llm, send_twitch, log, ...}
+↓
+neuro() receives full context + user + "what is rust?"
+↓
+Calls llm.chat(), posts response to Twitch
+```
+
+### Neuro Action Context Bug
+
+**Problem:**
+- User tried `neuro()` action and got `llm in context: null` error
+- But manual `getLLM().generate()` in console worked fine
+- Investigation revealed `voice()` and `neuro()` were incorrectly placed in `BAN_RULES`
+
+**Root Cause:**
+```javascript
+// WRONG - in config.js BAN_RULES
+[voice(), /^!voice/i],
+[neuro(), /^!neuro/i],
+```
+
+- `BAN_RULES` is for **moderation actions** (ban/mute/delete)
+- When chat message matches pattern (e.g., "!neuro something"), ban system triggers
+- `executeModerationAction()` passes **limited context**:
+  ```javascript
+  const context = { currentUserId, userId, messageId, request, log };
+  ```
+- Missing: `llm`, `send_twitch`, `ws`, `minecraft`, and all other dependencies
+- Result: `neuro()` action sees `llm: null` and fails gracefully
+
+**Fix:**
+- Removed `voice()` and `neuro()` from `BAN_RULES`
+- These actions should **only** be triggered by channel point redemptions
+- Channel point redemptions use `buildCommandContext()` which includes full context with `llm`
+
+**Lesson:**
+- `BAN_RULES` → Moderation actions only (ban, mute, delete)
+- `DEFAULT_REWARDS` → Reward actions only (voice, neuro, music, etc.)
+- Each system has its own context builder with different properties
+- Actions must handle missing context properties gracefully
+
 ## Recent Improvements (2025-11-22)
+
+### Minaret Connector Checkbox Control
+
+**Added:**
+1. **HTML checkbox for minaret connector control**
+   - Located in Connection Status section, integrated into Minaret Server status item
+   - Uses `stored_as="minaret_enabled"` attribute for automatic persistence
+   - Checked by default (connector enabled)
+   - Visual integration: checkbox + status indicator + label in single control
+
+2. **index.js: Dynamic connector management**
+   - Added `minaretCheckbox` to DOM element cache
+   - Modified `initializeMinecraftConnector()` to check checkbox state before connecting
+   - Added change event listener for dynamic connect/disconnect
+   - Connector respects both moderator permissions AND checkbox state
+   - Clean disconnect via `minecraft.disconnect()` when checkbox unchecked
+
+3. **connectors.js: Fixed auto-reconnect loop**
+   - Added `shouldReconnect` flag to control auto-reconnect behavior
+   - Added `reconnectTimer` to store and clear pending reconnects
+   - `connect()`: Sets `shouldReconnect = true` when initiating connection
+   - `onclose`: Only schedules reconnection if `shouldReconnect === true`
+   - `disconnect()`: Sets `shouldReconnect = false` and clears timer
+   - Prevents infinite reconnection loop when user explicitly disables connector
+
+4. **Behavior:**
+   - Checkbox checked: Minaret connector initializes if moderator permissions allow
+   - Checkbox unchecked: Connector disabled, existing connection cleanly disconnected, no auto-reconnect
+   - State persists across page reloads via localStorage
+   - Logs all state changes: `✅ Minaret connector enabled`, `⚠️ Minaret connector disabled`
+   - Proper cleanup: clears timer, sets `minecraft = null` after disconnect
+   - No reconnection attempts after explicit user disconnect
+
+**Logic Flow:**
+```
+User checks checkbox → Event listener → initializeMinecraftConnector() → Check permissions → Connect
+User unchecks checkbox → Event listener → minecraft.disconnect() → shouldReconnect=false → clearTimeout → No reconnect
+Page load → Checkbox state restored → initializeMinecraftConnector() called → Check both checkbox AND permissions
+Connection drops (server down) → shouldReconnect=true → Auto-reconnect after 5s
+```
+
+**Benefits:**
+- User control over Minecraft integration without code changes
+- Clean resource management (disconnect when not needed)
+- Consistent with existing `stored_as` pattern (loud checkbox)
+- Respects both user preference AND system permissions
+- Visual feedback via status indicator remains functional
+- No infinite reconnection loops when user disables connector
+
+### Stream Preset Persistence (2025-11-22, Updated 2025-12-10)
+
+**Added:**
+1. **index.html: stored_as="stream_preset" attribute**
+   - Enables automatic localStorage persistence for preset selector
+   - Stores last selected preset across page reloads
+   - Uses existing stored elements system (zero manual localStorage code)
+
+2. **index.js: Split restoration and application**
+   - **Page load:** Restores UI state only (dropdown value + preset info display)
+   - **Twitch connection:** Applies preset after all connectors initialized (ws.onopen)
+   - Reason: Stream updates require API connectivity, reward config needs EventSub
+   - Manual restoration happens AFTER `initializePresets()` populates options
+   - Reads `localStorage.getItem("stream_preset")` directly
+   - Sets `DOM.presetSelector.value` explicitly
+   - Logs: `🔄 Restoring saved preset UI: coding` → `🎯 Applying saved preset: coding`
+   - Change listener still registered for immediate application on manual changes
+
+**Timing Solution:**
+- Problem: Options don't exist when `initializeStoredElements()` runs
+- Solution: Skip preset selector in automatic restoration, handle manually at correct time
+- Visual state restored immediately (dropdown shows correct selection)
+- Functional application deferred until Twitch connection established
+
+**Behavior:**
+- User selects preset → Applied immediately via change listener
+- Page reload → UI restored immediately, application on Twitch connect
+- Reconnection → Preset reapplied automatically (treats like fresh switch)
+- Stream automatically updated to saved preset configuration
+- Reward visibility restored to match preset
+- No manual re-selection needed
+
+**Benefits:**
+- Convenient workflow: set preset once, persists across sessions
+- Consistent stream state after browser restart or reconnection
+- Correct dependency order: API available before stream updates
+- Leverages existing `stored_as` pattern for saves
+- Manual restoration at correct timing ensures reliability
+- Natural UX: stream "remembers" its configuration
 
 ### Automatic Stored Elements System
 
@@ -540,6 +993,145 @@ window.getState();
 - Type-safe (checkbox vs input handled correctly)
 - Single source of truth in HTML
 - Easy to add new persisted elements
+
+### LLM Model Selector with Dynamic Population
+
+**Added:**
+1. **index.html: Replace text input with select element**
+   - Model field changed from `<input type="text">` to `<select>`
+   - Maintains `stored_as="llm_model"` for automatic persistence
+   - Added `id="llmModelSelect"` for programmatic access
+   - Initial placeholder: "Loading models..."
+
+2. **index.js: populateLLMModels() function**
+   - Fetches available models from Ollama server via `llm.listModels()`
+   - Populates select with all available models
+   - Preserves currently selected model from localStorage
+   - Handles missing models gracefully (adds "(not found)" option)
+   - Comprehensive error handling with fallback messages
+   - Logs model list on success: `✅ Loaded N models: model1, model2, ...`
+
+3. **index.js: Automatic model fetching triggers**
+   - Called after LLM connection (1s delay for stability)
+   - Called when opening config panel (if LLM connected)
+   - Ensures fresh model list is always available to user
+
+4. **DOM cache integration**
+   - Added `llmModelSelect` to DOM object declaration
+   - Cached in `cacheDOMElements()` function
+   - Consistent with other DOM element access patterns
+
+**Behavior:**
+- On LLM connection: Models fetched and populated automatically
+- On config panel open: Models refreshed if LLM connected
+- Current model preserved across page reloads via localStorage
+- Models displayed as simple dropdown (no extra metadata shown)
+- Handles server errors: displays "Error loading models" message
+- Handles empty server: displays "No models available" message
+- Handles outdated localStorage: shows "(not found)" for missing models
+
+**Benefits:**
+- User sees actual available models instead of typing manually
+- No typos in model names
+- Easy to switch between models
+- Consistent with stored_as pattern
+- Automatic refresh ensures list stays current
+- Graceful degradation when server unavailable
+
+**Example Log Flow:**
+```
+🤖 LLM connector initialized
+🔍 Fetching available models from Ollama...
+✅ Loaded 3 models: llama3.2, mistral, codellama
+```
+
+### Neuro Action: LLM Chat Integration
+
+**Added:**
+1. **actions.js: neuro() action initializer**
+   - Async action that integrates LLM into channel point rewards
+   - Takes user message as input via reward redemption
+   - Sends message to LLM using chat API with system prompt
+   - Returns LLM response to Twitch chat with 🤖 prefix
+   - Configurable: maxTokens (default: 256), temperature (default: 0.7)
+   - Comprehensive error handling and fallback messages
+
+2. **config.js: "Ask Neuro" reward configuration**
+   - Cost: 100 channel points
+   - Requires user input (text message for LLM)
+   - Background color: #9B59B6 (purple)
+   - Global cooldown: 45 seconds
+   - Action: `neuro({ maxTokens: 256, temperature: 0.7 })`
+   - Added to loitering and coding presets (not gaming/dooming)
+
+3. **index.js: Async action support**
+   - Modified `handleRewardRedemption()` to be async
+   - Uses `await` when executing actions to support async operations
+   - No changes needed for sync actions (backwards compatible)
+   - Added `llm` to `buildCommandContext()` for action access
+
+4. **actions.js: Updated documentation**
+   - Added note that actions can be synchronous or asynchronous
+   - Updated context documentation to include `llm` connector
+   - Consistent JSDoc for neuro action with all parameters
+
+**Behavior:**
+- User redeems "Ask Neuro" with question text
+- Action checks LLM connection status (graceful degradation)
+- Builds messages array with system prompt (if configured) + user message
+- Calls `llm.chat()` with configured temperature and max tokens
+- Posts response to Twitch chat: `🤖 <LLM response>`
+- Returns `false` if LLM unavailable or empty response (cancels redemption)
+- Logs all operations: request processing, LLM response, errors
+
+**Error Handling:**
+- Empty message: Sends error to chat, returns false (cancels redemption)
+- LLM not connected: Sends fallback message ("🤖 Neuro is currently offline")
+- Empty LLM response: Sends "🤖 Neuro has nothing to say"
+- Exception during chat call: Sends "🤖 Neuro encountered an error"
+- All errors cancel redemption (returns false)
+
+**Configuration:**
+```javascript
+// In config.js DEFAULT_REWARDS
+neuro: {
+  title: "🧠 Ask Neuro",
+  cost: 100,
+  prompt: "Ask a question and get AI-powered response",
+  background_color: "#9B59B6",
+  is_enabled: true,
+  is_user_input_required: true,
+  is_global_cooldown_enabled: true,
+  global_cooldown_seconds: 45,
+  action: neuro({
+    maxTokens: 256,
+    temperature: 0.7,
+  }),
+}
+```
+
+**Example Log Flow:**
+```
+🎯 Reward redeemed: "🧠 Ask Neuro" by user123
+🤖 Neuro processing request from user123: "What is the meaning of life?"
+✅ Neuro responded to user123: "The meaning of life varies greatly..."
+```
+
+**Integration Points:**
+- Uses existing LLMConnector with health checks and model selection
+- Respects system prompt from UI configuration panel
+- Works with any Ollama-compatible model
+- Preset control: enabled for loitering/coding, disabled for gaming/dooming
+- Graceful degradation when Ollama server unavailable
+
+**Benefits:**
+- Interactive AI engagement with stream chat
+- Configurable personality via system prompt
+- Cost-effective (100 points encourages usage)
+- Safe resource management (cooldown prevents spam)
+- Automatic redemption cancellation on failures
+- Clear user feedback via chat messages
+- No stream interruption if LLM unavailable
 
 ### Moderator Rights Enforcement
 

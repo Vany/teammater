@@ -1,17 +1,32 @@
 // ============================
-// BAN SYSTEM CONFIGURATION
+// CHAT ACTIONS CONFIGURATION
 // ============================
 
-// Import action functions
-import { mute, ban, delete_message, delete_ } from "./actions.js";
+// Import all action functions (used in both CHAT_ACTIONS and DEFAULT_REWARDS)
+import {
+  mute,
+  ban,
+  delete_message,
+  delete_,
+  hate,
+  love,
+  music,
+  voice,
+  vote_skip,
+  playing,
+  neuro,
+} from "./actions.js";
 
-// Ban Rules Configuration
+// Chat Actions Configuration
+// React to messages in chat with automated actions
 // Rules are arrays where:
-// - First element is action function: mute(seconds), ban(), or delete()
+// - First element is action closure: mute(seconds), ban(), delete(), voice(), neuro(), etc.
 // - Following elements are regexes that ALL must match (AND logic)
 // - Rules are combined with OR logic (any rule triggers action)
-export const BAN_RULES = [
+export const CHAT_ACTIONS = [
   [ban(), /viewers/i, /nezhna.+\.com/i], // Ban spam with "viewers" + nezhna*.com
+  [mute(30), /zhopa/i, /spam/i], // Timeout for profanity spam
+  [voice(), /^!voice\s+(.+)/i], // TTS command: !voice <text>
 ];
 
 // ============================
@@ -44,7 +59,8 @@ export const TWITCH_API_BASE = "https://api.twitch.tv/helix";
 // MUSIC CONFIGURATION
 // ============================
 
-export const MUSIC_URL_PATTERN = /^https:\/\/music\.yandex\.(ru|com)\/(album\/\d+\/)?track\/\d+/;
+export const MUSIC_URL_PATTERN =
+  /^https:\/\/music\.yandex\.(ru|com)\/(album\/\d+\/)?track\/\d+/;
 export const EMPTY_MUSIC_URL = "https://music.yandex.ru/";
 export const INITIAL_SONG_NAME = "Silence by silencer";
 export const VOTE_SKIP_THRESHOLD = 3;
@@ -71,7 +87,8 @@ export const MINECRAFT_PLAYER_NAME = "vany_serezhkin";
 
 export const MINECRAFT_COMMANDS = {
   HEAL: "effect give vany_serezhkin minecraft:instant_health 3 255 true",
-  LIGHTNING: "execute at vany_serezhkin run summon minecraft:lightning_bolt ~ ~ ~",
+  LIGHTNING:
+    "execute at vany_serezhkin run summon minecraft:lightning_bolt ~ ~ ~",
 };
 
 // ============================
@@ -84,6 +101,13 @@ export const TIMING = {
   LOVE_PROTECTION_DURATION_MS: 60_000,
   RECONNECT_DELAY_MS: 5000,
 };
+
+// ============================
+// LLM CHAT MONITORING CONFIGURATION
+// ============================
+
+// Number of messages to keep in chat history buffer for LLM context
+export const CHAT_HISTORY_SIZE = 50;
 
 // ============================
 // USER CONFIGURATION
@@ -103,14 +127,15 @@ export const DEFAULT_PRESETS = {
     tags: ["Russian", "English", "Educational", "Clowns"],
     pinned_message:
       "🐽🧱✨🌊 Сбооорочка !! https://www.feed-the-beast.com/modpacks/129-ftb-skies-2",
-    rewards_active: ["voice", "music", "vote_skip", "playing"],
+    rewards_active: ["voice", "music", "vote_skip", "playing", "neuro"],
   },
   coding: {
-    title: "🐽✨controlrake rust project 🧱 some time hell on the earth",
+    title:
+      "🐽✨Программирование и отвага, всякая нейрофигня (russian vibecoding)",
     game_id: "1469308723",
     tags: ["English", "Programming", "Coding", "Educational"],
     pinned_message: "🐽🧱✨🌊 DO NOT FORGET TO CHAT WITH STREAMER! 🌊✨🧱🐽",
-    rewards_active: ["voice", "music", "vote_skip", "playing"],
+    rewards_active: ["voice", "music", "vote_skip", "playing", "neuro"],
   },
   gaming: {
     title:
@@ -138,9 +163,6 @@ export const DEFAULT_PINNED_MESSAGE =
 // ============================
 // CHANNEL POINT REWARDS CONFIGURATION
 // ============================
-
-// Import reward action functions
-import { hate, love, music, voice, vote_skip, playing } from "./actions.js";
 
 export const DEFAULT_REWARDS = {
   hate: {
@@ -195,11 +217,25 @@ export const DEFAULT_REWARDS = {
     is_user_input_required: true,
     is_global_cooldown_enabled: true,
     global_cooldown_seconds: 60,
-    action: voice({ 
-      type: "default", 
-      language: "en-US", 
-      rate: 1.0, 
-      pitch: 1.0 
+    action: voice({
+      type: "default",
+      language: "en-US",
+      rate: 1.0,
+      pitch: 1.0,
+    }),
+  },
+  neuro: {
+    title: "🧠 Ask Neuro",
+    cost: 100,
+    prompt: "Ask a question and get AI-powered response",
+    background_color: "#9B59B6",
+    is_enabled: true,
+    is_user_input_required: true,
+    is_global_cooldown_enabled: true,
+    global_cooldown_seconds: 45,
+    action: neuro({
+      maxTokens: 256,
+      temperature: 0.7,
     }),
   },
 };

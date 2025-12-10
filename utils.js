@@ -193,6 +193,41 @@ export function parseIrcTags(rawMessage) {
   return tags;
 }
 
+/**
+ * Parse IRC PRIVMSG correctly handling tags, prefix, and message
+ * Properly extracts username and message text from tagged IRC messages
+ * 
+ * Format: [@tags] :nick!user@host PRIVMSG #channel :message
+ * 
+ * @param {string} rawMessage - Raw IRC message
+ * @returns {{username: string, message: string}|null} - Parsed data or null if not PRIVMSG
+ * 
+ * @example
+ *   parseIrcMessage("@emotes=0-4:123 :nick!nick@nick.tmi.twitch.tv PRIVMSG #channel :hello")
+ *   => { username: "nick", message: "hello" }
+ */
+export function parseIrcMessage(rawMessage) {
+  let message = rawMessage;
+  
+  // Strip tags if present
+  if (message.startsWith("@")) {
+    const tagEnd = message.indexOf(" ");
+    if (tagEnd === -1) return null;
+    message = message.substring(tagEnd + 1);
+  }
+  
+  // Parse IRC prefix and command
+  // Format: :nick!user@host PRIVMSG #channel :message text\r\n
+  // Note: IRC messages end with \r\n, so we need to handle that
+  const match = message.match(/^:([^!]+)![^\s]+ PRIVMSG #[^\s]+ :(.+?)(?:\r\n)?$/);
+  if (!match) return null;
+  
+  return {
+    username: match[1],
+    message: match[2].trim()
+  };
+}
+
 // ============================
 // LANGUAGE DETECTION
 // ============================

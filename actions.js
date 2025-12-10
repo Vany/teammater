@@ -3,7 +3,8 @@
 // ============================
 // All action factories are initializers that take configuration parameters
 // and return closures with signature: (context, user, message) => result
-// 
+// Actions can be synchronous or asynchronous (return Promise)
+//
 // Pattern:
 //   export function actionName(configParam1, configParam2, ...) {
 //     return (context, user, message) => {
@@ -13,15 +14,11 @@
 //     };
 //   }
 //
-// context contains: { ws, minarert, currentUserId, CHANNEL, ...globals }
+// context contains: { ws, minarert, llm, currentUserId, CHANNEL, ...globals }
 // user: username string
 // message: message/input string
 
-import {
-  MINECRAFT_COMMANDS,
-  TIMING,
-  BROADCASTER_USERNAME,
-} from "./config.js";
+import { MINECRAFT_COMMANDS, TIMING, BROADCASTER_USERNAME } from "./config.js";
 
 import { detectLanguage } from "./utils.js";
 
@@ -46,7 +43,14 @@ export function hate(
   cooldownMs = TIMING.HATE_COOLDOWN_MS,
 ) {
   return (context, user, message) => {
-    const { sendCommandMinaret, sendMessageMinaret, throttle, love_timer, mp3, log } = context;
+    const {
+      sendCommandMinaret,
+      sendMessageMinaret,
+      throttle,
+      love_timer,
+      mp3,
+      log,
+    } = context;
 
     // Initialize throttle for user if not exists
     if (throttle[user] === undefined) {
@@ -57,7 +61,9 @@ export function hate(
 
     // Check throttle (except for broadcaster)
     if (timeSinceLastCommand < cooldownMs && user !== BROADCASTER_USERNAME) {
-      log(`⏱️ Throttled: ${user} must wait ${Math.ceil((cooldownMs - timeSinceLastCommand) / 1000)}s`);
+      log(
+        `⏱️ Throttled: ${user} must wait ${Math.ceil((cooldownMs - timeSinceLastCommand) / 1000)}s`,
+      );
       return;
     }
 
@@ -188,7 +194,7 @@ export function playing(messageFormat = "🎹 Now playing: {song}") {
 /**
  * Voice action initializer: creates configured TTS action with automatic language detection
  * Automatically detects Russian (Cyrillic) vs English (Latin) text and selects appropriate voice
- * 
+ *
  * @param {Object} voiceConfig - Voice configuration object
  * @param {string} voiceConfig.type - Voice identifier (e.g., "man", "woman", "robot", "child")
  * @param {string} voiceConfig.language - Fallback BCP 47 language code (default: "en-US")
@@ -223,11 +229,13 @@ export function voice(voiceConfig = {}) {
     // Detect language from text (Cyrillic vs Latin)
     const detectedLang = detectLanguage(text);
     const languageMap = {
-      "ru": "ru-RU",
-      "en": "en-US",
-      "unknown": config.language,
+      ru: "ru-RU",
+      en: "en-US",
+      unknown: config.language,
     };
-    const targetLanguage = config.voiceName ? config.language : languageMap[detectedLang];
+    const targetLanguage = config.voiceName
+      ? config.language
+      : languageMap[detectedLang];
 
     // Create and configure speech synthesis
     const utterance = new SpeechSynthesisUtterance(text);
@@ -238,7 +246,7 @@ export function voice(voiceConfig = {}) {
 
     // Select voice based on configuration
     const voices = speechSynthesis.getVoices();
-    
+
     if (config.voiceName) {
       // Use specific voice name if provided
       const voice = voices.find((v) => v.name === config.voiceName);
@@ -250,20 +258,27 @@ export function voice(voiceConfig = {}) {
       }
     } else if (config.type !== "default") {
       // Match voice by type and language
-      const voice = voices.find((v) => 
-        v.lang.startsWith(targetLanguage.split("-")[0]) && 
-        v.name.toLowerCase().includes(config.type.toLowerCase())
+      const voice = voices.find(
+        (v) =>
+          v.lang.startsWith(targetLanguage.split("-")[0]) &&
+          v.name.toLowerCase().includes(config.type.toLowerCase()),
       );
-      
+
       if (voice) {
         utterance.voice = voice;
-        if (log) log(`🎤 Using ${config.type} voice: ${voice.name} (detected: ${detectedLang})`);
+        if (log)
+          log(
+            `🎤 Using ${config.type} voice: ${voice.name} (detected: ${detectedLang})`,
+          );
       } else {
         // Fallback to any voice matching language
         const fallbackVoice = voices.find((v) => v.lang === targetLanguage);
         if (fallbackVoice) {
           utterance.voice = fallbackVoice;
-          if (log) log(`🎤 Using fallback voice for ${targetLanguage}: ${fallbackVoice.name} (detected: ${detectedLang})`);
+          if (log)
+            log(
+              `🎤 Using fallback voice for ${targetLanguage}: ${fallbackVoice.name} (detected: ${detectedLang})`,
+            );
         }
       }
     } else {
@@ -271,7 +286,10 @@ export function voice(voiceConfig = {}) {
       const voice = voices.find((v) => v.lang === targetLanguage);
       if (voice) {
         utterance.voice = voice;
-        if (log) log(`🎤 Using voice for ${targetLanguage}: ${voice.name} (detected: ${detectedLang})`);
+        if (log)
+          log(
+            `🎤 Using voice for ${targetLanguage}: ${voice.name} (detected: ${detectedLang})`,
+          );
       }
     }
 
@@ -283,7 +301,8 @@ export function voice(voiceConfig = {}) {
       sendMessageMinaret(`!voice ${text}`);
     }
 
-    if (log) log(`🎤 Voice by ${user} [${detectedLang}->${targetLanguage}]: ${text}`);
+    if (log)
+      log(`🎤 Voice by ${user} [${detectedLang}->${targetLanguage}]: ${text}`);
   };
 }
 
@@ -301,14 +320,17 @@ export function voice(voiceConfig = {}) {
  * @param {string|null} errorPrefix - Error message prefix (null to skip logging)
  * @returns {Promise<boolean>} - Success status
  */
-async function executeModerationAPI(context, endpoint, options, successMsg, errorPrefix) {
+async function executeModerationAPI(
+  context,
+  endpoint,
+  options,
+  successMsg,
+  errorPrefix,
+) {
   const { currentUserId, request, log } = context;
-  
+
   try {
-    await request(
-      `https://api.twitch.tv/helix${endpoint}`,
-      options
-    );
+    await request(`https://api.twitch.tv/helix${endpoint}`, options);
     if (successMsg) log(successMsg);
     return true;
   } catch (error) {
@@ -324,16 +346,17 @@ async function executeModerationAPI(context, endpoint, options, successMsg, erro
  * @returns {Function} - closure(context, user, message) => Promise<void>
  */
 export function mute(seconds, reason = null) {
-  const timeoutReason = reason || `Automated timeout (${seconds}s): message violated rules`;
-  
+  const timeoutReason =
+    reason || `Automated timeout (${seconds}s): message violated rules`;
+
   return async (context, user, message) => {
     const { currentUserId, userId, log } = context;
-    
+
     if (!currentUserId || !userId) {
       log("❌ Cannot mute: missing user IDs");
       return;
     }
-    
+
     await executeModerationAPI(
       context,
       `/moderation/bans?broadcaster_id=${currentUserId}&moderator_id=${currentUserId}`,
@@ -348,7 +371,7 @@ export function mute(seconds, reason = null) {
         }),
       },
       `⏱️ MUTED user ${user} for ${seconds}s: "${message}"`,
-      "❌ Mute action failed"
+      "❌ Mute action failed",
     );
   };
 }
@@ -361,12 +384,12 @@ export function mute(seconds, reason = null) {
 export function ban(reason = "Automated ban: message violated rules") {
   return async (context, user, message) => {
     const { currentUserId, userId, log } = context;
-    
+
     if (!currentUserId || !userId) {
       log("❌ Cannot ban: missing user IDs");
       return;
     }
-    
+
     await executeModerationAPI(
       context,
       `/moderation/bans?broadcaster_id=${currentUserId}&moderator_id=${currentUserId}`,
@@ -380,7 +403,7 @@ export function ban(reason = "Automated ban: message violated rules") {
         }),
       },
       `🔨 BANNED user ${user}: "${message}"`,
-      "❌ Ban action failed"
+      "❌ Ban action failed",
     );
   };
 }
@@ -393,21 +416,115 @@ export function ban(reason = "Automated ban: message violated rules") {
 export function delete_message(silent = false) {
   return async (context, user, message) => {
     const { currentUserId, messageId, log } = context;
-    
+
     if (!currentUserId || !messageId) {
       if (!silent) log("❌ Cannot delete message: missing IDs");
       return;
     }
-    
+
     await executeModerationAPI(
       context,
       `/moderation/chat?broadcaster_id=${currentUserId}&moderator_id=${currentUserId}&message_id=${messageId}`,
       { method: "DELETE" },
       silent ? null : `🗑️ DELETED message from ${user}: "${message}"`,
-      silent ? null : "❌ Delete action failed"
+      silent ? null : "❌ Delete action failed",
     );
   };
 }
 
 // Alias for better naming consistency
 export const delete_ = delete_message;
+
+// ============================
+// LLM ACTIONS
+// ============================
+
+/**
+ * Neuro action initializer: creates LLM chat integration action
+ * Sends user message to LLM, receives response, and posts it to Twitch chat
+ *
+ * @param {Object} neuroConfig - Configuration object
+ * @param {number} neuroConfig.maxTokens - Maximum tokens in LLM response (default: 256)
+ * @param {number} neuroConfig.temperature - LLM temperature (default: 0.7)
+ * @param {string} neuroConfig.fallbackMessage - Message when LLM unavailable
+ * @returns {Function} - closure(context, user, message) => Promise<boolean>
+ */
+export function neuro(neuroConfig = {}) {
+  const config = {
+    maxTokens: 128,
+    temperature: 0.7,
+    fallbackMessage: "🤖 Neuro is currently offline",
+    ...neuroConfig,
+  };
+
+  return async (context, user, message) => {
+    const { llm, send_twitch, log } = context;
+
+    const text = message.trim();
+
+    // Debug logging
+    if (log) {
+      log(`🔍 Debug - llm in context: ${llm ? "exists" : "null"}`);
+      if (llm) {
+        log(`🔍 Debug - llm.isConnected(): ${llm.isConnected()}`);
+        log(`🔍 Debug - llm.connected: ${llm.connected}`);
+      }
+    }
+
+    if (!text) {
+      if (log) log(`⚠️ Empty neuro request from ${user}`);
+      if (send_twitch) send_twitch("❌ Please provide a message for Neuro");
+      return false;
+    }
+
+    // Check LLM availability
+    if (!llm || !llm.isConnected()) {
+      if (log) log(`❌ Neuro unavailable for ${user}: LLM not connected`);
+      if (send_twitch) send_twitch(config.fallbackMessage);
+      return false;
+    }
+
+    try {
+      if (log) log(`🤖 Neuro processing request from ${user}: "${text}"`);
+
+      // Build messages array for chat API
+      const messages = [];
+
+      // Add system prompt if available
+      if (llm.systemPrompt && llm.systemPrompt.trim()) {
+        messages.push({
+          role: "system",
+          content: llm.systemPrompt,
+        });
+      }
+
+      // Add user message
+      messages.push({
+        role: "user",
+        content: text,
+      });
+
+      // Call LLM
+      const response = await llm.chat(messages, {
+        maxTokens: config.maxTokens,
+        temperature: config.temperature,
+      });
+
+      if (!response || !response.trim()) {
+        if (log) log(`⚠️ Neuro returned empty response for ${user}`);
+        if (send_twitch) send_twitch("🤖 Neuro has nothing to say");
+        return false;
+      }
+
+      // Send response to chat
+      if (send_twitch) send_twitch(`🤖 ${response.trim()}`);
+      if (log) log(`✅ Neuro responded to ${user}: "${response.trim()}"`);
+
+      return true;
+    } catch (error) {
+      if (log) log(`💥 Neuro failed for ${user}: ${error.message}`);
+      if (send_twitch) send_twitch("🤖 Neuro encountered an error");
+      return false;
+    }
+  };
+}

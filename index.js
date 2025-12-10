@@ -4,7 +4,7 @@
 
 // Import configuration from config.js
 import {
-  BAN_RULES,
+  CHAT_ACTIONS,
   DEFAULT_PRESETS,
   DEFAULT_REWARDS,
   DEFAULT_PINNED_MESSAGE,
@@ -23,13 +23,14 @@ import {
   MINECRAFT_COMMANDS,
   TIMING,
   BROADCASTER_USERNAME,
+  CHAT_HISTORY_SIZE,
 } from "./config.js";
 
 // Import utilities from utils.js
-import { request, PersistentDeck, parseIrcTags } from "./utils.js";
+import { request, PersistentDeck, parseIrcTags, parseIrcMessage } from "./utils.js";
 
 // Import external connectors
-import { MusicQueue, MinecraftConnector } from "./connectors.js";
+import { MusicQueue, MinecraftConnector, LLMConnector } from "./connectors.js";
 
 // Import actions for test button
 import { voice } from "./actions.js";
@@ -62,12 +63,26 @@ let sessionId = null; // EventSub session ID
 // External connectors (initialized after DOM load)
 let musicQueue = null;
 let minecraft = null;
+let llm = null;
+
+// Chat history for LLM monitoring
+let chatHistory = []; // Array of {timestamp: Date, username: string, message: string}
+let chatMarkerPosition = 0; // Index in chatHistory where marker sits (everything after is "new")
+let llmProcessing = false; // Flag indicating LLM is currently processing a batch
 
 // DOM element cache (populated on initialization)
 const DOM = {
   output: null,
   twitchStatus: null,
   minaretStatus: null,
+  minaretCheckbox: null,
+  llmStatus: null,
+  llmCheckbox: null,
+  llmConfigToggle: null,
+  llmConfigPanel: null,
+  llmModelSelect: null,
+  llmSystemPromptInput: null,
+  llmChatMonitoringCheckbox: null,
   streamStatus: null,
   presetSelector: null,
   presetInfo: null,
@@ -88,6 +103,14 @@ function cacheDOMElements() {
   DOM.output = document.getElementById("output");
   DOM.twitchStatus = document.getElementById("twitchStatus");
   DOM.minaretStatus = document.getElementById("minaretStatus");
+  DOM.minaretCheckbox = document.getElementById("minaretCheckbox");
+  DOM.llmStatus = document.getElementById("llmStatus");
+  DOM.llmCheckbox = document.getElementById("llmCheckbox");
+  DOM.llmConfigToggle = document.getElementById("llmConfigToggle");
+  DOM.llmConfigPanel = document.getElementById("llmConfigPanel");
+  DOM.llmModelSelect = document.getElementById("llmModelSelect");
+  DOM.llmSystemPromptInput = document.querySelector('[stored_as="llm_system_prompt"]');
+  DOM.llmChatMonitoringCheckbox = document.getElementById("llmChatMonitoringCheckbox");
   DOM.streamStatus = document.getElementById("streamStatus");
   DOM.presetSelector = document.getElementById("presetSelector");
   DOM.presetInfo = document.getElementById("presetInfo");
@@ -106,19 +129,36 @@ function cacheDOMElements() {
  * - On page load: restore value from localStorage[key]
  * - On change: save value to localStorage[key]
  * Supports: checkbox (checked state), input/textarea (value), select (value)
+ * 
+ * Note: Preset selector (#presetSelector) is excluded and handled manually after options are populated
  */
 function initializeStoredElements() {
   const elements = document.querySelectorAll("[stored_as]");
 
   elements.forEach((el) => {
     const key = el.getAttribute("stored_as");
+    
+    // Skip preset selector - needs manual restoration after options are populated
+    if (el.id === "presetSelector") {
+      // Still set up change listener for future saves
+      el.addEventListener("change", () => {
+        localStorage.setItem(key, el.value);
+        log(`💾 Stored ${key} = ${el.value}`);
+      });
+      return;
+    }
+    
     const storedValue = localStorage.getItem(key);
 
     // Restore from storage
     if (storedValue !== null) {
       if (el.type === "checkbox") {
         el.checked = storedValue === "true";
-      } else if (el.tagName === "SELECT" || el.tagName === "INPUT" || el.tagName === "TEXTAREA") {
+      } else if (
+        el.tagName === "SELECT" ||
+        el.tagName === "INPUT" ||
+        el.tagName === "TEXTAREA"
+      ) {
         el.value = storedValue;
       }
     }
@@ -168,36 +208,43 @@ function speak(str) {
 }
 
 // ============================
-// BAN SYSTEM
+// CHAT ACTIONS SYSTEM
 // ============================
 
-// Check if message matches ban rules
-// Returns the action closure if a rule matches, null otherwise
-function checkBanRules(message) {
-  for (const rule of BAN_RULES) {
+// Check if message matches chat action rules
+// Returns {action, message} if a rule matches, null otherwise
+// Extracts text from regex capture groups for commands like !voice <text>
+function checkChatActions(message) {
+  for (const rule of CHAT_ACTIONS) {
     if (rule.length < 2) continue; // Invalid rule
 
     const actionClosure = rule[0];
     const patterns = rule.slice(1);
 
+    let extractedMessage = message; // Default to full message
+
     // Check if ALL patterns match (AND logic)
     const allMatch = patterns.every((pattern) => {
-      const matches = pattern.test(message);
-      return matches;
+      const match = message.match(pattern);
+      if (match) {
+        // If pattern has capture groups, extract the first captured text
+        if (match.length > 1 && match[1]) {
+          extractedMessage = match[1].trim();
+        }
+        return true;
+      }
+      return false;
     });
 
     if (allMatch) {
-      log(`  ⚠️ ALL PATTERNS MATCHED! Returning action.`);
-      return actionClosure; // Return first matching rule's action closure
+      return { action: actionClosure, message: extractedMessage };
     }
   }
-
-  log(`  ℹ️ No rules matched`);
   return null; // No rules matched
 }
 
-// Execute moderation action closure with context
-async function executeModerationAction(
+// Execute chat action closure with full context
+async function executeChatAction(
   actionClosure,
   userId,
   messageId,
@@ -205,26 +252,191 @@ async function executeModerationAction(
   message,
 ) {
   if (!actionClosure || typeof actionClosure !== "function") {
-    log("❌ Invalid moderation action closure");
+    log("❌ Invalid chat action closure");
     return false;
   }
 
-  // Build context object for moderation action
-  const context = {
-    currentUserId,
-    userId,
-    messageId,
-    request,
-    log,
-  };
+  // Build full context object for chat action (includes llm, ws, minecraft, etc.)
+  const context = buildCommandContext();
+  
+  // Add moderation-specific fields
+  context.userId = userId;
+  context.messageId = messageId;
 
   try {
     await actionClosure(context, user, message);
     return true;
   } catch (error) {
-    log(`❌ Moderation action execution failed: ${error.message}`);
-    console.error("Moderation action error:", error);
+    log(`❌ Chat action execution failed: ${error.message}`);
+    console.error("Chat action error:", error);
     return false;
+  }
+}
+
+// ============================
+// LLM CHAT MONITORING SYSTEM
+// ============================
+
+/**
+ * Add message to chat history buffer (keeps last CHAT_HISTORY_SIZE messages)
+ * @param {string} username - Username who sent the message
+ * @param {string} message - Message content
+ */
+function addToChatHistory(username, message) {
+  chatHistory.push({
+    timestamp: new Date(),
+    username: username,
+    message: message,
+  });
+
+  // Keep buffer at CHAT_HISTORY_SIZE, remove oldest if exceeded
+  if (chatHistory.length > CHAT_HISTORY_SIZE) {
+    const removed = chatHistory.shift();
+    
+    // Adjust marker position since we removed from the start
+    if (chatMarkerPosition > 0) {
+      chatMarkerPosition--;
+    }
+  }
+}
+
+/**
+ * Format chat history for LLM with marker separating old/new messages
+ * @returns {string} - Formatted chat history with timestamp and username
+ */
+function formatChatHistoryForLLM() {
+  if (chatHistory.length === 0) {
+    return "No messages yet.";
+  }
+
+  const lines = chatHistory.map((entry, index) => {
+    const timestamp = entry.timestamp.toLocaleTimeString("en-US", {
+      hour12: false,
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+    const line = `[${timestamp}] ${entry.username}: ${entry.message}`;
+    
+    // Add marker after messages that were already processed
+    if (index === chatMarkerPosition - 1 && chatMarkerPosition < chatHistory.length) {
+      return line + "\n -> new messages";
+    }
+    
+    return line;
+  });
+
+  return lines.join("\n");
+}
+
+/**
+ * Process accumulated chat messages with LLM (two-stage decision)
+ * Stage 1: Ask if LLM wants to respond (yes/no)
+ * Stage 2: If yes, ask what to respond with full context
+ */
+async function processChatWithLLM() {
+  // Check if chat monitoring is enabled
+  if (!DOM.llmChatMonitoringCheckbox?.checked) {
+    return;
+  }
+
+  // Check if LLM is available and not already processing
+  if (!llm || !llm.isConnected() || llmProcessing) {
+    return;
+  }
+
+  // Check if there are new messages to process (messages after marker)
+  const hasNewMessages = chatMarkerPosition < chatHistory.length;
+  if (!hasNewMessages) {
+    return;
+  }
+
+  // Mark as processing
+  llmProcessing = true;
+  log("🤖 LLM processing chat batch...");
+
+  try {
+    // Get system prompt from UI
+    const systemPrompt = DOM.llmSystemPromptInput?.value || 
+      "You are a helpful Twitch chat companion. Respond naturally and conversationally.";
+
+    // Format chat history with marker
+    const chatLog = formatChatHistoryForLLM();
+
+    // STAGE 1: Ask if LLM wants to respond
+    const shouldRespondMessages = [
+      { role: "system", content: systemPrompt },
+      { 
+        role: "user", 
+        content: `Here is the chat history:\n\n${chatLog}\n\nShould you respond to this chat? Answer ONLY "yes" or "no" (nothing else).`
+      },
+    ];
+
+    log("🤖 Stage 1: Asking LLM if it should respond...");
+    const shouldRespondAnswer = await llm.chat(shouldRespondMessages, {
+      maxTokens: 10,
+      temperature: 0.3, // Lower temperature for yes/no decision
+    });
+
+    const trimmedAnswer = shouldRespondAnswer.trim().toLowerCase();
+    log(`🤖 Stage 1 answer: "${trimmedAnswer}"`);
+
+    // Check if LLM wants to respond
+    if (trimmedAnswer !== "yes") {
+      log("🤖 LLM decided not to respond");
+      // Move marker to end of buffer (mark all as processed)
+      chatMarkerPosition = chatHistory.length;
+      return;
+    }
+
+    // STAGE 2: Ask what to respond
+    const responseMessages = [
+      { role: "system", content: systemPrompt },
+      { 
+        role: "user", 
+        content: `Here is the chat history:\n\n${chatLog}\n\nWhat should you say in response? Write ONLY your response text, without any timestamp, username, or prefix. Just the message itself.`
+      },
+    ];
+
+    log("🤖 Stage 2: Asking LLM what to respond...");
+    const responseText = await llm.chat(responseMessages, {
+      maxTokens: 256,
+      temperature: 0.7,
+    });
+
+    if (responseText && responseText.trim().length > 0) {
+      // Strip any timestamp/username prefix that LLM might have added
+      // Pattern: [HH:MM:SS] username: 
+      const cleanResponse = responseText.trim().replace(/^\[\d{2}:\d{2}:\d{2}\]\s+\w+:\s*/, '');
+      
+      log(`🤖 LLM response: "${cleanResponse}"`);
+      
+      // Send response to Twitch chat (no prefix, like human)
+      send_twitch(cleanResponse);
+      
+      // Add LLM's own response to chat history
+      addToChatHistory(CHANNEL, cleanResponse);
+    } else {
+      log("🤖 LLM returned empty response");
+    }
+
+    // Move marker to end of buffer (mark all as processed)
+    chatMarkerPosition = chatHistory.length;
+
+  } catch (error) {
+    log(`💥 LLM processing error: ${error.message}`);
+    console.error("LLM processing error:", error);
+  } finally {
+    // Mark as not processing
+    llmProcessing = false;
+    log("🤖 LLM processing complete");
+    
+    // Check if more messages arrived during processing
+    if (chatMarkerPosition < chatHistory.length) {
+      log("🤖 New messages arrived, scheduling next batch...");
+      // Schedule next processing after short delay
+      setTimeout(() => processChatWithLLM(), 1000);
+    }
   }
 }
 
@@ -407,7 +619,9 @@ function extractToken() {
 function authenticate() {
   if (!CLIENT_ID) {
     log("❌ Twitch Client ID is not set!");
-    log("📝 Please enter your Client ID in the input field at the bottom of the panel");
+    log(
+      "📝 Please enter your Client ID in the input field at the bottom of the panel",
+    );
     log("🔄 Then reload the page");
     return;
   }
@@ -511,13 +725,27 @@ function updateMinaretStatus(connected) {
   }
 }
 
+function updateLLMStatus(connected) {
+  if (connected) {
+    DOM.llmStatus.classList.add("connected");
+  } else {
+    DOM.llmStatus.classList.remove("connected");
+  }
+}
+
 /**
  * Initialize Minecraft connector if not already initialized
- * Called conditionally based on moderator permissions
+ * Called conditionally based on moderator permissions and checkbox state
  */
 function initializeMinecraftConnector() {
   if (minecraft) {
     log("ℹ️ Minecraft connector already initialized");
+    return;
+  }
+
+  // Check if checkbox is enabled
+  if (!DOM.minaretCheckbox?.checked) {
+    log("⚠️ Minaret connector disabled via checkbox");
     return;
   }
 
@@ -529,6 +757,114 @@ function initializeMinecraftConnector() {
   });
   minecraft.connect();
   log("🎮 Minecraft connector initialized");
+}
+
+/**
+ * Initialize LLM connector if not already initialized
+ * Respects checkbox state and reads configuration from stored_as fields
+ */
+function initializeLLMConnector() {
+  // Skip if already initialized
+  if (llm) {
+    log("ℹ️ LLM connector already initialized");
+    return;
+  }
+
+  // Check if checkbox is enabled
+  if (!DOM.llmCheckbox?.checked) {
+    log("⚠️ LLM connector disabled via checkbox");
+    return;
+  }
+
+  // Read configuration from stored_as fields
+  const baseUrl =
+    localStorage.getItem("llm_base_url") || "http://localhost:11434";
+  const model = localStorage.getItem("llm_model") || "llama3.2";
+  const systemPrompt = localStorage.getItem("llm_system_prompt") || "";
+  const temperature = parseFloat(
+    localStorage.getItem("llm_temperature") || "0.7",
+  );
+  const maxTokens = parseInt(localStorage.getItem("llm_max_tokens") || "512");
+
+  llm = new LLMConnector({
+    baseUrl,
+    model,
+    temperature,
+    maxTokens,
+    timeout: 30000,
+    healthCheckInterval: 30000,
+    log: log,
+    onStatusChange: updateLLMStatus,
+  });
+
+  // Store system prompt for later use (not passed to constructor)
+  llm.systemPrompt = systemPrompt;
+
+  llm.connect();
+  log("🤖 LLM connector initialized");
+
+  // Fetch and populate model list after connection
+  setTimeout(() => populateLLMModels(), 1000);
+}
+
+/**
+ * Fetch available models from Ollama and populate the model select
+ * Called after LLM connection is established
+ */
+async function populateLLMModels() {
+  if (!llm || !llm.isConnected()) {
+    log("⚠️ Cannot fetch models: LLM not connected");
+    return;
+  }
+
+  try {
+    log("🔍 Fetching available models from Ollama...");
+    const models = await llm.listModels();
+
+    if (!models || models.length === 0) {
+      log("⚠️ No models found on Ollama server");
+      DOM.llmModelSelect.innerHTML =
+        '<option value="">No models available</option>';
+      return;
+    }
+
+    // Get currently selected model from localStorage
+    const currentModel = localStorage.getItem("llm_model") || "llama3.2";
+
+    // Clear and populate select with models
+    DOM.llmModelSelect.innerHTML = "";
+
+    let hasCurrentModel = false;
+    models.forEach((model) => {
+      const option = document.createElement("option");
+      option.value = model.name;
+      option.textContent = model.name;
+
+      if (model.name === currentModel) {
+        option.selected = true;
+        hasCurrentModel = true;
+      }
+
+      DOM.llmModelSelect.appendChild(option);
+    });
+
+    // If current model not in list, add it as first option (fallback)
+    if (!hasCurrentModel && currentModel) {
+      const option = document.createElement("option");
+      option.value = currentModel;
+      option.textContent = `${currentModel} (not found)`;
+      option.selected = true;
+      DOM.llmModelSelect.insertBefore(option, DOM.llmModelSelect.firstChild);
+    }
+
+    log(
+      `✅ Loaded ${models.length} models: ${models.map((m) => m.name).join(", ")}`,
+    );
+  } catch (error) {
+    log(`💥 Failed to fetch models: ${error.message}`);
+    DOM.llmModelSelect.innerHTML =
+      '<option value="">Error loading models</option>';
+  }
 }
 
 async function sendPinnedMessage(message) {
@@ -995,6 +1331,7 @@ async function startChat(token) {
       // Own channel - always connect everything
       connectEventSub();
       initializeMinecraftConnector();
+      initializeLLMConnector(); // LLM doesn't need moderator permissions
     } else {
       // Not own channel - check moderator status first
       const isModerator = await checkModeratorStatus(CHANNEL);
@@ -1008,6 +1345,15 @@ async function startChat(token) {
         log(`ℹ️ Channel point reward listener disabled`);
         log(`ℹ️ Minecraft connector disabled`);
       }
+      // Initialize LLM even without moderator rights (doesn't require permissions)
+      initializeLLMConnector();
+    }
+
+    // Apply saved preset now that all connectors are initialized
+    const savedPreset = DOM.presetSelector.value;
+    if (savedPreset) {
+      log(`🎯 Applying saved preset: ${savedPreset}`);
+      applyStreamPreset(savedPreset);
     }
   };
 
@@ -1029,36 +1375,59 @@ async function startChat(token) {
       }
     }
 
-    const match = event.data.match(/:(.+) PRIVMSG #[^\s]+ :(.+)/);
-    if (match) {
-      const user = match[1].split("!")[0];
-      const msg = match[2].trim();
+    // Parse PRIVMSG with proper tag handling
+    console.log("🔍 parseIrcMessage function exists:", typeof parseIrcMessage);
+    console.log("🔍 Raw event.data length:", event.data.length);
+    console.log("🔍 Raw event.data (first 200 chars):", event.data.substring(0, 200));
+    console.log("🔍 Raw event.data (last 20 chars):", JSON.stringify(event.data.substring(event.data.length - 20)));
+    
+    const parsed = parseIrcMessage(event.data);
+    console.log("🔍 parseIrcMessage output:", parsed);
+    
+    if (parsed) {
+      const user = parsed.username;
+      const msg = parsed.message;
+      
+      console.log("📨 Parsed message:", { user, msg });
+
+      // Add message to chat history for LLM monitoring
+      addToChatHistory(user, msg);
+      
+      // Trigger LLM processing if enabled, connected, and not already busy
+      if (DOM.llmChatMonitoringCheckbox?.checked && !llmProcessing && llm?.isConnected()) {
+        processChatWithLLM().catch(error => {
+          log(`💥 LLM processing trigger failed: ${error.message}`);
+        });
+      }
 
       // Parse IRC tags for moderation data
       const tags = parseIrcTags(event.data);
       const userId = tags?.["user-id"];
       const messageId = tags?.id;
 
-      // Check ban rules (skip if it's our own message or a broadcaster)
-      if (userId && userId !== currentUserId && BAN_RULES.length > 0) {
-        const action = checkBanRules(msg);
-        if (action) {
-          log(`⚠️ BAN RULE MATCHED! Executing moderation action...`);
-          await executeModerationAction(action, userId, messageId, user, msg);
+      // Check chat action rules (moderation + interactive actions)
+      if (userId && CHAT_ACTIONS.length > 0) {
+        const result = checkChatActions(msg);
+        if (result) {
+          log(`⚡ CHAT ACTION MATCHED! Executing action...`);
+          await executeChatAction(result.action, userId, messageId, user, result.message);
           return; // Stop processing this message
         }
       }
 
       // Normal message processing - forward all to Minecraft
       if (msg.startsWith("!")) {
+        console.log("🎮 Routing command to Minecraft:", msg, "connector:", minecraft ? "exists" : "null");
         minecraft?.sendMessage(user, log(msg));
       } else {
         if (DOM.loudCheckbox?.checked) {
           mp3("icq");
         }
+        console.log("🎮 Routing message to Minecraft:", msg, "connector:", minecraft ? "exists" : "null");
         minecraft?.sendMessage(user, log(msg));
       }
     } else {
+      console.log("⚠️ Failed to parse IRC message:", event.data);
       log(event.data); // do not understand the source
     }
   };
@@ -1067,10 +1436,20 @@ async function startChat(token) {
 /// MAIN ///
 // Build context for reward redemption actions
 function buildCommandContext() {
+  // Debug: check global llm state
+  console.log("🔍 buildCommandContext - global llm:", llm ? "exists" : "null");
+  if (llm) {
+    console.log("🔍 buildCommandContext - llm.connected:", llm.connected);
+    console.log("🔍 buildCommandContext - llm.isConnected():", llm.isConnected());
+  }
+
   return {
     // WebSocket connections
     ws,
     minarert: minecraft?.getWebSocket() || null,
+
+    // External connectors
+    llm,
 
     // State variables
     currentUserId,
@@ -1094,7 +1473,7 @@ function buildCommandContext() {
   };
 }
 
-function handleRewardRedemption(redemption) {
+async function handleRewardRedemption(redemption) {
   const rewardId = redemption.reward.id;
   const rewardTitle = redemption.reward.title;
   const userName = redemption.user_name;
@@ -1118,9 +1497,9 @@ function handleRewardRedemption(redemption) {
   }
 
   try {
-    // Execute action closure with context
+    // Execute action closure with context (await if async)
     const context = buildCommandContext();
-    const result = actionClosure(context, userName, userInput);
+    const result = await actionClosure(context, userName, userInput);
 
     // Check if action explicitly returned false (indicates failure)
     const failed = result === false;
@@ -1209,6 +1588,73 @@ function handleRewardRedemption(redemption) {
     }
   });
 
+  // Restore saved preset UI state on page load
+  // Actual application happens when Twitch connects (ws.onopen)
+  // Must happen AFTER initializePresets() so options exist
+  const savedPreset = localStorage.getItem("stream_preset");
+  if (savedPreset) {
+    log(`🔄 Restoring saved preset UI: ${savedPreset}`);
+    DOM.presetSelector.value = savedPreset;
+    updatePresetInfo(savedPreset);
+  }
+
+  // Minaret connector checkbox event listener
+  DOM.minaretCheckbox?.addEventListener("change", function (e) {
+    if (e.target.checked) {
+      log("✅ Minaret connector enabled");
+      initializeMinecraftConnector();
+    } else {
+      log("⚠️ Minaret connector disabled");
+      if (minecraft) {
+        minecraft.disconnect();
+        minecraft = null;
+        log("🔌 Minaret connector disconnected");
+      }
+    }
+  });
+
+  // LLM connector checkbox event listener
+  DOM.llmCheckbox?.addEventListener("change", function (e) {
+    if (e.target.checked) {
+      log("✅ LLM connector enabled");
+      initializeLLMConnector();
+    } else {
+      log("⚠️ LLM connector disabled");
+      if (llm) {
+        llm.disconnect();
+        llm = null;
+        log("🔌 LLM connector disconnected");
+      }
+    }
+  });
+
+  // LLM chat monitoring checkbox event listener
+  DOM.llmChatMonitoringCheckbox?.addEventListener("change", function (e) {
+    if (e.target.checked) {
+      log("✅ LLM chat monitoring enabled");
+      // Immediately process any accumulated messages
+      if (llm && llm.isConnected() && chatMarkerPosition < chatHistory.length) {
+        log("🤖 Processing accumulated messages...");
+        processChatWithLLM().catch(error => {
+          log(`💥 LLM processing failed: ${error.message}`);
+        });
+      }
+    } else {
+      log("⚠️ LLM chat monitoring disabled");
+    }
+  });
+
+  // LLM configuration panel toggle
+  DOM.llmConfigToggle?.addEventListener("click", function () {
+    const wasExpanded = DOM.llmConfigPanel.classList.contains("expanded");
+    DOM.llmConfigPanel.classList.toggle("expanded");
+
+    // Fetch models when opening panel (if not already expanded and LLM is connected)
+    if (!wasExpanded && llm && llm.isConnected()) {
+      populateLLMModels();
+    }
+  });
+
   // Rewards system event listeners
   // Removed manual buttons - rewards are now automatically initialized and displayed on connection
 })();
@@ -1261,7 +1707,15 @@ window.getState = () => ({
   throttle: { ...throttle },
   userIdCache: { ...userIdCache },
   customRewards: Object.keys(customRewards).length,
+  llmExists: llm !== null,
+  llmConnected: llm?.isConnected() || false,
+  minaretConnected: minecraft?.isConnected() || false,
 });
+
+// Direct access to connectors for debugging
+window.getLLM = () => llm;
+window.getMinecraft = () => minecraft;
+window.getMusicQueue = () => musicQueue;
 
 // Future exports should follow this pattern:
 // window.actionName = actionName;

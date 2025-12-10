@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LLM Connector Test</title>
+  <style>
+    body {
+      font-family: monospace;
+      max-width: 1200px;
+      margin: 20px auto;
+      padding: 20px;
+      background: #1a1a1a;
+      color: #e0e0e0;
+    }
+    .section {
+      margin: 20px 0;
+      padding: 15px;
+      background: #2a2a2a;
+      border-radius: 8px;
+    }
+    .status {
+      display: inline-block;
+      padding: 5px 10px;
+      border-radius: 4px;
+      font-weight: bold;
+      margin-left: 10px;
+    }
+    .status-connected { background: #2d5016; color: #7ec850; }
+    .status-disconnected { background: #501616; color: #c85050; }
+    button {
+      background: #3a3a3a;
+      color: #e0e0e0;
+      border: 1px solid #555;
+      padding: 8px 16px;
+      margin: 5px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    button:hover { background: #4a4a4a; }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    input, textarea {
+      width: 100%;
+      padding: 8px;
+      margin: 5px 0;
+      background: #1a1a1a;
+      border: 1px solid #555;
+      color: #e0e0e0;
+      border-radius: 4px;
+      font-family: monospace;
+    }
+    textarea {
+      min-height: 100px;
+      resize: vertical;
+    }
+    #output {
+      background: #0a0a0a;
+      padding: 15px;
+      border-radius: 4px;
+      margin-top: 10px;
+      min-height: 200px;
+      max-height: 400px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      font-size: 14px;
+    }
+    .log-entry {
+      margin: 5px 0;
+      padding: 5px;
+      border-left: 3px solid #555;
+      padding-left: 10px;
+    }
+    .log-info { border-color: #50a0c8; }
+    .log-error { border-color: #c85050; }
+    .log-success { border-color: #7ec850; }
+    .streaming-chunk {
+      display: inline;
+      color: #c8a050;
+    }
+    h2 {
+      margin-top: 0;
+      color: #7ec850;
+    }
+    label {
+      display: block;
+      margin: 10px 0 5px 0;
+      color: #c0c0c0;
+    }
+  </style>
+</head>
+<body>
+  <h1>🤖 LLM Connector Test Suite</h1>
+  
+  <div class="section">
+    <h2>Connection Status</h2>
+    <div>
+      Server: <span class="status status-disconnected" id="status">Disconnected</span>
+      <span id="health-info" style="margin-left: 20px; color: #888;"></span>
+    </div>
+    <div style="margin-top: 10px;">
+      <label>Base URL:</label>
+      <input type="text" id="baseUrl" value="http://localhost:11434" />
+      
+      <label>Model:</label>
+      <input type="text" id="model" value="llama3.2" />
+      
+      <button onclick="testConnect()">Connect</button>
+      <button onclick="testDisconnect()">Disconnect</button>
+      <button onclick="testListModels()">List Models</button>
+      <button onclick="testHealth()">Check Health</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Generate (Ollama Native API)</h2>
+    <label>Prompt:</label>
+    <textarea id="generatePrompt" placeholder="Enter prompt for generation...">Explain quantum computing in one paragraph.</textarea>
+    
+    <label>System Prompt (optional):</label>
+    <input type="text" id="generateSystem" placeholder="You are a helpful assistant..." />
+    
+    <label>Temperature:</label>
+    <input type="number" id="generateTemp" value="0.7" min="0" max="1" step="0.1" />
+    
+    <label>Max Tokens:</label>
+    <input type="number" id="generateTokens" value="512" min="1" max="4096" />
+    
+    <div>
+      <button onclick="testGenerate(false)">Generate</button>
+      <button onclick="testGenerate(true)">Generate (Streaming)</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Chat (OpenAI-Compatible API)</h2>
+    <label>System Message:</label>
+    <input type="text" id="chatSystem" value="You are a helpful assistant." />
+    
+    <label>User Message:</label>
+    <textarea id="chatUser" placeholder="Enter user message...">What is the capital of France?</textarea>
+    
+    <label>Temperature:</label>
+    <input type="number" id="chatTemp" value="0.7" min="0" max="1" step="0.1" />
+    
+    <label>Max Tokens:</label>
+    <input type="number" id="chatTokens" value="256" min="1" max="4096" />
+    
+    <div>
+      <button onclick="testChat(false)">Chat</button>
+      <button onclick="testChat(true)">Chat (Streaming)</button>
+      <button onclick="testMultiTurnChat()">Multi-Turn Chat</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Output</h2>
+    <button onclick="clearOutput()">Clear Output</button>
+    <div id="output"></div>
+  </div>
+
+  <script type="module">
+    import { LLMConnector } from './connectors.js';
+
+    // Global connector instance
+    window.llm = null;
+
+    // Logging function
+    function log(message, type = 'info') {
+      const output = document.getElementById('output');
+      const entry = document.createElement('div');
+      entry.className = `log-entry log-${type}`;
+      entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+      output.appendChild(entry);
+      output.scrollTop = output.scrollHeight;
+    }
+
+    // Update status indicator
+    function updateStatus(connected) {
+      const statusEl = document.getElementById('status');
+      statusEl.textContent = connected ? 'Connected' : 'Disconnected';
+      statusEl.className = `status ${connected ? 'status-connected' : 'status-disconnected'}`;
+      
+      if (connected && window.llm) {
+        const age = window.llm.getLastHealthCheckAge();
+        document.getElementById('health-info').textContent = 
+          age ? `Last check: ${(age / 1000).toFixed(1)}s ago` : '';
+      } else {
+        document.getElementById('health-info').textContent = '';
+      }
+    }
+
+    // Test: Connect
+    window.testConnect = async function() {
+      const baseUrl = document.getElementById('baseUrl').value;
+      const model = document.getElementById('model').value;
+      
+      log('Connecting to Ollama...', 'info');
+      
+      window.llm = new LLMConnector({
+        baseUrl,
+        model,
+        log: (msg) => log(msg, 'info'),
+        onStatusChange: updateStatus,
+        healthCheckInterval: 10000, // Check every 10s for demo
+      });
+      
+      const success = await window.llm.connect();
+      if (success) {
+        log('✅ Connected successfully', 'success');
+      } else {
+        log('❌ Connection failed', 'error');
+      }
+    };
+
+    // Test: Disconnect
+    window.testDisconnect = function() {
+      if (!window.llm) {
+        log('❌ No connector instance', 'error');
+        return;
+      }
+      
+      window.llm.disconnect();
+      log('🔌 Disconnected', 'info');
+    };
+
+    // Test: List Models
+    window.testListModels = async function() {
+      if (!window.llm || !window.llm.isConnected()) {
+        log('❌ Not connected', 'error');
+        return;
+      }
+      
+      try {
+        log('Fetching models...', 'info');
+        const models = await window.llm.listModels();
+        log(`📋 Found ${models.length} models:`, 'success');
+        models.forEach(m => {
+          const size = (m.size / 1024 / 1024 / 1024).toFixed(2);
+          log(`  - ${m.name} (${size} GB)`, 'info');
+        });
+      } catch (error) {
+        log(`❌ Failed: ${error.message}`, 'error');
+      }
+    };
+
+    // Test: Health Check
+    window.testHealth = async function() {
+      if (!window.llm) {
+        log('❌ No connector instance', 'error');
+        return;
+      }
+      
+      try {
+        log('Checking health...', 'info');
+        const healthy = await window.llm.checkHealth();
+        const age = window.llm.getLastHealthCheckAge();
+        log(healthy ? 
+          `✅ Server healthy (checked ${(age / 1000).toFixed(1)}s ago)` : 
+          '❌ Server not responding', 
+          healthy ? 'success' : 'error'
+        );
+      } catch (error) {
+        log(`❌ Failed: ${error.message}`, 'error');
+      }
+    };
+
+    // Test: Generate
+    window.testGenerate = async function(streaming = false) {
+      if (!window.llm || !window.llm.isConnected()) {
+        log('❌ Not connected', 'error');
+        return;
+      }
+      
+      const prompt = document.getElementById('generatePrompt').value;
+      const system = document.getElementById('generateSystem').value;
+      const temperature = parseFloat(document.getElementById('generateTemp').value);
+      const maxTokens = parseInt(document.getElementById('generateTokens').value);
+      
+      if (!prompt) {
+        log('❌ Prompt is empty', 'error');
+        return;
+      }
+      
+      try {
+        log(`📝 Generating${streaming ? ' (streaming)' : ''}...`, 'info');
+        log(`Prompt: "${prompt.substring(0, 50)}..."`, 'info');
+        
+        const options = { temperature, maxTokens };
+        if (system) options.system = system;
+        
+        if (streaming) {
+          const output = document.getElementById('output');
+          const streamDiv = document.createElement('div');
+          streamDiv.className = 'log-entry';
+          streamDiv.innerHTML = '<strong>Response:</strong> <span class="streaming-chunk"></span>';
+          output.appendChild(streamDiv);
+          
+          const chunkSpan = streamDiv.querySelector('.streaming-chunk');
+          let fullText = '';
+          
+          options.stream = true;
+          options.onChunk = (chunk) => {
+            fullText += chunk;
+            chunkSpan.textContent = fullText;
+            output.scrollTop = output.scrollHeight;
+          };
+          
+          await window.llm.generate(prompt, options);
+          log('✅ Generation complete', 'success');
+        } else {
+          const text = await window.llm.generate(prompt, options);
+          log(`✅ Response: ${text}`, 'success');
+        }
+      } catch (error) {
+        log(`❌ Failed: ${error.message}`, 'error');
+      }
+    };
+
+    // Test: Chat
+    window.testChat = async function(streaming = false) {
+      if (!window.llm || !window.llm.isConnected()) {
+        log('❌ Not connected', 'error');
+        return;
+      }
+      
+      const systemMsg = document.getElementById('chatSystem').value;
+      const userMsg = document.getElementById('chatUser').value;
+      const temperature = parseFloat(document.getElementById('chatTemp').value);
+      const maxTokens = parseInt(document.getElementById('chatTokens').value);
+      
+      if (!userMsg) {
+        log('❌ User message is empty', 'error');
+        return;
+      }
+      
+      const messages = [];
+      if (systemMsg) {
+        messages.push({ role: 'system', content: systemMsg });
+      }
+      messages.push({ role: 'user', content: userMsg });
+      
+      try {
+        log(`💬 Chatting${streaming ? ' (streaming)' : ''}...`, 'info');
+        log(`User: "${userMsg}"`, 'info');
+        
+        const options = { temperature, maxTokens };
+        
+        if (streaming) {
+          const output = document.getElementById('output');
+          const streamDiv = document.createElement('div');
+          streamDiv.className = 'log-entry';
+          streamDiv.innerHTML = '<strong>Assistant:</strong> <span class="streaming-chunk"></span>';
+          output.appendChild(streamDiv);
+          
+          const chunkSpan = streamDiv.querySelector('.streaming-chunk');
+          let fullText = '';
+          
+          options.stream = true;
+          options.onChunk = (chunk) => {
+            fullText += chunk;
+            chunkSpan.textContent = fullText;
+            output.scrollTop = output.scrollHeight;
+          };
+          
+          await window.llm.chat(messages, options);
+          log('✅ Chat complete', 'success');
+        } else {
+          const response = await window.llm.chat(messages, options);
+          log(`✅ Assistant: ${response}`, 'success');
+        }
+      } catch (error) {
+        log(`❌ Failed: ${error.message}`, 'error');
+      }
+    };
+
+    // Test: Multi-turn conversation
+    window.testMultiTurnChat = async function() {
+      if (!window.llm || !window.llm.isConnected()) {
+        log('❌ Not connected', 'error');
+        return;
+      }
+      
+      const temperature = parseFloat(document.getElementById('chatTemp').value);
+      const maxTokens = parseInt(document.getElementById('chatTokens').value);
+      
+      const conversation = [
+        { role: 'system', content: 'You are a helpful assistant.' },
+        { role: 'user', content: 'What is 2+2?' },
+      ];
+      
+      try {
+        log('💬 Starting multi-turn conversation...', 'info');
+        log(`User: "${conversation[1].content}"`, 'info');
+        
+        // First turn
+        const response1 = await window.llm.chat(conversation, { temperature, maxTokens });
+        log(`✅ Assistant: ${response1}`, 'success');
+        
+        // Add response and continue
+        conversation.push({ role: 'assistant', content: response1 });
+        conversation.push({ role: 'user', content: 'Now multiply that by 3.' });
+        
+        log(`User: "${conversation[3].content}"`, 'info');
+        
+        // Second turn
+        const response2 = await window.llm.chat(conversation, { temperature, maxTokens });
+        log(`✅ Assistant: ${response2}`, 'success');
+        
+        log('✅ Multi-turn conversation complete', 'success');
+      } catch (error) {
+        log(`❌ Failed: ${error.message}`, 'error');
+      }
+    };
+
+    // Clear output
+    window.clearOutput = function() {
+      document.getElementById('output').innerHTML = '';
+    };
+
+    // Initialize
+    log('🚀 LLM Connector Test Suite loaded', 'info');
+    log('📝 Configure connection settings and click Connect', 'info');
+  </script>
+</body>
+</html>

@@ -17,6 +17,7 @@
 - [x] Combobox for stream presets (title, category, tags)
 - [x] Stream information update functionality via Twitch API
 - [x] Built-in preset system (no localStorage storage)
+- [x] Automatic preset restoration on page load using stored_as="stream_preset"
 
 ## Pinned Message Management
 - [x] Fully automatic pinned message management on login 
@@ -26,11 +27,12 @@
 - [x] IRC tags integration for message ID capture and automatic pinning
 
 ## Channel Point Rewards System
-- [x] Custom Reward Creation: Automated setup of 6 default interactive rewards
+- [x] Custom Reward Creation: Automated setup of 7 default interactive rewards
 - [x] Lightning Strike (500 points): Summons lightning bolt in Minecraft + sound effect
 - [x] Heal Streamer (200 points): Gives health boost + confirmation message
 - [x] Song Request (300 points): User input for Yandex Music URLs + queue integration
 - [x] Robot Voice (150 points): Text-to-speech with robotic voice effect
+- [x] Ask Neuro (100 points): Send message to LLM and get AI response in chat
 - [x] Vote Skip (30 points): Vote to skip current song
 - [x] What's Playing (30 points): Display current track information
 - [x] Reward Management UI: Automatic initialization and display on websocket connection
@@ -40,7 +42,7 @@
 - [x] Rate Limiting: Per-user limits and global cooldowns for each reward
 - [x] Integration: Seamless connection with existing Minecraft and audio systems
 - [x] Preset-Based Reward Control: Automatic enable/disable rewards based on stream preset
-  * Loitering/Coding presets: voice, music, vote_skip, playing enabled (visible)
+  * Loitering/Coding presets: voice, music, vote_skip, playing, neuro enabled (visible)
   * Gaming preset: voice, hate, love enabled (visible)
   * Dooming preset: all rewards disabled (hidden)
   * Default state (no preset): all rewards disabled (hidden)
@@ -85,6 +87,7 @@
 ## Technical Requirements
 - OAuth scopes: chat:read, chat:edit, channel:manage:broadcast, moderator:manage:chat_settings, user:manage:whispers, channel:manage:redemptions, channel:read:redemptions, moderator:manage:banned_users, moderator:manage:chat_messages
 - WebSocket connections: Twitch IRC, local minarert server
+- HTTP connections: Ollama LLM server (localhost:11434)
 - IRC tags capability for message ID capture and user ID extraction
 - Audio support for MP3 files
 - Speech synthesis API integration
@@ -92,8 +95,9 @@
 - Built-in preset configuration (modify DEFAULT_PRESETS in source)
 - Twitch messaging: send_twitch(), whisper() (public mentions), and apiWhisper() (private) functions
 - Fully automatic pinned message system with API integration
-- Channel Point Rewards system with automatic redemption handling
+- Channel Point Rewards system with automatic redemption handling and async action support
 - Message moderation system with configurable ban rules (BAN_RULES)
+- LLM integration: Ollama-compatible API for AI-powered chat responses
 - **Moderator Rights Enforcement:**
   * Automatic detection when connected to non-default channel (via ?channel=name)
   * Checks moderator status via Twitch API `/helix/moderation/moderators`
@@ -105,9 +109,11 @@
 ## Environment
 - Web-based client-side application
 - Served via Caddy on localhost:8443 with TLS
-- Connects to localhost:8765 WebSocket server
+- Connects to localhost:8765 WebSocket server (Minecraft)
+- Connects to localhost:11434 HTTP server (Ollama LLM)
 - Channel defaults to authenticated user's channel (override via ?channel=name)
 - Twitch API integration for stream management and chat settings
 - Fully automatic pinned message workflow with IRC tags
 - UserScript manager required (Tampermonkey/Greasemonkey) for Yandex Music integration
 - EventSub WebSocket for real-time channel point redemptions
+- Ollama server required for LLM features (optional, graceful degradation)

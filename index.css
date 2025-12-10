@@ -225,3 +225,87 @@ a:visited {
 .hint-text a:hover {
     text-decoration: underline;
 }
+
+/* LLM Configuration Panel */
+.gear-button {
+    background: none;
+    border: none;
+    color: #9147ff;
+    font-size: 18px;
+    cursor: pointer;
+    padding: 4px 8px;
+    margin-left: 8px;
+    transition: transform 0.2s, color 0.2s;
+    vertical-align: middle;
+}
+
+.gear-button:hover {
+    color: #7d39e0;
+    transform: rotate(90deg);
+}
+
+.llm-config-panel {
+    display: none;
+    background: #1a1a1a;
+    border: 1px solid #444;
+    border-radius: 6px;
+    padding: 12px;
+    margin-top: 8px;
+    margin-bottom: 8px;
+}
+
+.llm-config-panel.expanded {
+    display: block;
+}
+
+.config-field {
+    margin-bottom: 12px;
+}
+
+.config-field:last-child {
+    margin-bottom: 0;
+}
+
+.config-input {
+    width: 100%;
+    padding: 6px 8px;
+    background: #2a2a2a;
+    border: 1px solid #555;
+    border-radius: 4px;
+    color: #fff;
+    font-size: 12px;
+    font-family: "Consolas", "Monaco", monospace;
+}
+
+.config-input:focus {
+    outline: none;
+    border-color: #9147ff;
+}
+
+.config-textarea {
+    width: 100%;
+    padding: 6px 8px;
+    background: #2a2a2a;
+    border: 1px solid #555;
+    border-radius: 4px;
+    color: #fff;
+    font-size: 12px;
+    font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+    resize: vertical;
+    min-height: 60px;
+}
+
+.config-textarea:focus {
+    outline: none;
+    border-color: #9147ff;
+}
+
+.status-item {
+    display: flex;
+    align-items: center;
+    margin-top: 8px;
+}
+
+.status-item .checkbox-label {
+    flex: 1;
+}
