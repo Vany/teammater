@@ -34,8 +34,9 @@ export class MusicQueue {
     };
 
     this.queue = new PersistentDeck("toplay");
+    this.currentlyPlaying = null; // Track what's actually playing
     this.needVoteSkip = this.config.voteSkipThreshold;
-    this.currentSong = "Unknown Track";
+    this.currentSongName = "Unknown Track";
 
     this._setupListeners();
   }
@@ -47,27 +48,26 @@ export class MusicQueue {
   _setupListeners() {
     // Check if UserScript functions are available
     if (typeof registerReplyListener !== "function") {
-      this.config.log("⚠️ registerReplyListener not available (UserScript not loaded?)");
+      this.config.log(
+        "⚠️ registerReplyListener not available (UserScript not loaded?)",
+      );
       return;
     }
 
     // Listen for song completion
     registerReplyListener("music_done", (url) => {
-      console.log("music done: " + url);
-      if (url !== this.config.emptyUrl) {
-        this.skip();
-      } else {
-        this.queue.shift();
-      }
-      console.log(this.queue.all());
+      this.config.log(`🎵 Track finished: ${url}`);
+      this._onTrackComplete();
     });
 
     // Listen for song start (track info broadcast)
     registerReplyListener("music_start", (name) => {
-      name = name.replace(/\n/, " by ");
-      this.currentSong = name;
+      const formatted = name.replace(/\n/, " by ");
+      this.currentSongName = formatted;
+      this.config.log(`🎵 Now playing: ${formatted}`);
+
       if (this.config.onSongStart) {
-        this.config.onSongStart(name);
+        this.config.onSongStart(formatted);
       }
     });
 
@@ -76,61 +76,122 @@ export class MusicQueue {
   }
 
   /**
-   * Add song to queue and play if queue was empty
+   * Add song to queue (doesn't auto-play if something is already playing)
    * @param {string} url - Yandex Music track URL
    * @returns {number} - Queue position (0-indexed)
    */
   add(url) {
-    const wasEmpty = this.queue.size() === 0;
     this.queue.push(url);
+    const position = this.queue.size() - 1;
 
-    if (wasEmpty) {
-      this._play(url);
+    this.config.log(`➕ Added to queue at position ${position}: ${url}`);
+
+    // Only start playing if nothing is currently playing
+    if (!this.currentlyPlaying) {
+      this._playNext();
     }
 
-    return this.queue.size() - 1;
+    return position;
   }
 
   /**
-   * Skip current song and play next in queue
+   * Smart add: if playing freely (empty queue), play immediately. Otherwise, queue it.
+   * This is the main method for user song requests.
+   * @param {string} url - Yandex Music track URL
+   * @returns {Object} - Object with {queued: boolean, position: number|null}
+   */
+  smartAdd(url) {
+    // Check if we're playing freely (queue is empty and something is playing)
+    const queueIsEmpty = this.queue.size() === 0;
+    const isPlayingFreely = queueIsEmpty && this.currentlyPlaying !== null;
+
+    if (isPlayingFreely) {
+      // Queue is empty and music is playing freely - play requested song immediately
+      this.config.log(
+        `▶️ Queue empty, playing requested song immediately: ${url}`,
+      );
+      this.currentlyPlaying = url;
+      this._sendPlayCommand(url);
+      return { queued: false, position: null };
+    } else {
+      // Queue has songs OR nothing is playing - add to queue
+      this.queue.push(url);
+      const position = this.queue.size() - 1;
+
+      this.config.log(`➕ Added to queue at position ${position}: ${url}`);
+
+      // Only start playing if nothing is currently playing
+      if (!this.currentlyPlaying) {
+        this._playNext();
+      }
+
+      return { queued: true, position: position };
+    }
+  }
+
+  /**
+   * Handle track completion
+   * @private
+   */
+  _onTrackComplete() {
+    this.currentlyPlaying = null;
+    this.needVoteSkip = this.config.voteSkipThreshold; // Reset votes
+    this._playNext();
+  }
+
+  /**
+   * Play next song from queue (or fallback if empty)
+   * @private
+   */
+  _playNext() {
+    let nextUrl;
+
+    if (this.queue.size() > 0) {
+      nextUrl = this.queue.shift();
+      this.config.log(
+        `▶️ Playing next from queue (${this.queue.size()} remaining)`,
+      );
+    } else {
+      nextUrl = this.config.emptyUrl;
+      this.config.log(`▶️ Queue empty, playing fallback`);
+    }
+
+    this.currentlyPlaying = nextUrl;
+    this._sendPlayCommand(nextUrl);
+  }
+
+  /**
+   * Skip current song immediately
    */
   skip() {
-    this.queue.shift();
-    if (this.queue.size() > 0) {
-      this._play(this.queue.peekBottom());
-    } else {
-      this._play(this.config.emptyUrl);
-    }
-  }
-
-  /**
-   * Play a song URL via cross-tab communication
-   * @param {string} url - Song URL to play
-   */
-  _play(url) {
+    this.config.log(`⏭️ Skipping current track`);
+    this.currentlyPlaying = null;
     this.needVoteSkip = this.config.voteSkipThreshold;
-    console.log("Playing song: " + url);
-
-    // Check if UserScript function is available
-    if (typeof sendCommandToOtherTabs !== "function") {
-      this.config.log("⚠️ sendCommandToOtherTabs not available (UserScript not loaded?)");
-      return;
-    }
-
-    sendCommandToOtherTabs("song", url);
+    this._playNext();
   }
 
   /**
    * Vote to skip current song
-   * @returns {Object} - Object with votesRemaining and skipped boolean
+   * @returns {Object} - Object with votesRemaining, skipped boolean, and optional error
    */
   voteSkip() {
+    // Don't allow skipping fallback URL
+    if (
+      this.currentlyPlaying === this.config.emptyUrl ||
+      !this.currentlyPlaying
+    ) {
+      this.config.log(`❌ Cannot skip fallback URL or when nothing is playing`);
+      return {
+        votesRemaining: this.needVoteSkip,
+        skipped: false,
+        error: "Nothing to skip",
+      };
+    }
+
     this.needVoteSkip--;
 
     if (this.needVoteSkip < 1) {
-      this.config.log("⏭️ Skip threshold reached! Skipping song...");
       this.skip();
-      this.needVoteSkip = this.config.voteSkipThreshold;
       return { votesRemaining: 0, skipped: true };
     }
 
@@ -139,10 +200,48 @@ export class MusicQueue {
   }
 
   /**
+   * Send play command to UserScript
+   * @private
+   */
+  _sendPlayCommand(url) {
+    // Check if UserScript function is available
+    if (typeof sendCommandToOtherTabs !== "function") {
+      this.config.log(
+        "⚠️ sendCommandToOtherTabs not available (UserScript not loaded?)",
+      );
+      return;
+    }
+
+    sendCommandToOtherTabs("song", url);
+  }
+
+  /**
+   * Clear entire queue (stops at current track)
+   */
+  clear() {
+    this.queue.clear();
+    this.config.log(`🗑️ Queue cleared`);
+  }
+
+  /**
+   * Get queue status and info
+   * @returns {Object} - Status object with current state
+   */
+  getStatus() {
+    return {
+      currentlyPlaying: this.currentlyPlaying,
+      currentSongName: this.currentSongName,
+      queueLength: this.queue.size(),
+      queuedSongs: this.queue.all(),
+      votesNeeded: this.needVoteSkip,
+    };
+  }
+
+  /**
    * Get current song name
    */
   getCurrentSong() {
-    return this.currentSong;
+    return this.currentSongName;
   }
 
   /**
@@ -215,14 +314,19 @@ export class MinecraftConnector {
         this._updateStatus(false);
 
         if (event.code === 1006) {
-          this.config.log("❌ Connection failed - check credentials and server status");
+          this.config.log(
+            "❌ Connection failed - check credentials and server status",
+          );
         } else {
           this.config.log(`❌ Connection closed (code: ${event.code})`);
         }
 
         // Auto-reconnect only if not explicitly disconnected
         if (this.shouldReconnect) {
-          this.reconnectTimer = setTimeout(() => this.connect(), this.config.reconnectDelay);
+          this.reconnectTimer = setTimeout(
+            () => this.connect(),
+            this.config.reconnectDelay,
+          );
         }
       };
 
@@ -252,7 +356,7 @@ export class MinecraftConnector {
           message: message,
           user: user,
           chat: "T",
-        })
+        }),
       );
       return true;
     } catch (error) {
@@ -310,7 +414,7 @@ export class MinecraftConnector {
    */
   disconnect() {
     this.shouldReconnect = false; // Disable auto-reconnect
-    
+
     // Clear any pending reconnect timer
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
@@ -374,23 +478,25 @@ export class LLMConnector {
   async connect() {
     try {
       const healthy = await this.checkHealth();
-      
+
       if (healthy) {
         this.connected = true;
         this._updateStatus(true);
         this.config.log(`🤖 Connected to Ollama at ${this.config.baseUrl}`);
         this.config.log(`📋 Default model: ${this.config.model}`);
-        
+
         // Start periodic health checks
         if (this.config.healthCheckInterval > 0) {
           this._startHealthChecks();
         }
-        
+
         return true;
       } else {
         this.connected = false;
         this._updateStatus(false);
-        this.config.log(`❌ Ollama server not responding at ${this.config.baseUrl}`);
+        this.config.log(
+          `❌ Ollama server not responding at ${this.config.baseUrl}`,
+        );
         return false;
       }
     } catch (error) {
@@ -420,11 +526,11 @@ export class LLMConnector {
 
       const wasConnected = this.connected;
       const isHealthy = response.ok;
-      
+
       if (isHealthy !== wasConnected) {
         this.connected = isHealthy;
         this._updateStatus(isHealthy);
-        
+
         if (isHealthy) {
           this.config.log(`✅ Ollama server is back online`);
         } else {
@@ -435,13 +541,13 @@ export class LLMConnector {
       return isHealthy;
     } catch (error) {
       const wasConnected = this.connected;
-      
+
       if (wasConnected) {
         this.connected = false;
         this._updateStatus(false);
         this.config.log(`⚠️ Health check failed: ${error.message}`);
       }
-      
+
       return false;
     }
   }
@@ -482,7 +588,7 @@ export class LLMConnector {
   /**
    * Generate text using Ollama native API (/api/generate)
    * Supports both streaming and non-streaming responses
-   * 
+   *
    * @param {string} prompt - Text prompt for generation
    * @param {Object} options - Generation options
    * @param {string} options.model - Override default model
@@ -529,7 +635,10 @@ export class LLMConnector {
 
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), this.config.timeout);
+      const timeoutId = setTimeout(
+        () => controller.abort(),
+        this.config.timeout,
+      );
 
       const response = await fetch(`${this.config.baseUrl}/api/generate`, {
         method: "POST",
@@ -561,7 +670,7 @@ export class LLMConnector {
   /**
    * Chat using OpenAI-compatible API (/v1/chat/completions)
    * Supports both streaming and non-streaming responses
-   * 
+   *
    * @param {Array<{role: string, content: string}>} messages - Chat message history
    * @param {Object} options - Chat options
    * @param {string} options.model - Override default model
@@ -600,14 +709,20 @@ export class LLMConnector {
 
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), this.config.timeout);
+      const timeoutId = setTimeout(
+        () => controller.abort(),
+        this.config.timeout,
+      );
 
-      const response = await fetch(`${this.config.baseUrl}/v1/chat/completions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(requestBody),
-        signal: controller.signal,
-      });
+      const response = await fetch(
+        `${this.config.baseUrl}/v1/chat/completions`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(requestBody),
+          signal: controller.signal,
+        },
+      );
 
       clearTimeout(timeoutId);
 
@@ -724,7 +839,7 @@ export class LLMConnector {
 
     this.healthCheckTimer = setInterval(
       () => this.checkHealth(),
-      this.config.healthCheckInterval
+      this.config.healthCheckInterval,
     );
   }
 
@@ -771,7 +886,7 @@ export class LLMConnector {
    */
   disconnect() {
     this._stopHealthChecks();
-    
+
     if (this.connected) {
       this.connected = false;
       this._updateStatus(false);

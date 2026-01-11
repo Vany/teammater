@@ -5,7 +5,7 @@
 // @description  Skip songs in Yandex Music with cross-tab commands (new UI compatible)
 // @author       ME
 // @match        https://music.yandex.ru/**
-// @match        https://localhost:8443
+// @match        https://localhost:8443/**
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=yandex.ru
 // @grant        GM_addValueChangeListener
 // @grant        GM_setValue
@@ -57,11 +57,87 @@
 
   function handleCommand(command, payload) {
     if (!command) return;
-    if (command == "song") {
-      window.location = payload;
-    } else {
-      console.warn("⚠️ Unknown command:", command);
+
+    switch (command) {
+      case "song":
+        handleSongCommand(payload);
+        break;
+      case "pause":
+        handlePauseCommand();
+        break;
+      case "resume":
+        handleResumeCommand();
+        break;
+      case "query_status":
+        handleQueryStatus();
+        break;
+      default:
+        console.warn("⚠️ Unknown command:", command);
     }
+  }
+
+  function handleSongCommand(url) {
+    if (!url) {
+      console.warn("⚠️ Song command requires URL");
+      return;
+    }
+
+    // Only navigate if URL is different
+    if (window.location.href !== url) {
+      console.log(`🎵 Loading new track: ${url}`);
+      window.location = url;
+    } else {
+      console.log(`🎵 Already on track, clicking play`);
+      setTimeout(() => {
+        safeClick(
+          'header[class^="TrackModal_header_"] button[aria-label="Playback"]',
+        );
+      }, 1000);
+    }
+  }
+
+  function handlePauseCommand() {
+    console.log("⏸️ Pause command received");
+    const audio = document.querySelector("audio");
+    if (audio && !audio.paused) {
+      safeClick(
+        'header[class^="TrackModal_header_"] button[aria-label="Playback"]',
+      );
+      console.log("✅ Paused");
+    } else {
+      console.log("ℹ️ Already paused");
+    }
+  }
+
+  function handleResumeCommand() {
+    console.log("▶️ Resume command received");
+    const audio = document.querySelector("audio");
+    if (audio && audio.paused) {
+      safeClick(
+        'header[class^="TrackModal_header_"] button[aria-label="Playback"]',
+      );
+      console.log("✅ Resumed");
+    } else {
+      console.log("ℹ️ Already playing");
+    }
+  }
+
+  function handleQueryStatus() {
+    const audio = document.querySelector("audio");
+    const metaContainer = document.querySelector(
+      'div[class^="PlayerBarDesktopWithBackgroundProgressBar"] div[class^="Meta_metaContainer"]',
+    );
+
+    const status = {
+      playing: audio && !audio.paused,
+      currentTime: audio ? audio.currentTime : 0,
+      duration: audio ? audio.duration : 0,
+      trackInfo: metaContainer ? metaContainer.innerText : "Unknown",
+      url: window.location.href,
+    };
+
+    console.log("📊 Status:", status);
+    sendCommandToOtherTabs("status_reply", status);
   }
 
   if (!unsafeWindow.i_am_a_master) {

@@ -18,7 +18,11 @@
 // user: username string
 // message: message/input string
 
-import { MINECRAFT_COMMANDS, TIMING, BROADCASTER_USERNAME } from "./config.js";
+import {
+  getMinecraftCommands,
+  TIMING,
+  getBroadcasterUsername,
+} from "./config.js";
 
 import { detectLanguage } from "./utils.js";
 
@@ -36,8 +40,8 @@ import { detectLanguage } from "./utils.js";
  * @returns {Function} - closure(context, user, message) => void
  */
 export function hate(
-  damageCommand = MINECRAFT_COMMANDS.HEAL,
-  lightningCommand = MINECRAFT_COMMANDS.LIGHTNING,
+  damageCommand = null,
+  lightningCommand = null,
   warningMessage = "§c Beware !!! They are hating you!!",
   soundEffect = "ahhh",
   cooldownMs = TIMING.HATE_COOLDOWN_MS,
@@ -52,6 +56,11 @@ export function hate(
       log,
     } = context;
 
+    // Get commands dynamically from localStorage
+    const commands = getMinecraftCommands();
+    const actualDamageCommand = damageCommand || commands.HEAL;
+    const actualLightningCommand = lightningCommand || commands.LIGHTNING;
+
     // Initialize throttle for user if not exists
     if (throttle[user] === undefined) {
       throttle[user] = Date.now() - TIMING.HATE_INITIAL_OFFSET_MS;
@@ -60,7 +69,10 @@ export function hate(
     const timeSinceLastCommand = Date.now() - throttle[user];
 
     // Check throttle (except for broadcaster)
-    if (timeSinceLastCommand < cooldownMs && user !== BROADCASTER_USERNAME) {
+    if (
+      timeSinceLastCommand < cooldownMs &&
+      user !== getBroadcasterUsername()
+    ) {
       log(
         `⏱️ Throttled: ${user} must wait ${Math.ceil((cooldownMs - timeSinceLastCommand) / 1000)}s`,
       );
@@ -71,7 +83,7 @@ export function hate(
     throttle[user] = Date.now();
 
     // Always execute damage command (typically heal)
-    sendCommandMinaret(damageCommand);
+    sendCommandMinaret(actualDamageCommand);
 
     // Check love protection
     if (Date.now() - love_timer < TIMING.LOVE_PROTECTION_DURATION_MS) {
@@ -79,7 +91,7 @@ export function hate(
       mp3(soundEffect);
     } else {
       // Strike with lightning after 1s delay
-      setTimeout(() => sendCommandMinaret(lightningCommand), 1000);
+      setTimeout(() => sendCommandMinaret(actualLightningCommand), 1000);
     }
 
     // Update love timer
@@ -114,6 +126,8 @@ export function love(
 
 /**
  * Music action initializer: creates configured music queue action
+ * Smart queueing: if queue is empty and music is playing freely, play immediately.
+ * Otherwise, add to queue.
  * @param {RegExp} urlPattern - Regex pattern for valid music URLs
  * @param {string} errorMessage - Message to send when URL is invalid
  * @returns {Function} - closure(context, user, message) => boolean
@@ -123,7 +137,7 @@ export function music(
   errorMessage = "Invalid song URL. Please use Yandex Music track URL.",
 ) {
   return (context, user, message) => {
-    const { queueSong, apiWhisper, send_twitch, log } = context;
+    const { musicQueue, apiWhisper, send_twitch, log } = context;
 
     const url = message.trim();
 
@@ -137,11 +151,28 @@ export function music(
     // Normalize to .ru domain
     const normalizedUrl = url.replace(/yandex\.com/, "yandex.ru");
 
-    // Queue song
-    const queuePosition = queueSong(normalizedUrl);
-    send_twitch(`🎵 Song queued! Position: ${queuePosition}`);
+    // Check if music queue is available
+    if (!musicQueue) {
+      log(`❌ Music queue not available`);
+      apiWhisper(user, "Music queue is not available");
+      return false;
+    }
 
-    log(`✅ Song queued by ${user}: ${normalizedUrl}`);
+    // Smart add: play immediately if queue empty, otherwise queue it
+    const result = musicQueue.smartAdd(normalizedUrl);
+
+    if (result.queued) {
+      // Song was added to queue
+      send_twitch(`🎵 Song queued! Position: ${result.position + 1}`);
+      log(
+        `✅ Song queued by ${user} at position ${result.position}: ${normalizedUrl}`,
+      );
+    } else {
+      // Song is playing immediately
+      send_twitch(`🎵 Playing now!`);
+      log(`✅ Song playing immediately for ${user}: ${normalizedUrl}`);
+    }
+
     return true;
   };
 }
@@ -153,20 +184,38 @@ export function music(
  */
 export function vote_skip(threshold = 3) {
   return (context, user, message) => {
-    const { needVoteSkip, skipSong, ws, CHANNEL, log } = context;
+    const { musicQueue, ws, CHANNEL, log, send_twitch } = context;
 
-    // Decrement vote counter
-    context.needVoteSkip--;
+    // Use MusicQueue's voteSkip method
+    if (!musicQueue) {
+      log(`❌ Music queue not available`);
+      if (send_twitch) send_twitch("❌ Music queue unavailable");
+      return;
+    }
 
-    if (context.needVoteSkip < 1) {
-      log(`⏭️ Skip threshold reached! Skipping song...`);
-      skipSong();
-      // Reset vote counter for next song
-      context.needVoteSkip = threshold;
+    const result = musicQueue.voteSkip();
+
+    if (result.error) {
+      // Cannot skip (fallback URL or nothing playing)
+      log(`❌ Vote skip failed: ${result.error}`);
+      if (send_twitch) send_twitch(`❌ ${result.error}`);
+      return;
+    }
+
+    if (result.skipped) {
+      // Skip threshold reached
+      log(`⏭️ Skip threshold reached! Song skipped by vote.`);
+      if (ws && CHANNEL) {
+        ws.send(`PRIVMSG #${CHANNEL} :/me ⏭️ Song skipped!`);
+      }
     } else {
-      // Announce remaining votes needed
-      const votesNeeded = context.needVoteSkip;
-      ws.send(`PRIVMSG #${CHANNEL} :/me 🆘 Skip votes needed: ${votesNeeded}`);
+      // Vote cast, need more votes
+      const votesNeeded = result.votesRemaining;
+      if (ws && CHANNEL) {
+        ws.send(
+          `PRIVMSG #${CHANNEL} :/me 🗳️ Skip votes needed: ${votesNeeded}`,
+        );
+      }
       log(`🗳️ Skip vote cast by ${user}. Votes remaining: ${votesNeeded}`);
     }
   };

@@ -1,17 +1,21 @@
 <!doctype html>
 <html>
     <head>
-        <title>Teammater - Twitch Stream Control</title>
+        <title>Teammater - Modular Architecture (Test)</title>
         <link rel="stylesheet" href="index.css" />
     </head>
     <body>
         <div class="main-content">
-            <h1>Twitch Chat</h1>
+            <h1>Twitch Chat (Modular) 🔬</h1>
             <div id="output"></div>
         </div>
 
         <div class="control-panel">
             <audio id="myAudio" src="mp3/boo.mp3" preload="auto"></audio>
+
+            <!-- Module Container (new modular system) -->
+            <div id="modules-container" class="modules-container"></div>
+
             <button
                 class="test-button"
                 onclick='voice()({}, "testuser", "Test passed");'
@@ -24,198 +28,14 @@
                     <input
                         type="checkbox"
                         stored_as="loud"
-                        checked
+                        stored_default="true"
                         id="loudCheckbox"
                     />
                     🌸 loud
                 </label>
-            </div>
-
-            <div class="control-section">
-                <h3>Connection Status</h3>
-                <div>
-                    <span id="twitchStatus" class="status-indicator"></span>
-                    Twitch Chat
-                </div>
-                <div class="status-item">
-                    <label class="checkbox-label">
-                        <span
-                            id="minaretStatus"
-                            class="status-indicator"
-                        ></span>
-                        <input
-                            type="checkbox"
-                            stored_as="minaret_enabled"
-                            checked
-                            id="minaretCheckbox"
-                        />
-                        Minaret Server
-                    </label>
-                </div>
-                <div class="status-item">
-                    <label class="checkbox-label">
-                        <span id="llmStatus" class="status-indicator"></span>
-                        <input
-                            type="checkbox"
-                            stored_as="llm_enabled"
-                            id="llmCheckbox"
-                        />
-                        LLM (Ollama)
-                    </label>
-                    <button class="gear-button" id="llmConfigToggle">⚙</button>
-                </div>
-                <div class="llm-config-panel" id="llmConfigPanel">
-                    <div class="config-field">
-                        <label class="checkbox-label">
-                            <input
-                                type="checkbox"
-                                stored_as="llm_chat_monitoring"
-                                id="llmChatMonitoringCheckbox"
-                            />
-                            Enable Chat Monitoring
-                        </label>
-                    </div>
-                    <div class="config-field">
-                        <label class="label-text">Base URL</label>
-                        <input
-                            type="text"
-                            class="config-input"
-                            stored_as="llm_base_url"
-                            value="http://localhost:11434"
-                            placeholder="http://localhost:11434"
-                        />
-                    </div>
-                    <div class="config-field">
-                        <label class="label-text">Model</label>
-                        <select
-                            class="config-input"
-                            stored_as="llm_model"
-                            id="llmModelSelect"
-                        >
-                            <option value="">Loading models...</option>
-                        </select>
-                    </div>
-                    <div class="config-field">
-                        <label class="label-text">System Prompt</label>
-                        <textarea
-                            class="config-textarea"
-                            stored_as="llm_system_prompt"
-                            placeholder="You are a helpful Twitch chat assistant..."
-                            rows="3"
-                        ></textarea>
-                    </div>
-                    <div class="config-field">
-                        <label class="label-text">Temperature (0-1)</label>
-                        <input
-                            type="number"
-                            class="config-input"
-                            stored_as="llm_temperature"
-                            value="0.7"
-                            min="0"
-                            max="1"
-                            step="0.1"
-                        />
-                    </div>
-                    <div class="config-field">
-                        <label class="label-text">Max Tokens</label>
-                        <input
-                            type="number"
-                            class="config-input"
-                            stored_as="llm_max_tokens"
-                            value="512"
-                            min="1"
-                            max="4096"
-                        />
-                    </div>
-                </div>
-            </div>
-            <div class="control-section">
-                <a
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    href="https://localhost:8443/neco.html?t=100"
-                    >neco 1m
-                </a>
-                <a
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    href="https://localhost:8443/neco.html?t=300"
-                    >neco 5m
-                </a>
-                <a
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    href="https://localhost:8443/neco.html"
-                    >neco 10m
-                </a>
-            </div>
-
-            <div class="control-section">
-                <h3>
-                    <span id="streamStatus" class="status-indicator"></span>
-                    Stream Control
-                </h3>
-                <select
-                    id="presetSelector"
-                    class="preset-selector"
-                    stored_as="stream_preset"
-                >
-                    <option value="">Select preset...</option>
-                </select>
-                <div id="presetInfo" class="preset-info preset-info-hidden">
-                    <div class="field">
-                        <span class="label">Title:</span>
-                        <span id="presetTitle">-</span>
-                    </div>
-                    <div class="field">
-                        <span class="label">Game:</span>
-                        <span id="presetGame">-</span>
-                    </div>
-                    <div class="field">
-                        <span class="label">Tags:</span>
-                        <span id="presetTags">-</span>
-                    </div>
-                    <div class="field">
-                        <span class="label">Pin:</span>
-                        <span id="presetPin">-</span>
-                    </div>
-                </div>
-            </div>
-
-            <div class="control-section">
-                <h3>🎯 Channel Point Rewards</h3>
-                <div id="rewardsList" class="rewards-list"></div>
-            </div>
-
-            <div class="control-section">
-                <label class="input-label">
-                    <span class="label-text">Twitch Client ID</span>
-                    <input
-                        type="text"
-                        stored_as="twitch_client_id"
-                        class="client-id-input"
-                        placeholder="Enter Client ID..."
-                    />
-                </label>
-                <div class="hint-text">
-                    Get from:
-                    <a
-                        href="https://dev.twitch.tv/console/apps"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        >dev.twitch.tv</a
-                    >
-                </div>
             </div>
         </div>
 
         <script type="module" src="index.js"></script>
     </body>
 </html>
-
-<!--
-!song https://music.yandex.ru/album/10085696/track/63405148
-!song https://music.yandex.ru/album/8152969/track/55592501
-!song https://music.yandex.ru/album/8152969/track/55592501
-
--->
