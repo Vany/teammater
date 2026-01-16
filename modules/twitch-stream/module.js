@@ -118,9 +118,16 @@ export class TwitchStreamModule extends BaseModule {
 
   /**
    * Set user ID (required for API calls)
+   * If module is enabled, will automatically connect
    */
-  setUserId(userId) {
+  async setUserId(userId) {
     this.currentUserId = userId;
+
+    // If module is enabled, connect now that we have user ID
+    if (this.enabled && !this.connected) {
+      this.log("🔑 User ID set, connecting...");
+      await this.connect();
+    }
   }
 
   /**
@@ -175,7 +182,10 @@ export class TwitchStreamModule extends BaseModule {
    */
   async doConnect() {
     if (!this.currentUserId) {
-      throw new Error("User ID required. Call setUserId() first.");
+      // Don't throw error, just log and skip connection
+      // This happens when checkbox is restored from localStorage before auth
+      this.log("⏳ Waiting for user ID...");
+      return;
     }
 
     this.log("📺 Initializing Twitch Stream module...");

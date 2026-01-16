@@ -12,7 +12,7 @@
  * Based on MinecraftConnector from connectors.js
  */
 
-import { BaseModule } from '../base-module.js';
+import { BaseModule } from "../base-module.js";
 
 export class MinecraftModule extends BaseModule {
   constructor() {
@@ -26,7 +26,7 @@ export class MinecraftModule extends BaseModule {
    * Module display name
    */
   getDisplayName() {
-    return '🎮 Minecraft (Minaret)';
+    return "🎮 Minecraft (Minaret)";
   }
 
   /**
@@ -36,27 +36,27 @@ export class MinecraftModule extends BaseModule {
     return {
       connection: {
         url: {
-          type: 'text',
-          label: 'WebSocket URL',
-          default: 'ws://localhost:8765',
-          stored_as: 'minaret_url',
+          type: "text",
+          label: "WebSocket URL",
+          default: "ws://localhost:8765",
+          stored_as: "minaret_url",
         },
         reconnect_delay: {
-          type: 'number',
-          label: 'Reconnect Delay (ms)',
+          type: "number",
+          label: "Reconnect Delay (ms)",
           default: 5000,
           min: 1000,
           max: 60000,
           step: 1000,
-          stored_as: 'minaret_reconnect_delay',
+          stored_as: "minaret_reconnect_delay",
         },
       },
       minecraft: {
         username: {
-          type: 'text',
-          label: 'Minecraft Username',
-          default: 'vany_serezhkin',
-          stored_as: 'minecraft_username',
+          type: "text",
+          label: "Minecraft Username",
+          default: "vany_serezhkin",
+          stored_as: "minecraft_username",
         },
       },
     };
@@ -66,7 +66,7 @@ export class MinecraftModule extends BaseModule {
    * Connect to Minecraft server
    */
   async doConnect() {
-    const url = this.getConfigValue('url', 'ws://localhost:8765');
+    const url = this.getConfigValue("url", "ws://localhost:8765");
     this.shouldReconnect = true;
 
     this.log(`🎮 Connecting to Minecraft at ${url}...`);
@@ -88,26 +88,30 @@ export class MinecraftModule extends BaseModule {
         this.updateStatus(false);
 
         if (event.code === 1006) {
-          this.log('❌ Connection failed - check server status');
+          this.log("❌ Connection failed - check server status");
         } else {
           this.log(`❌ Connection closed (code: ${event.code})`);
         }
 
-        // Auto-reconnect if not explicitly disconnected
-        if (this.shouldReconnect) {
-          const reconnectDelay = parseInt(this.getConfigValue('reconnect_delay', '5000'));
+        // Auto-reconnect if not explicitly disconnected AND module is still enabled
+        if (this.shouldReconnect && this.enabled) {
+          const reconnectDelay = parseInt(
+            this.getConfigValue("reconnect_delay", "5000"),
+          );
           this.log(`🔄 Reconnecting in ${reconnectDelay}ms...`);
-          this.reconnectTimer = setTimeout(() => this.connect(), reconnectDelay);
+          this.reconnectTimer = setTimeout(
+            () => this.connect(),
+            reconnectDelay,
+          );
         }
       };
 
       this.ws.onerror = (error) => {
-        this.log('💥 WebSocket error - connection may have failed');
+        this.log("💥 WebSocket error - connection may have failed");
       };
 
       // Wait for connection to establish
       await this._waitForConnection();
-
     } catch (error) {
       this.log(`💥 Connection failed: ${error.message}`);
       throw error;
@@ -130,7 +134,7 @@ export class MinecraftModule extends BaseModule {
     if (this.ws) {
       this.ws.close();
       this.ws = null;
-      this.log('🔌 Disconnected from Minecraft');
+      this.log("🔌 Disconnected from Minecraft");
     }
   }
 
@@ -140,16 +144,19 @@ export class MinecraftModule extends BaseModule {
   _waitForConnection() {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
-        reject(new Error('Connection timeout'));
+        reject(new Error("Connection timeout"));
       }, 10000);
 
       const checkConnection = () => {
         if (this.ws.readyState === WebSocket.OPEN) {
           clearTimeout(timeout);
           resolve();
-        } else if (this.ws.readyState === WebSocket.CLOSED || this.ws.readyState === WebSocket.CLOSING) {
+        } else if (
+          this.ws.readyState === WebSocket.CLOSED ||
+          this.ws.readyState === WebSocket.CLOSING
+        ) {
           clearTimeout(timeout);
-          reject(new Error('Connection failed'));
+          reject(new Error("Connection failed"));
         } else {
           setTimeout(checkConnection, 100);
         }
@@ -164,16 +171,18 @@ export class MinecraftModule extends BaseModule {
    */
   sendMessage(user, message) {
     if (!this.isConnected() || !this.ws) {
-      this.log('💥 Not connected to Minecraft!');
+      this.log("💥 Not connected to Minecraft!");
       return false;
     }
 
     try {
-      this.ws.send(JSON.stringify({
-        message: message,
-        user: user,
-        chat: 'T',
-      }));
+      this.ws.send(
+        JSON.stringify({
+          message: message,
+          user: user,
+          chat: "T",
+        }),
+      );
       return true;
     } catch (error) {
       this.log(`💥 Send failed: ${error.message}`);
@@ -186,7 +195,7 @@ export class MinecraftModule extends BaseModule {
    */
   sendCommand(command) {
     if (!this.isConnected() || !this.ws || !command) {
-      this.log('💥 Not connected to Minecraft!');
+      this.log("💥 Not connected to Minecraft!");
       return false;
     }
 
@@ -214,7 +223,7 @@ export class MinecraftModule extends BaseModule {
     if (!this.isConnected()) {
       return {
         minecraft: null,
-        minarert: null,
+        minaret: null,
       };
     }
 
@@ -225,7 +234,7 @@ export class MinecraftModule extends BaseModule {
         getWebSocket: this.getWebSocket.bind(this),
         isConnected: () => this.isConnected(),
       },
-      minarert: this.ws, // Legacy compatibility
+      minaret: this.ws, // Legacy compatibility
       sendMessageMinaret: (user, msg) => this.sendMessage(user, msg),
       sendCommandMinaret: (cmd) => this.sendCommand(cmd),
     };

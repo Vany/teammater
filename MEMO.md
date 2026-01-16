@@ -1,5 +1,11 @@
 # Teammater Implementation Memo
 
+# BUGS
+
+- some time russian detector for voice is not working and text played in english
+
+
+
 ## Architecture Overview
 Single-page web application with Twitch integration and Minecraft server communication.
 
@@ -7,7 +13,7 @@ Single-page web application with Twitch integration and Minecraft server communi
 - Twitch IRC WebSocket (wss://irc-ws.chat.twitch.tv:443) for chat connectivity
 - Twitch Helix API for stream management, chat settings, and moderation
 - EventSub WebSocket (wss://eventsub.wss.twitch.tv/ws) for real-time redemptions
-- MinecraftConnector class - WebSocket client for "minarert" server (localhost:8765)
+- MinecraftConnector class - WebSocket client for Minaret server (localhost:8765)
 - MusicQueue class - Cross-tab music control via UserScript + localStorage events
 - Audio system: MP3 playback + Speech Synthesis API
 - **Action System:** Unified function-based closure architecture for all bot actions
@@ -506,7 +512,7 @@ voice_man: { action: voice({ type: "man", language: "en-US" }) },
 ```
 
 **Context Object Structure:**
-- WebSocket connections: `ws`, `minarert`
+- WebSocket connections: `ws`, `minaret`
 - State variables: `currentUserId`, `CHANNEL`, `throttle`, `love_timer`, `needVoteSkip`, `currentSong`
 - Utility functions: `log`, `mp3`, `speak`
 - Twitch functions: `send_twitch`, `sendAction`, `apiWhisper`

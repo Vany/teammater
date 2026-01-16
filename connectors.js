@@ -264,7 +264,7 @@ export class MusicQueue {
 // ============================
 
 /**
- * WebSocket connector for local Minecraft server ("minarert")
+ * WebSocket connector for local Minecraft server (Minaret)
  * Manages connection lifecycle and message sending
  */
 export class MinecraftConnector {

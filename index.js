@@ -254,7 +254,9 @@ async function connectModules(token, username) {
   // Connect Music Queue (always enabled)
   const musicModule = moduleManager.get("music-queue");
   if (musicModule) {
-    await musicModule.connect();
+    await musicModule.connect().catch((err) => {
+      log(`⚠️ Music Queue connection failed: ${err.message}`);
+    });
 
     // Setup song start callback
     musicModule.setOnSongStart((name) => {
@@ -268,20 +270,25 @@ async function connectModules(token, username) {
   // Connect LLM (if enabled)
   const llmModule = moduleManager.get("llm");
   if (llmModule?.isEnabled()) {
-    await llmModule.connect();
+    await llmModule.connect().catch((err) => {
+      log(`⚠️ LLM connection failed: ${err.message}`);
+    });
   }
 
   // Connect Minecraft (if enabled)
   const minecraftModule = moduleManager.get("minecraft");
   if (minecraftModule?.isEnabled()) {
-    await minecraftModule.connect();
+    await minecraftModule.connect().catch((err) => {
+      log(`⚠️ Minecraft connection failed: ${err.message}`);
+    });
   }
 
   // Connect Twitch Chat
   const chatModule = moduleManager.get("twitch-chat");
   if (chatModule) {
-    chatModule.setAuth(token, username, CHANNEL);
-    await chatModule.connect();
+    await chatModule.setAuth(token, username, CHANNEL).catch((err) => {
+      log(`⚠️ Twitch Chat connection failed: ${err.message}`);
+    });
 
     // Register message handler for chat actions
     chatModule.registerMessageHandler(handleChatMessage);
@@ -290,8 +297,9 @@ async function connectModules(token, username) {
   // Connect Twitch EventSub (if moderator or own channel)
   const eventSubModule = moduleManager.get("twitch-eventsub");
   if (eventSubModule) {
-    eventSubModule.setUserId(currentUserId);
-    await eventSubModule.connect();
+    await eventSubModule.setUserId(currentUserId).catch((err) => {
+      log(`⚠️ Twitch EventSub connection failed: ${err.message}`);
+    });
 
     // Register redemption handler
     eventSubModule.registerRedemptionHandler(handleRedemption);
@@ -300,13 +308,16 @@ async function connectModules(token, username) {
   // Connect Twitch Stream
   const streamModule = moduleManager.get("twitch-stream");
   if (streamModule) {
-    streamModule.setUserId(currentUserId);
+    await streamModule.setUserId(currentUserId).catch((err) => {
+      log(`⚠️ Twitch Stream connection failed: ${err.message}`);
+    });
     streamModule.setPresets(DEFAULT_PRESETS);
-    await streamModule.connect();
   }
 
   // Initialize rewards
-  await initializeRewards();
+  await initializeRewards().catch((err) => {
+    log(`⚠️ Rewards initialization failed: ${err.message}`);
+  });
 
   log("✅ All modules connected");
 }
@@ -384,17 +395,18 @@ function setupActions() {
 async function handleChatMessage(messageData) {
   const { username, message, userId, messageId } = messageData;
 
+  // Display message in UI
+  log(`💬 ${username}: ${message}`);
+
+  // Play sound if loud mode is enabled
+  if (DOM.loudCheckbox?.checked) {
+    mp3("icq");
+  }
+
   // Forward to Minecraft if connected
   const minecraftModule = moduleManager.get("minecraft");
   if (minecraftModule?.isConnected()) {
-    if (message.startsWith("!")) {
-      minecraftModule.sendMessage(username, message);
-    } else {
-      if (DOM.loudCheckbox?.checked) {
-        mp3("icq");
-      }
-      minecraftModule.sendMessage(username, message);
-    }
+    minecraftModule.sendMessage(username, message);
   }
 
   // Check chat actions

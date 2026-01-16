@@ -103,9 +103,16 @@ export class TwitchEventSubModule extends BaseModule {
   /**
    * Set user ID (required for subscriptions)
    * Must be called before connect()
+   * If module is enabled, will automatically connect
    */
-  setUserId(userId) {
+  async setUserId(userId) {
     this.currentUserId = userId;
+
+    // If module is enabled, connect now that we have user ID
+    if (this.enabled && !this.connected) {
+      this.log("🔑 User ID set, connecting...");
+      await this.connect();
+    }
   }
 
   /**
@@ -201,7 +208,10 @@ export class TwitchEventSubModule extends BaseModule {
    */
   async doConnect() {
     if (!this.currentUserId) {
-      throw new Error("User ID required. Call setUserId() first.");
+      // Don't throw error, just log and skip connection
+      // This happens when checkbox is restored from localStorage before auth
+      this.log("⏳ Waiting for user ID...");
+      return;
     }
 
     const eventsubUrl = this.getConfigValue(
@@ -222,14 +232,17 @@ export class TwitchEventSubModule extends BaseModule {
       this.updateStatus(false);
       this.sessionId = null;
 
-      const reconnectDelay = parseInt(
-        this.getConfigValue("reconnect_delay", "5000"),
-      );
-      this.reconnectTimer = setTimeout(() => {
-        this.connect().catch((err) => {
-          this.log(`💥 Reconnect failed: ${err.message}`);
-        });
-      }, reconnectDelay);
+      // Auto-reconnect only if module is still enabled
+      if (this.enabled) {
+        const reconnectDelay = parseInt(
+          this.getConfigValue("reconnect_delay", "5000"),
+        );
+        this.reconnectTimer = setTimeout(() => {
+          this.connect().catch((err) => {
+            this.log(`💥 Reconnect failed: ${err.message}`);
+          });
+        }, reconnectDelay);
+      }
     };
 
     this.ws.onmessage = async (event) => {

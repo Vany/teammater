@@ -14,7 +14,7 @@
 //     };
 //   }
 //
-// context contains: { ws, minarert, llm, currentUserId, CHANNEL, ...globals }
+// context contains: { ws, minaret, llm, currentUserId, CHANNEL, ...globals }
 // user: username string
 // message: message/input string
 
@@ -510,15 +510,6 @@ export function neuro(neuroConfig = {}) {
     const { llm, send_twitch, log } = context;
 
     const text = message.trim();
-
-    // Debug logging
-    if (log) {
-      log(`🔍 Debug - llm in context: ${llm ? "exists" : "null"}`);
-      if (llm) {
-        log(`🔍 Debug - llm.isConnected(): ${llm.isConnected()}`);
-        log(`🔍 Debug - llm.connected: ${llm.connected}`);
-      }
-    }
 
     if (!text) {
       if (log) log(`⚠️ Empty neuro request from ${user}`);
