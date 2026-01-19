@@ -789,3 +789,68 @@ a:visited {
     overflow-y: auto;
     flex: 1;
 }
+
+/* ============================
+   OBS MODULE INDICATORS
+   ============================ */
+
+.obs-stream-indicator,
+.obs-record-indicator {
+    font-size: 14px;
+    margin: 0 4px;
+    opacity: 0.4;
+    filter: grayscale(100%);
+    transition:
+        opacity 0.3s,
+        filter 0.3s;
+}
+
+.obs-stream-indicator.obs-active,
+.obs-record-indicator.obs-active {
+    opacity: 1;
+    filter: grayscale(0%) brightness(1.2);
+}
+
+.obs-stream-indicator.obs-warning {
+    opacity: 1;
+    filter: grayscale(0%) sepia(100%) saturate(300%) hue-rotate(-20deg);
+    animation: obs-warning-pulse 1s ease-in-out infinite;
+}
+
+.obs-record-indicator.obs-paused {
+    opacity: 0.8;
+    filter: grayscale(0%);
+    animation: obs-pause-blink 1.5s ease-in-out infinite;
+}
+
+.obs-stream-indicator.obs-inactive,
+.obs-record-indicator.obs-inactive {
+    opacity: 0.4;
+    filter: grayscale(100%);
+}
+
+.obs-stream-indicator.obs-disconnected,
+.obs-record-indicator.obs-disconnected {
+    opacity: 0.2;
+    filter: grayscale(100%);
+}
+
+@keyframes obs-warning-pulse {
+    0%,
+    100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.5;
+    }
+}
+
+@keyframes obs-pause-blink {
+    0%,
+    100% {
+        opacity: 0.8;
+    }
+    50% {
+        opacity: 0.3;
+    }
+}

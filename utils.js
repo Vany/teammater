@@ -50,7 +50,7 @@ export async function request(url, options = {}) {
  * Persistent double-ended queue backed by localStorage
  * Supports push/pop (stack operations) and unshift/shift (queue operations)
  * Batches mutations and flushes to localStorage periodically for performance
- * 
+ *
  * Operations:
  * - push(item): Add to end (stack push)
  * - pop(): Remove from end (stack pop)
@@ -168,10 +168,10 @@ export class PersistentDeck {
  * Parse IRC tags from raw IRC message
  * IRC tags format: @key1=value1;key2=value2;key3=value3 :rest of message
  * Used to extract metadata like user-id, message-id, badges, etc.
- * 
+ *
  * @param {string} rawMessage - Raw IRC message string starting with @
  * @returns {Object|null} - Object with tag key-value pairs, or null if no tags present
- * 
+ *
  * @example
  *   Input: "@user-id=123;msg-id=abc :user!user@user PRIVMSG #channel :hello"
  *   Output: { "user-id": "123", "msg-id": "abc" }
@@ -196,35 +196,37 @@ export function parseIrcTags(rawMessage) {
 /**
  * Parse IRC PRIVMSG correctly handling tags, prefix, and message
  * Properly extracts username and message text from tagged IRC messages
- * 
+ *
  * Format: [@tags] :nick!user@host PRIVMSG #channel :message
- * 
+ *
  * @param {string} rawMessage - Raw IRC message
  * @returns {{username: string, message: string}|null} - Parsed data or null if not PRIVMSG
- * 
+ *
  * @example
  *   parseIrcMessage("@emotes=0-4:123 :nick!nick@nick.tmi.twitch.tv PRIVMSG #channel :hello")
  *   => { username: "nick", message: "hello" }
  */
 export function parseIrcMessage(rawMessage) {
   let message = rawMessage;
-  
+
   // Strip tags if present
   if (message.startsWith("@")) {
     const tagEnd = message.indexOf(" ");
     if (tagEnd === -1) return null;
     message = message.substring(tagEnd + 1);
   }
-  
+
   // Parse IRC prefix and command
   // Format: :nick!user@host PRIVMSG #channel :message text\r\n
   // Note: IRC messages end with \r\n, so we need to handle that
-  const match = message.match(/^:([^!]+)![^\s]+ PRIVMSG #[^\s]+ :(.+?)(?:\r\n)?$/);
+  const match = message.match(
+    /^:([^!]+)![^\s]+ PRIVMSG #[^\s]+ :(.+?)(?:\r\n)?$/,
+  );
   if (!match) return null;
-  
+
   return {
     username: match[1],
-    message: match[2].trim()
+    message: match[2].trim(),
   };
 }
 
@@ -235,10 +237,10 @@ export function parseIrcMessage(rawMessage) {
 /**
  * Detect language of text based on Unicode script ranges
  * Fast, zero-dependency detection for Cyrillic (Russian) vs Latin (English)
- * 
+ *
  * @param {string} text - Text to analyze
  * @returns {"ru"|"en"|"unknown"} - Detected language code
- * 
+ *
  * @example
  *   detectLanguage("Привет мир") => "ru"
  *   detectLanguage("Hello world") => "en"
@@ -251,4 +253,30 @@ export function detectLanguage(text) {
   if (cyrillicCount > latinCount) return "ru";
   if (latinCount > cyrillicCount) return "en";
   return "unknown";
+}
+
+async function ANNOUNCE(message) {
+  const text = "@everyone https://www.twitch.tv/vanyserezhkin " + message;
+  await fetch(
+    "https://discord.com/api/webhooks/1461831116016324834/Qd_uqaxb6SMxGrcCdZpjr-tyjW889i8J-q3ZwFMMNeOA2NamYsa2qqVFAyJp17wm42W0",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: text }),
+    },
+  );
+
+  await fetch(
+    "https://api.telegram.org/bot8559873655:AAG9OfV8xkpjFKEKSP8Kmq-xbfzz9Z2LK_0/sendMessage",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: "@minecraftvanyannouncements",
+        text: text,
+      }),
+    },
+  );
+
+  console.log("SENT " + text);
 }

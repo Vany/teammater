@@ -166,17 +166,18 @@ export class ModuleManager {
   }
 
   /**
-   * Build execution context for actions from all connected modules
+   * Build execution context for actions from all enabled modules
+   * Always includes module context - functions handle disconnected state internally
    * @param {Object} baseContext - Base context to extend
    * @returns {Object} - Context object with all module connectors and helpers
    */
   buildActionContext(baseContext = {}) {
     const context = { ...baseContext };
 
-    // Add each connected module to context
+    // Add each enabled module to context (not just connected)
+    // Functions should handle disconnected state gracefully
     for (const [id, module] of this.modules.entries()) {
-      if (module.isConnected()) {
-        // Add module's context contribution
+      if (module.isEnabled()) {
         const moduleContext = module.getContextContribution();
         Object.assign(context, moduleContext);
       }

@@ -82,20 +82,17 @@ export function hate(
     // Update throttle timestamp
     throttle[user] = Date.now();
 
-    // Always execute damage command (typically heal)
-    sendCommandMinaret(actualDamageCommand);
-
-    // Check love protection
+    // Check love protection: heal if protected, strike if not
     if (Date.now() - love_timer < TIMING.LOVE_PROTECTION_DURATION_MS) {
+      // Protected: heal instead of damage
+      sendCommandMinaret(actualDamageCommand);
       sendMessageMinaret(warningMessage);
       mp3(soundEffect);
     } else {
-      // Strike with lightning after 1s delay
+      // Not protected: strike with lightning and start protection cooldown
       setTimeout(() => sendCommandMinaret(actualLightningCommand), 1000);
+      context.love_timer = Date.now();
     }
-
-    // Update love timer
-    context.love_timer = Date.now();
   };
 }
 

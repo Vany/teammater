@@ -16,6 +16,7 @@ import { MinecraftModule } from "./modules/minecraft/module.js";
 import { TwitchChatModule } from "./modules/twitch-chat/module.js";
 import { TwitchEventSubModule } from "./modules/twitch-eventsub/module.js";
 import { TwitchStreamModule } from "./modules/twitch-stream/module.js";
+import { OBSModule } from "./modules/obs/module.js";
 
 // Import configuration
 import {
@@ -152,13 +153,14 @@ function registerModules() {
   moduleManager.register("llm", new LLMModule());
   moduleManager.register("music-queue", new MusicQueueModule());
   moduleManager.register("minecraft", new MinecraftModule());
+  moduleManager.register("obs", new OBSModule());
 
   // Twitch integration
   moduleManager.register("twitch-chat", new TwitchChatModule());
   moduleManager.register("twitch-eventsub", new TwitchEventSubModule());
   moduleManager.register("twitch-stream", new TwitchStreamModule());
 
-  log("📦 Registered 6 modules");
+  log("📦 Registered 7 modules");
 }
 
 // ============================
@@ -632,6 +634,7 @@ async function handleRedemption(redemption) {
 function setupUIListeners() {
   // Expose voice action to window for HTML onclick
   window.voice = voice;
+  window.mp3 = mp3;
 
   // Page unload handler (flush music queue)
   window.addEventListener("beforeunload", () => {

@@ -26,6 +26,17 @@
             >
                 TEST
             </button>
+            <input
+                type="text"
+                stored_as="announce"
+                style="width: 100%"
+                onkeydown="
+                    if (event.key === 'Enter') {
+                        eval(localStorage.getItem('ANNOUNCE'));
+                        ANNOUNCE(this.value);
+                    }
+                "
+            />
 
             <div class="control-section">
                 <label class="checkbox-label">

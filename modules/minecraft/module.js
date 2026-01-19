@@ -218,15 +218,9 @@ export class MinecraftModule extends BaseModule {
 
   /**
    * Provide context for actions
+   * Always provides functions (they handle disconnected state internally)
    */
   getContextContribution() {
-    if (!this.isConnected()) {
-      return {
-        minecraft: null,
-        minaret: null,
-      };
-    }
-
     return {
       minecraft: {
         sendMessage: this.sendMessage.bind(this),
@@ -234,8 +228,8 @@ export class MinecraftModule extends BaseModule {
         getWebSocket: this.getWebSocket.bind(this),
         isConnected: () => this.isConnected(),
       },
-      minaret: this.ws, // Legacy compatibility
-      sendMessageMinaret: (user, msg) => this.sendMessage(user, msg),
+      minaret: this.ws, // Legacy compatibility (may be null)
+      sendMessageMinaret: (msg) => this.sendMessage("", msg),
       sendCommandMinaret: (cmd) => this.sendCommand(cmd),
     };
   }
