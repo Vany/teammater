@@ -68,6 +68,9 @@
       case "resume":
         handleResumeCommand();
         break;
+      case "next":
+        handleNextCommand();
+        break;
       case "query_status":
         handleQueryStatus();
         break;
@@ -120,6 +123,12 @@
     } else {
       console.log("ℹ️ Already playing");
     }
+  }
+
+  function handleNextCommand() {
+    console.log("⏭️ Next command received");
+    safeClick('button[aria-label="Next song"]');
+    console.log("✅ Next button clicked");
   }
 
   function handleQueryStatus() {

@@ -506,7 +506,7 @@ export class OBSModule extends BaseModule {
 
     // Play alert sound using global mp3 function
     if (window.mp3) {
-      window.mp3("startup");
+      window.mp3("startup", 0.2);
     }
   }
 

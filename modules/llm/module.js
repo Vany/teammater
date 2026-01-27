@@ -9,7 +9,7 @@
  * Based on LLMConnector from connectors.js
  */
 
-import { BaseModule } from '../base-module.js';
+import { BaseModule } from "../base-module.js";
 
 export class LLMModule extends BaseModule {
   constructor() {
@@ -22,7 +22,7 @@ export class LLMModule extends BaseModule {
    * Module display name
    */
   getDisplayName() {
-    return '🤖 LLM (Ollama)';
+    return "🤖 LLM (Ollama)";
   }
 
   /**
@@ -32,14 +32,14 @@ export class LLMModule extends BaseModule {
     return {
       connection: {
         base_url: {
-          type: 'text',
-          label: 'Ollama Base URL',
-          default: 'http://localhost:11434',
-          stored_as: 'llm_base_url',
+          type: "text",
+          label: "Ollama Base URL",
+          default: "http://localhost:11434",
+          stored_as: "llm_base_url",
         },
         health_check_interval: {
-          type: 'number',
-          label: 'Health Check Interval (ms)',
+          type: "number",
+          label: "Health Check Interval (ms)",
           default: 30000,
           min: 5000,
           max: 120000,
@@ -48,41 +48,42 @@ export class LLMModule extends BaseModule {
       },
       model: {
         model_name: {
-          type: 'select',
-          label: 'Model',
-          default: 'llama3.2',
+          type: "select",
+          label: "Model",
+          default: "llama3.2",
           options: [], // Populated dynamically after connection
-          stored_as: 'llm_model',
+          stored_as: "llm_model",
         },
         system_prompt: {
-          type: 'textarea',
-          label: 'System Prompt',
-          default: 'You are a helpful Twitch chat companion. Respond naturally and conversationally.',
-          stored_as: 'llm_system_prompt',
+          type: "textarea",
+          label: "System Prompt",
+          default:
+            "You are a helpful Twitch chat companion. Respond naturally and conversationally.",
+          stored_as: "llm_system_prompt",
         },
       },
       generation: {
         temperature: {
-          type: 'range',
-          label: 'Temperature',
+          type: "range",
+          label: "Temperature",
           default: 0.7,
           min: 0,
           max: 1,
           step: 0.1,
-          stored_as: 'llm_temperature',
+          stored_as: "llm_temperature",
         },
         max_tokens: {
-          type: 'number',
-          label: 'Max Tokens',
+          type: "number",
+          label: "Max Tokens",
           default: 512,
           min: 1,
           max: 4096,
           step: 1,
-          stored_as: 'llm_max_tokens',
+          stored_as: "llm_max_tokens",
         },
         timeout: {
-          type: 'number',
-          label: 'Request Timeout (ms)',
+          type: "number",
+          label: "Request Timeout (ms)",
           default: 30000,
           min: 5000,
           max: 120000,
@@ -91,10 +92,16 @@ export class LLMModule extends BaseModule {
       },
       features: {
         chat_monitoring: {
-          type: 'checkbox',
-          label: 'Enable Chat Monitoring',
+          type: "checkbox",
+          label: "Enable Chat Monitoring",
           default: false,
-          stored_as: 'llm_chat_monitoring',
+          stored_as: "llm_chat_monitoring",
+        },
+        echowire_enabled: {
+          type: "checkbox",
+          label: "Enable Echowire",
+          default: true,
+          stored_as: "llm_echowire_enabled",
         },
       },
     };
@@ -104,8 +111,10 @@ export class LLMModule extends BaseModule {
    * Connect to Ollama server
    */
   async doConnect() {
-    const baseUrl = this.getConfigValue('base_url', 'http://localhost:11434');
-    const healthCheckInterval = parseInt(this.getConfigValue('health_check_interval', '30000'));
+    const baseUrl = this.getConfigValue("base_url", "http://localhost:11434");
+    const healthCheckInterval = parseInt(
+      this.getConfigValue("health_check_interval", "30000"),
+    );
 
     this.log(`🤖 Connecting to Ollama at ${baseUrl}...`);
 
@@ -146,14 +155,14 @@ export class LLMModule extends BaseModule {
    * Check if Ollama server is healthy
    */
   async checkHealth() {
-    const baseUrl = this.getConfigValue('base_url', 'http://localhost:11434');
+    const baseUrl = this.getConfigValue("base_url", "http://localhost:11434");
 
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 5000);
 
       const response = await fetch(`${baseUrl}/api/tags`, {
-        method: 'GET',
+        method: "GET",
         signal: controller.signal,
       });
 
@@ -190,7 +199,7 @@ export class LLMModule extends BaseModule {
    * Fetch available models and populate select dropdown
    */
   async populateModels() {
-    const baseUrl = this.getConfigValue('base_url', 'http://localhost:11434');
+    const baseUrl = this.getConfigValue("base_url", "http://localhost:11434");
 
     try {
       this.log(`🔍 Fetching available models from Ollama...`);
@@ -209,17 +218,19 @@ export class LLMModule extends BaseModule {
       }
 
       // Update the model select dropdown in config panel
-      const modelSelect = this.ui.configPanel?.querySelector('select[stored_as="llm_model"]');
+      const modelSelect = this.ui.configPanel?.querySelector(
+        'select[stored_as="llm_model"]',
+      );
       if (modelSelect) {
-        const currentModel = this.getConfigValue('model_name', 'llama3.2');
+        const currentModel = this.getConfigValue("model_name", "llama3.2");
 
         // Clear existing options
-        modelSelect.innerHTML = '';
+        modelSelect.innerHTML = "";
 
         // Add model options
         let hasCurrentModel = false;
-        models.forEach(model => {
-          const option = document.createElement('option');
+        models.forEach((model) => {
+          const option = document.createElement("option");
           option.value = model.name;
           option.textContent = model.name;
 
@@ -233,14 +244,16 @@ export class LLMModule extends BaseModule {
 
         // If current model not in list, add it as first option
         if (!hasCurrentModel && currentModel) {
-          const option = document.createElement('option');
+          const option = document.createElement("option");
           option.value = currentModel;
           option.textContent = `${currentModel} (not found)`;
           option.selected = true;
           modelSelect.insertBefore(option, modelSelect.firstChild);
         }
 
-        this.log(`✅ Loaded ${models.length} models: ${models.map(m => m.name).join(', ')}`);
+        this.log(
+          `✅ Loaded ${models.length} models: ${models.map((m) => m.name).join(", ")}`,
+        );
       }
     } catch (error) {
       this.log(`💥 Failed to fetch models: ${error.message}`);
@@ -252,14 +265,14 @@ export class LLMModule extends BaseModule {
    */
   async chat(messages, options = {}) {
     if (!this.isConnected()) {
-      throw new Error('Not connected to Ollama server');
+      throw new Error("Not connected to Ollama server");
     }
 
-    const baseUrl = this.getConfigValue('base_url', 'http://localhost:11434');
-    const model = this.getConfigValue('model_name', 'llama3.2');
-    const temperature = parseFloat(this.getConfigValue('temperature', '0.7'));
-    const maxTokens = parseInt(this.getConfigValue('max_tokens', '512'));
-    const timeout = parseInt(this.getConfigValue('timeout', '30000'));
+    const baseUrl = this.getConfigValue("base_url", "http://localhost:11434");
+    const model = this.getConfigValue("model_name", "llama3.2");
+    const temperature = parseFloat(this.getConfigValue("temperature", "0.7"));
+    const maxTokens = parseInt(this.getConfigValue("max_tokens", "512"));
+    const timeout = parseInt(this.getConfigValue("timeout", "30000"));
 
     const {
       model: overrideModel,
@@ -271,7 +284,8 @@ export class LLMModule extends BaseModule {
       model: overrideModel || model,
       messages,
       temperature: overrideTemp !== undefined ? overrideTemp : temperature,
-      max_tokens: overrideMaxTokens !== undefined ? overrideMaxTokens : maxTokens,
+      max_tokens:
+        overrideMaxTokens !== undefined ? overrideMaxTokens : maxTokens,
     };
 
     try {
@@ -279,8 +293,8 @@ export class LLMModule extends BaseModule {
       const timeoutId = setTimeout(() => controller.abort(), timeout);
 
       const response = await fetch(`${baseUrl}/v1/chat/completions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(requestBody),
         signal: controller.signal,
       });
@@ -292,7 +306,7 @@ export class LLMModule extends BaseModule {
       }
 
       const data = await response.json();
-      return data.choices?.[0]?.message?.content || '';
+      return data.choices?.[0]?.message?.content || "";
     } catch (error) {
       this.log(`💥 Chat failed: ${error.message}`);
       throw error;
@@ -342,7 +356,7 @@ export class LLMModule extends BaseModule {
       llm: {
         chat: this.chat.bind(this),
         isConnected: () => this.isConnected(),
-        systemPrompt: this.getConfigValue('system_prompt', ''),
+        systemPrompt: this.getConfigValue("system_prompt", ""),
         connected: this.connected,
       },
     };

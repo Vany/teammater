@@ -178,8 +178,7 @@ export const DEFAULT_PRESETS = {
     rewards_active: ["voice", "hate", "love"],
   },
   social: {
-    title:
-      "🐽🧱✨🌊 Трепимся со зррителями, 🌼⭐️😊 клеим новогоднюю ёлочку 🎄",
+    title: "🐽🧱✨🌊 Трепимся со зррителями, 🌼⭐️😊 клеим новогоднюю ёлочку 🎄",
     game_id: "27471", // МАЙНКРАПХТ
     tags: ["English", "Gaming", "Chill"],
     pinned_message: "🐽🧱✨🌊 Сбооорочка в дискордике",
@@ -192,6 +191,13 @@ export const DEFAULT_PRESETS = {
     pinned_message:
       "RELAX AND ENJOY THE STREAM. Do not forget to talk with streamer",
     rewards_active: [], // All rewards paused
+  },
+  talking: {
+    title: "🐽✨ Подкаст с чатом, болтаем о том о сём",
+    game_id: "417752", // Talk Shows & Podcasts
+    tags: ["Russian", "English", "Chill", "Chatting"],
+    pinned_message: "🎙️ Подкаст! Пишите в чат, обсудим всё на свете",
+    rewards_active: [], // Standard Twitch only, no custom rewards
   },
 };
 

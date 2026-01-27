@@ -15,10 +15,10 @@ Express your self and enjoy the work.
 
   ## Files
 Each module has its own directory and may contain following files, use it instead of CLAUDE.md:
-- prog.md - general rules
-- spec.md - specifications
-- memo.md - information about development
-- todo.md - list of tasks to do, complete tasks one by one, mark finished.
+- PROG.md - general rules
+- SPEC.md - specifications
+- MEMO.md - information about development
+- TODO.md - list of tasks to do, complete tasks one by one, mark finished.
 
 Read files if you didn't. Maintain it on AI comprehensive maner.
 Use git commits to document project history and decisions.

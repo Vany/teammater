@@ -13,6 +13,7 @@ import { ContextBuilder } from "./core/context-builder.js";
 import { LLMModule } from "./modules/llm/module.js";
 import { MusicQueueModule } from "./modules/music-queue/module.js";
 import { MinecraftModule } from "./modules/minecraft/module.js";
+import { EchowireModule } from "./modules/echowire/module.js";
 import { TwitchChatModule } from "./modules/twitch-chat/module.js";
 import { TwitchEventSubModule } from "./modules/twitch-eventsub/module.js";
 import { TwitchStreamModule } from "./modules/twitch-stream/module.js";
@@ -64,7 +65,7 @@ async function initialize() {
 
   // Create module manager
   moduleManager = new ModuleManager();
-  moduleManager.setLogger(log);
+  moduleManager.setLogger(systemLog);
 
   // Create action registry
   actionRegistry = new ActionRegistry();
@@ -153,6 +154,7 @@ function registerModules() {
   moduleManager.register("llm", new LLMModule());
   moduleManager.register("music-queue", new MusicQueueModule());
   moduleManager.register("minecraft", new MinecraftModule());
+  moduleManager.register("echowire", new EchowireModule());
   moduleManager.register("obs", new OBSModule());
 
   // Twitch integration
@@ -160,7 +162,7 @@ function registerModules() {
   moduleManager.register("twitch-eventsub", new TwitchEventSubModule());
   moduleManager.register("twitch-stream", new TwitchStreamModule());
 
-  log("📦 Registered 7 modules");
+  log("📦 Registered 8 modules");
 }
 
 // ============================
@@ -187,8 +189,10 @@ async function setupAuthentication() {
   // Fetch user info
   const username = await fetchUsername(existingToken);
   if (!username) {
-    log("❌ Authentication failed");
-    authenticate(CLIENT_ID);
+    localStorage.removeItem("twitch_token");
+    log(
+      "❌ Authentication failed - token cleared. Update Client ID or token and reload.",
+    );
     return;
   }
 
@@ -238,8 +242,17 @@ async function fetchUsername(token) {
       },
     });
 
+    if (!response.ok) {
+      log(`❌ Failed to fetch user: ${response.status} ${response.statusText}`);
+      return null;
+    }
+
     const data = await response.json();
-    const user = data.data[0];
+    const user = data.data?.[0];
+    if (!user) {
+      log("❌ Failed to fetch user: no user data in response");
+      return null;
+    }
     currentUserId = user.id;
     return user.login;
   } catch (error) {
@@ -282,6 +295,22 @@ async function connectModules(token, username) {
   if (minecraftModule?.isEnabled()) {
     await minecraftModule.connect().catch((err) => {
       log(`⚠️ Minecraft connection failed: ${err.message}`);
+    });
+  }
+
+  // Connect Echowire (if enabled)
+  const echowireModule = moduleManager.get("echowire");
+  if (echowireModule?.isEnabled()) {
+    await echowireModule.connect().catch((err) => {
+      log(`⚠️ Echowire connection failed: ${err.message}`);
+    });
+  }
+
+  // Connect OBS (if enabled)
+  const obsModule = moduleManager.get("obs");
+  if (obsModule?.isEnabled()) {
+    await obsModule.connect().catch((err) => {
+      log(`⚠️ OBS connection failed: ${err.message}`);
     });
   }
 
@@ -454,53 +483,129 @@ async function processLLMMonitoring() {
     return;
   }
 
+  // Мы все в русском чате twitch канала vanyserezhkin.
+  // Я хозяин чата, я вежлив и строг с гостями.
+  // Отвечаю только  если :
+  //   - необходимо
+  //   - точно могу помочь
+  //   - обращались ко мне
+  //   - нужно соблюсти правила twitch
+  // отвечаю на русском, кратко, точно и по существу.
+
   llmProcessing = true;
   log("🤖 LLM processing chat batch...");
 
   try {
     const systemPrompt = localStorage.getItem("llm_system_prompt") || "";
     const chatLog = chatModule.formatChatHistoryForLLM();
-
     // Stage 1: Should respond?
     const shouldRespondMessages = [
       { role: "system", content: systemPrompt },
       {
         role: "user",
-        content: `Here is the chat history:\n\n${chatLog}\n\nShould you respond to this chat? Answer ONLY "yes" or "no" (nothing else).`,
+        content: `Here is the chat history:\n
+        -> old messages
+        ${chatLog}\n
+        -> end of messages
+        What action do you need to perform on new messages and why?
+        Return two fields.
+        nothing (nothing) | remember (to memory) | respond (to chat) | silence_user (moderation action), "reason why"
+        `,
       },
     ];
 
     const shouldRespondAnswer = await llmModule.chat(shouldRespondMessages, {
-      maxTokens: 10,
-      temperature: 0.3,
+      maxTokens: 32,
+      temperature: 0.5,
     });
+    log(`🤖: "${shouldRespondAnswer}"`);
 
-    if (shouldRespondAnswer.trim().toLowerCase() !== "yes") {
-      log("🤖 LLM decided not to respond");
-      chatModule.setChatMarkerPosition(chatHistory.length);
-      return;
-    }
+    if (shouldRespondAnswer.trim().toLowerCase().startsWith("remember")) {
+      log("🤖 LLM decided to remember (keeping in chat history silently)");
+      const responseMessages = [
+        { role: "system", content: systemPrompt },
+        {
+          role: "user",
+          content: `Here is the chat history:\n
+          ${chatLog}\n
+          You decide to ${shouldRespondAnswer}\n
+          What internal note do you want to remember? Write ONLY your memory note, without any timestamp, username, or prefix. Just the note itself.`,
+        },
+      ];
 
-    // Stage 2: What to respond?
-    const responseMessages = [
-      { role: "system", content: systemPrompt },
-      {
-        role: "user",
-        content: `Here is the chat history:\n\n${chatLog}\n\nWhat should you say in response? Write ONLY your response text, without any timestamp, username, or prefix. Just the message itself.`,
-      },
-    ];
+      const responseText = await llmModule.chat(responseMessages, {
+        maxTokens: 256,
+        temperature: 0.7,
+      });
 
-    const responseText = await llmModule.chat(responseMessages, {
-      maxTokens: 256,
-      temperature: 0.7,
-    });
+      if (responseText?.trim()) {
+        const cleanResponse = responseText
+          .trim()
+          .replace(/^\[\d{2}:\d{2}:\d{2}\]\s+\w+:\s*/, "");
+        log(`🧠 LLM memory note: "${cleanResponse}"`);
 
-    if (responseText?.trim()) {
-      const cleanResponse = responseText
-        .trim()
-        .replace(/^\[\d{2}:\d{2}:\d{2}\]\s+\w+:\s*/, "");
-      log(`🤖 LLM response: "${cleanResponse}"`);
-      chatModule.send(cleanResponse);
+        // Add to chat history as internal memory (not sent to Twitch)
+        chatModule._addToChatHistory("[LLM_MEMORY]", cleanResponse);
+      }
+    } else if (shouldRespondAnswer.trim().toLowerCase().startsWith("respond")) {
+      log("🤖 LLM decided to respond ");
+      const responseMessages = [
+        { role: "system", content: systemPrompt },
+        {
+          role: "user",
+          content: `Here is the chat history:\n
+          ${chatLog}\n
+          You decide to ${shouldRespondAnswer}\n
+          What should you say in response? Write ONLY your response text, without any timestamp, username, or prefix. Just the message itself.`,
+        },
+      ];
+
+      const responseText = await llmModule.chat(responseMessages, {
+        maxTokens: 256,
+        temperature: 0.7,
+      });
+
+      if (responseText?.trim()) {
+        const cleanResponse = responseText
+          .trim()
+          .replace(/^\[\d{2}:\d{2}:\d{2}\]\s+\w+:\s*/, "");
+        log(`🤖 LLM response: "${cleanResponse}"`);
+
+        const sent = chatModule.send(cleanResponse);
+        if (!sent) {
+          log(`💥 Failed to send LLM response to chat!`);
+        }
+      }
+    } else if (
+      shouldRespondAnswer.trim().toLowerCase().startsWith("SilenceUser")
+    ) {
+      const responseMessages = [
+        { role: "system", content: systemPrompt },
+        {
+          role: "user",
+          content: `Here is the chat history:\n
+          ${chatLog}\n
+          What user must we silence? Name please.`,
+        },
+      ];
+
+      const responseText = await llmModule.chat(responseMessages, {
+        maxTokens: 256,
+        temperature: 0.7,
+      });
+
+      if (responseText?.trim()) {
+        const cleanResponse = responseText
+          .trim()
+          .replace(/^\[\d{2}:\d{2}:\d{2}\]\s+\w+:\s*/, "");
+        log(`🤖 LLM response: "${cleanResponse}"`);
+        const sent = chatModule.send(
+          "Moders, please silince for 10 minutes: " + cleanResponse,
+        );
+        if (!sent) {
+          log(`💥 Failed to send LLM response to chat!`);
+        }
+      }
     }
 
     chatModule.setChatMarkerPosition(chatHistory.length);
@@ -657,8 +762,13 @@ function log(msg) {
   console.log(msg);
 }
 
-function mp3(name) {
+function systemLog(msg) {
+  console.log(msg);
+}
+
+function mp3(name, volume = null) {
   DOM.audio.src = `mp3/${name}.mp3`;
+  DOM.audio.volume = volume !== null ? volume : 1.0;
   DOM.audio.play().catch((err) => {
     speak("ACHTUNG");
     console.error("Playback failed:", err);

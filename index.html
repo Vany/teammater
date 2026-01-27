@@ -1,12 +1,12 @@
 <!doctype html>
 <html>
     <head>
-        <title>Teammater - Modular Architecture (Test)</title>
+        <title>Teammater</title>
         <link rel="stylesheet" href="index.css" />
     </head>
     <body>
         <div class="main-content">
-            <h1>Twitch Chat (Modular) 🔬</h1>
+            <h1>Twitch Chat</h1>
             <div id="output"></div>
         </div>
 
@@ -29,12 +29,15 @@
             <input
                 type="text"
                 stored_as="announce"
-                style="width: 100%"
+                style="width: 90%"
                 onkeydown="
-                    if (event.key === 'Enter') {
-                        eval(localStorage.getItem('ANNOUNCE'));
-                        ANNOUNCE(this.value);
-                    }
+                    (async () => {
+                        console.log(event.key);
+                        if (event.key === 'Enter') {
+                            eval(localStorage.getItem('ANNOUNCE'));
+                            console.log(await ANNOUNCE(this.value));
+                        }
+                    })()
                 "
             />
 

@@ -1,9 +1,19 @@
 localhost:8443 {
+  # WebSocket proxy for Echowire (Android STT service)
+  @websocket {
+    path /echowire
+    header Connection *Upgrade*
+    header Upgrade websocket
+  }
+  reverse_proxy @websocket http://192.168.15.225:8080
+
+  # Static file server
   root * .
   file_server
+
   tls {
     issuer internal {
       lifetime 8760h
     }
-}
+  }
 }

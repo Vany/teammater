@@ -405,6 +405,23 @@ export class MusicQueueModule extends BaseModule {
   }
 
   /**
+   * Send next command to UserScript (skip to next track in Yandex Music)
+   */
+  _sendNextCommand() {
+    // Check if UserScript function is available
+    if (typeof sendCommandToOtherTabs !== "function") {
+      this.log(
+        "⚠️ sendCommandToOtherTabs not available (UserScript not loaded?)",
+      );
+      return;
+    }
+
+    this.log(`📡 Sending next command to music tab`);
+    sendCommandToOtherTabs("next", null);
+    this.log(`✅ Next command sent`);
+  }
+
+  /**
    * Add song to queue (doesn't auto-play if something is already playing)
    */
   add(url) {
@@ -449,6 +466,15 @@ export class MusicQueueModule extends BaseModule {
    */
   skip() {
     this.log(`⏭️ Skipping current track`);
+
+    // If queue is empty, send "next" to Yandex Music
+    if (this.queue.size() === 0) {
+      this.log(`⏭️ Queue empty, sending next command to Yandex Music`);
+      this._sendNextCommand();
+      return;
+    }
+
+    // Otherwise skip from queue
     this.currentlyPlaying = null;
     this.needVoteSkip = parseInt(
       this.getConfigValue("vote_skip_threshold", "3"),
@@ -465,14 +491,24 @@ export class MusicQueueModule extends BaseModule {
       "https://music.yandex.ru/",
     );
 
-    // Don't allow skipping fallback URL
+    // If queue is empty and playing fallback, send "next" to Yandex Music
     if (this.currentlyPlaying === emptyUrl || !this.currentlyPlaying) {
-      this.log(`❌ Cannot skip fallback URL or when nothing is playing`);
-      return {
-        votesRemaining: this.needVoteSkip,
-        skipped: false,
-        error: "Nothing to skip",
-      };
+      if (this.queue.size() === 0) {
+        this.log(`⏭️ Queue empty, sending next command to Yandex Music`);
+        this._sendNextCommand();
+        return {
+          votesRemaining: 0,
+          skipped: true,
+          error: null,
+        };
+      } else {
+        this.log(`❌ Cannot skip when nothing is playing`);
+        return {
+          votesRemaining: this.needVoteSkip,
+          skipped: false,
+          error: "Nothing to skip",
+        };
+      }
     }
 
     this.needVoteSkip--;
