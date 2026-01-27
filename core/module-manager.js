@@ -16,6 +16,10 @@ export class ModuleManager {
     this.modules = new Map(); // module_id -> module instance
     this.initialized = false;
     this.log = console.log;
+
+    // Context builder state (merged from ContextBuilder)
+    this.globalState = {};
+    this.helpers = {};
   }
 
   /**
@@ -166,6 +170,70 @@ export class ModuleManager {
   }
 
   /**
+   * Set global state variables
+   * @param {Object} state - Global state (throttle, love_timer, etc.)
+   */
+  setGlobalState(state) {
+    this.globalState = state;
+  }
+
+  /**
+   * Set helper functions
+   * @param {Object} helpers - Helper functions (log, mp3, speak, request, etc.)
+   */
+  setHelpers(helpers) {
+    this.helpers = helpers;
+  }
+
+  /**
+   * Update global state value
+   * @param {string} key - State key
+   * @param {*} value - New value
+   */
+  updateState(key, value) {
+    this.globalState[key] = value;
+  }
+
+  /**
+   * Get current global state
+   */
+  getState() {
+    return { ...this.globalState };
+  }
+
+  /**
+   * Build unified execution context for actions
+   * Combines:
+   * - Module context contributions (ws, llm, minecraft, musicQueue, etc.)
+   * - Helper functions (log, mp3, speak, etc.)
+   * - Global state (currentUserId, CHANNEL, throttle, etc.)
+   *
+   * @param {Object} additionalContext - Additional context to merge (optional)
+   * @returns {Object} - Complete execution context
+   */
+  buildContext(additionalContext = {}) {
+    // Start with base context
+    const context = {
+      ...additionalContext,
+    };
+
+    // Add module contributions
+    const moduleContext = this.buildActionContext();
+    Object.assign(context, moduleContext);
+
+    // Add global state
+    Object.assign(context, this.globalState);
+
+    // Add helper functions
+    Object.assign(context, this.helpers);
+
+    // Add legacy compatibility helpers
+    this._addLegacyHelpers(context);
+
+    return context;
+  }
+
+  /**
    * Build execution context for actions from all enabled modules
    * Always includes module context - functions handle disconnected state internally
    * @param {Object} baseContext - Base context to extend
@@ -184,6 +252,49 @@ export class ModuleManager {
     }
 
     return context;
+  }
+
+  /**
+   * Add legacy compatibility helpers for old actions
+   * This ensures existing actions.js code continues to work
+   * @private
+   */
+  _addLegacyHelpers(context) {
+    // Music queue compatibility
+    if (context.musicQueue) {
+      context.needVoteSkip = context.musicQueue.needVoteSkip;
+      context.currentSong = context.musicQueue.currentSong || "Unknown Track";
+    }
+
+    // Ensure all expected fields exist (prevents crashes in actions)
+    context.throttle = context.throttle || {};
+    context.love_timer = context.love_timer || Date.now();
+    context.currentUserId = context.currentUserId || null;
+    context.CHANNEL = context.CHANNEL || null;
+  }
+
+  /**
+   * Extract state changes from context after action execution
+   * Updates global state with changes made during action
+   * @param {Object} context - Context object after action execution
+   */
+  syncStateFromContext(context) {
+    // Sync mutable state back to global state
+    if (context.throttle) {
+      this.globalState.throttle = context.throttle;
+    }
+
+    if (context.love_timer !== undefined) {
+      this.globalState.love_timer = context.love_timer;
+    }
+
+    // Sync music queue state
+    if (context.musicQueue && context.needVoteSkip !== undefined) {
+      // Update in module if needed
+      if (context.musicQueue.needVoteSkip !== context.needVoteSkip) {
+        context.musicQueue.needVoteSkip = context.needVoteSkip;
+      }
+    }
   }
 
   /**

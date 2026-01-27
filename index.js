@@ -7,7 +7,6 @@
 
 import { ModuleManager } from "./core/module-manager.js";
 import { ActionRegistry } from "./core/action-registry.js";
-import { ContextBuilder } from "./core/context-builder.js";
 
 // Import modules
 import { LLMModule } from "./modules/llm/module.js";
@@ -28,6 +27,9 @@ import {
   TWITCH_SCOPES,
 } from "./config.js";
 
+// Import utilities
+import { request } from "./utils.js";
+
 // Import actions for test button
 import { voice } from "./actions.js";
 
@@ -40,7 +42,6 @@ window.i_am_a_master = true;
 
 let moduleManager = null;
 let actionRegistry = null;
-let contextBuilder = null;
 
 let currentUserId = null;
 let CHANNEL = null;
@@ -70,9 +71,6 @@ async function initialize() {
   // Create action registry
   actionRegistry = new ActionRegistry();
   actionRegistry.setLogger(log);
-
-  // Create context builder
-  contextBuilder = new ContextBuilder(moduleManager);
 
   // Register modules
   registerModules();
@@ -203,8 +201,8 @@ async function setupAuthentication() {
   log(`🎯 Authenticated as: ${username}`);
   log(`📺 Target channel: #${CHANNEL}`);
 
-  // Setup context builder with helpers
-  setupContextBuilder();
+  // Setup module manager with global state and helpers
+  setupModuleManagerContext();
 
   // Connect modules
   await connectModules(existingToken, username);
@@ -354,12 +352,12 @@ async function connectModules(token, username) {
 }
 
 // ============================
-// CONTEXT BUILDER SETUP
+// MODULE MANAGER CONTEXT SETUP
 // ============================
 
-function setupContextBuilder() {
+function setupModuleManagerContext() {
   // Set global state
-  contextBuilder.setGlobalState({
+  moduleManager.setGlobalState({
     currentUserId,
     CHANNEL,
     throttle,
@@ -367,43 +365,11 @@ function setupContextBuilder() {
   });
 
   // Set helper functions
-  contextBuilder.setHelpers({
+  moduleManager.setHelpers({
     log,
     mp3,
     speak,
-    request: async (url, options = {}) => {
-      const token = localStorage.getItem("twitch_token");
-      const CLIENT_ID = localStorage.getItem(TWITCH_CLIENT_ID_KEY);
-
-      const defaultOptions = {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Client-Id": CLIENT_ID,
-          "Content-Type": "application/json",
-        },
-      };
-
-      const mergedOptions = {
-        ...defaultOptions,
-        ...options,
-        headers: {
-          ...defaultOptions.headers,
-          ...options.headers,
-        },
-      };
-
-      const response = await fetch(url, mergedOptions);
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(
-          `API request failed: ${response.status} - ${errorText}`,
-        );
-      }
-
-      return response;
-    },
+    request, // Use shared request from utils.js
   });
 }
 
@@ -442,7 +408,7 @@ async function handleChatMessage(messageData) {
 
   // Check chat actions
   if (userId) {
-    const context = contextBuilder.build();
+    const context = moduleManager.buildContext();
     const matched = await actionRegistry.executeChatAction(
       message,
       messageData,
@@ -453,7 +419,7 @@ async function handleChatMessage(messageData) {
       log(`⚡ Chat action executed for: ${message}`);
 
       // Sync state changes back
-      contextBuilder.syncStateFromContext(context);
+      moduleManager.syncStateFromContext(context);
       return; // Don't process further
     }
   }
@@ -470,147 +436,31 @@ async function processLLMMonitoring() {
     return;
   }
 
-  const chatMonitoring = localStorage.getItem("llm_chat_monitoring") === "true";
-  if (!chatMonitoring || llmProcessing) {
+  if (llmProcessing) {
     return;
   }
 
   const chatHistory = chatModule.getChatHistory();
   const chatMarkerPosition = chatModule.getChatMarkerPosition();
 
-  // Check if there are new messages
-  if (chatMarkerPosition >= chatHistory.length) {
-    return;
-  }
-
-  // Мы все в русском чате twitch канала vanyserezhkin.
-  // Я хозяин чата, я вежлив и строг с гостями.
-  // Отвечаю только  если :
-  //   - необходимо
-  //   - точно могу помочь
-  //   - обращались ко мне
-  //   - нужно соблюсти правила twitch
-  // отвечаю на русском, кратко, точно и по существу.
-
   llmProcessing = true;
-  log("🤖 LLM processing chat batch...");
 
   try {
-    const systemPrompt = localStorage.getItem("llm_system_prompt") || "";
-    const chatLog = chatModule.formatChatHistoryForLLM();
-    // Stage 1: Should respond?
-    const shouldRespondMessages = [
-      { role: "system", content: systemPrompt },
-      {
-        role: "user",
-        content: `Here is the chat history:\n
-        -> old messages
-        ${chatLog}\n
-        -> end of messages
-        What action do you need to perform on new messages and why?
-        Return two fields.
-        nothing (nothing) | remember (to memory) | respond (to chat) | silence_user (moderation action), "reason why"
-        `,
-      },
-    ];
+    // Build context for LLM actions
+    const context = moduleManager.buildContext();
 
-    const shouldRespondAnswer = await llmModule.chat(shouldRespondMessages, {
-      maxTokens: 32,
-      temperature: 0.5,
-    });
-    log(`🤖: "${shouldRespondAnswer}"`);
+    const newMarkerPosition = await llmModule.monitorChat(
+      chatHistory,
+      chatMarkerPosition,
+      () => chatModule.formatChatHistoryForLLM(),
+      (msg) => chatModule.send(msg),
+      (user, msg) => chatModule._addToChatHistory(user, msg),
+      context,
+    );
 
-    if (shouldRespondAnswer.trim().toLowerCase().startsWith("remember")) {
-      log("🤖 LLM decided to remember (keeping in chat history silently)");
-      const responseMessages = [
-        { role: "system", content: systemPrompt },
-        {
-          role: "user",
-          content: `Here is the chat history:\n
-          ${chatLog}\n
-          You decide to ${shouldRespondAnswer}\n
-          What internal note do you want to remember? Write ONLY your memory note, without any timestamp, username, or prefix. Just the note itself.`,
-        },
-      ];
-
-      const responseText = await llmModule.chat(responseMessages, {
-        maxTokens: 256,
-        temperature: 0.7,
-      });
-
-      if (responseText?.trim()) {
-        const cleanResponse = responseText
-          .trim()
-          .replace(/^\[\d{2}:\d{2}:\d{2}\]\s+\w+:\s*/, "");
-        log(`🧠 LLM memory note: "${cleanResponse}"`);
-
-        // Add to chat history as internal memory (not sent to Twitch)
-        chatModule._addToChatHistory("[LLM_MEMORY]", cleanResponse);
-      }
-    } else if (shouldRespondAnswer.trim().toLowerCase().startsWith("respond")) {
-      log("🤖 LLM decided to respond ");
-      const responseMessages = [
-        { role: "system", content: systemPrompt },
-        {
-          role: "user",
-          content: `Here is the chat history:\n
-          ${chatLog}\n
-          You decide to ${shouldRespondAnswer}\n
-          What should you say in response? Write ONLY your response text, without any timestamp, username, or prefix. Just the message itself.`,
-        },
-      ];
-
-      const responseText = await llmModule.chat(responseMessages, {
-        maxTokens: 256,
-        temperature: 0.7,
-      });
-
-      if (responseText?.trim()) {
-        const cleanResponse = responseText
-          .trim()
-          .replace(/^\[\d{2}:\d{2}:\d{2}\]\s+\w+:\s*/, "");
-        log(`🤖 LLM response: "${cleanResponse}"`);
-
-        const sent = chatModule.send(cleanResponse);
-        if (!sent) {
-          log(`💥 Failed to send LLM response to chat!`);
-        }
-      }
-    } else if (
-      shouldRespondAnswer.trim().toLowerCase().startsWith("SilenceUser")
-    ) {
-      const responseMessages = [
-        { role: "system", content: systemPrompt },
-        {
-          role: "user",
-          content: `Here is the chat history:\n
-          ${chatLog}\n
-          What user must we silence? Name please.`,
-        },
-      ];
-
-      const responseText = await llmModule.chat(responseMessages, {
-        maxTokens: 256,
-        temperature: 0.7,
-      });
-
-      if (responseText?.trim()) {
-        const cleanResponse = responseText
-          .trim()
-          .replace(/^\[\d{2}:\d{2}:\d{2}\]\s+\w+:\s*/, "");
-        log(`🤖 LLM response: "${cleanResponse}"`);
-        const sent = chatModule.send(
-          "Moders, please silince for 10 minutes: " + cleanResponse,
-        );
-        if (!sent) {
-          log(`💥 Failed to send LLM response to chat!`);
-        }
-      }
-    }
-
-    chatModule.setChatMarkerPosition(chatHistory.length);
+    chatModule.setChatMarkerPosition(newMarkerPosition);
   } catch (error) {
-    log(`💥 LLM processing error: ${error.message}`);
+    log(`💥 LLM monitoring error: ${error.message}`);
   } finally {
     llmProcessing = false;
   }
@@ -659,7 +509,7 @@ async function getCustomRewards() {
   if (!currentUserId) return [];
 
   try {
-    const response = await contextBuilder.helpers.request(
+    const response = await moduleManager.helpers.request(
       `https://api.twitch.tv/helix/channel_points/custom_rewards?broadcaster_id=${currentUserId}`,
     );
     const data = await response.json();
@@ -677,7 +527,7 @@ async function createCustomReward(rewardKey, rewardConfig) {
   const { action, ...apiConfig } = rewardConfig;
 
   try {
-    const response = await contextBuilder.helpers.request(
+    const response = await moduleManager.helpers.request(
       `https://api.twitch.tv/helix/channel_points/custom_rewards?broadcaster_id=${currentUserId}`,
       {
         method: "POST",
@@ -708,7 +558,7 @@ async function handleRedemption(redemption) {
   log(`🎯 Redemption: ${redemption.reward.title} by ${userName}`);
 
   // Build context
-  const context = contextBuilder.build();
+  const context = moduleManager.buildContext();
 
   // Execute action
   const success = await actionRegistry.executeRewardAction(
@@ -719,7 +569,7 @@ async function handleRedemption(redemption) {
   );
 
   // Sync state changes
-  contextBuilder.syncStateFromContext(context);
+  moduleManager.syncStateFromContext(context);
 
   // Update redemption status
   const eventSubModule = moduleManager.get("twitch-eventsub");

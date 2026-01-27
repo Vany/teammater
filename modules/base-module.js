@@ -32,6 +32,11 @@ export class BaseModule {
       controlToggle: null, // Control modal toggle button (if hasControlPanel)
       controlModal: null, // Control modal (if hasControlPanel)
     };
+
+    // WebSocket reconnect state (shared by WS modules)
+    this.ws = null;
+    this.shouldReconnect = true;
+    this.reconnectTimer = null;
   }
 
   /**
@@ -308,6 +313,82 @@ export class BaseModule {
    */
   async doDisconnect() {
     throw new Error(`Module ${this.moduleId} must implement doDisconnect()`);
+  }
+
+  /**
+   * Wait for WebSocket connection to establish
+   * Shared helper for WebSocket-based modules
+   * @param {WebSocket} ws - WebSocket instance to wait for
+   * @param {number} timeoutMs - Timeout in milliseconds (default: 10000)
+   * @returns {Promise<void>} - Resolves on OPEN, rejects on CLOSED or timeout
+   */
+  _waitForWebSocket(ws, timeoutMs = 10000) {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error("Connection timeout"));
+      }, timeoutMs);
+
+      const checkConnection = () => {
+        if (ws.readyState === WebSocket.OPEN) {
+          clearTimeout(timeout);
+          resolve();
+        } else if (
+          ws.readyState === WebSocket.CLOSED ||
+          ws.readyState === WebSocket.CLOSING
+        ) {
+          clearTimeout(timeout);
+          reject(new Error("Connection failed"));
+        } else {
+          setTimeout(checkConnection, 100);
+        }
+      };
+
+      checkConnection();
+    });
+  }
+
+  /**
+   * Schedule WebSocket reconnection
+   * Shared helper for WebSocket-based modules
+   * @param {string} delayConfigKey - Config key for reconnect delay (without module prefix)
+   * @param {number} defaultDelay - Default delay in milliseconds
+   */
+  _scheduleReconnect(delayConfigKey = "reconnect_delay", defaultDelay = 5000) {
+    if (!this.shouldReconnect || !this.enabled) {
+      return;
+    }
+
+    const reconnectDelay = parseInt(
+      this.getConfigValue(delayConfigKey, defaultDelay.toString()),
+    );
+
+    this.log(`🔄 Reconnecting in ${reconnectDelay}ms...`);
+
+    this.reconnectTimer = setTimeout(() => {
+      this.connect().catch((err) => {
+        this.log(`💥 Reconnect failed: ${err.message}`);
+      });
+    }, reconnectDelay);
+  }
+
+  /**
+   * Cleanup WebSocket reconnect state
+   * Shared helper for WebSocket-based modules
+   */
+  _cleanupReconnect() {
+    this.shouldReconnect = false;
+
+    // Clear reconnect timer
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
+    // Close WebSocket
+    if (this.ws) {
+      this.ws.close();
+      this.ws = null;
+    }
   }
 
   /**

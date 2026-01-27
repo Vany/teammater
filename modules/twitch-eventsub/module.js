@@ -19,12 +19,10 @@ import { request } from "../../utils.js";
 export class TwitchEventSubModule extends BaseModule {
   constructor() {
     super();
-    this.ws = null;
     this.sessionId = null;
     this.currentUserId = null;
     this.customRewards = {}; // Map of reward_id -> reward_data
     this.redemptionHandlers = []; // Array of handler functions
-    this.reconnectTimer = null;
   }
 
   /**
@@ -232,17 +230,8 @@ export class TwitchEventSubModule extends BaseModule {
       this.updateStatus(false);
       this.sessionId = null;
 
-      // Auto-reconnect only if module is still enabled
-      if (this.enabled) {
-        const reconnectDelay = parseInt(
-          this.getConfigValue("reconnect_delay", "5000"),
-        );
-        this.reconnectTimer = setTimeout(() => {
-          this.connect().catch((err) => {
-            this.log(`💥 Reconnect failed: ${err.message}`);
-          });
-        }, reconnectDelay);
-      }
+      // Auto-reconnect using shared helper
+      this._scheduleReconnect();
     };
 
     this.ws.onmessage = async (event) => {
@@ -259,17 +248,8 @@ export class TwitchEventSubModule extends BaseModule {
   async doDisconnect() {
     this.log("🔌 Disconnecting from EventSub...");
 
-    // Clear reconnect timer
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-
-    // Close WebSocket
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
-    }
+    // Cleanup using shared helper
+    this._cleanupReconnect();
 
     this.sessionId = null;
     this.log("✅ Disconnected from EventSub");

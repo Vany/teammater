@@ -10,12 +10,21 @@
  */
 
 import { BaseModule } from "../base-module.js";
+import { LLM_ACTIONS, getBroadcasterUsername } from "../../config.js";
 
 export class LLMModule extends BaseModule {
   constructor() {
     super();
     this.healthCheckTimer = null;
     this.lastHealthCheck = null;
+
+    // Pre-calculate LLM actions prompt once
+    this.llmActionsPrompt =
+      Object.keys(LLM_ACTIONS).length > 0
+        ? `\n${Object.keys(LLM_ACTIONS)
+            .map((action) => `- ${action}`)
+            .join("\n")}`
+        : "";
   }
 
   /**
@@ -345,6 +354,250 @@ export class LLMModule extends BaseModule {
   }
 
   /**
+   * Monitor chat and decide whether to respond
+   * Two-stage LLM decision process:
+   * 1. Should respond? (nothing/remember/respond/silence_user)
+   * 2. What to say? (generate response)
+   *
+   * @param {Array} chatHistory - Array of {timestamp, username, message} objects
+   * @param {number} markerPosition - Position in history of last processed message
+   * @param {Function} formatHistoryFn - Function to format chat history for LLM
+   * @param {Function} sendFn - Function to send message to chat
+   * @param {Function} addToHistoryFn - Function to add message to chat history
+   * @param {Object} context - Execution context for actions (optional)
+   * @returns {Promise<number>} - New marker position
+   */
+  async monitorChat(
+    chatHistory,
+    markerPosition,
+    formatHistoryFn,
+    sendFn,
+    addToHistoryFn,
+    context = {},
+  ) {
+    if (!this.isConnected()) {
+      return markerPosition;
+    }
+
+    const chatMonitoring =
+      this.getConfigValue("chat_monitoring", "false") === "true";
+    if (!chatMonitoring) {
+      return markerPosition;
+    }
+
+    // Check if there are new messages
+    if (markerPosition >= chatHistory.length) {
+      return markerPosition;
+    }
+
+    this.log("🤖 LLM processing chat batch...");
+
+    try {
+      const systemPrompt = this.getConfigValue("system_prompt", "");
+      const chatLog = formatHistoryFn();
+
+      console.log(`>>>>>> ${chatLog}`);
+
+      // Stage 1: Should respond?
+      const shouldRespondMessages = [
+        {
+          role: "system",
+          content: `
+            ${systemPrompt}
+            User ${getBroadcasterUsername()} is chat owner, listen to them.
+            Twitch Rules (short):
+            Allowed:
+            - Copy paste messages
+            - Obscene language
+            - Friendly teasing
+            - Asking awkward and inappropriate questions
+            - Only half toxic messages
+            - Interract with any dialogues
+            - Sarcastic, non direct rule violations.
+
+            Sense sarcasm, not all the messages is malisious,
+            Disallowed content includes:
+            - Hate speech, slurs, discrimination
+            - Threats, harassment, bullying
+            - Sexual content involving minors
+            - Excessive sexual content or pornographic requests
+            - Spam, scams, or malicious links
+            - Encouraging self-harm or violence
+            - Doxxing or sharing private info
+            - Self-promotion or advertising
+            Such messages must trigger: silence_user
+
+            You are unobtrusive, good-natured chat owner.
+            Available actions:
+            - nothing        → no action needed
+            - remember       → store information to memory
+            - respond        → send a reply to chat
+            - silence_user   → apply moderation mute
+            ${this.llmActionsPrompt}`,
+        },
+        {
+          role: "user",
+          content: `
+          Here is the chat history:
+          -> old messages:
+          ${chatLog}\n
+          -> end of messages
+
+          What action do you need to perform on new messages and why?
+          action: action, reason: reason
+          `,
+        },
+      ];
+
+      const shouldRespondAnswer = await this.chat(shouldRespondMessages, {
+        maxTokens: 128,
+        temperature: 0.5,
+      });
+      this.log(`🤖: >>> "${shouldRespondAnswer}"`);
+
+      // Handle different action types
+      if (
+        shouldRespondAnswer.trim().toLowerCase().startsWith("action: remember")
+      ) {
+        const responseMessages = [
+          { role: "system", content: systemPrompt },
+          {
+            role: "user",
+            content: `Here is the chat history:\n
+            ${chatLog}\n
+            You decide to ${shouldRespondAnswer}\n
+            What internal note do you want to remember? Write ONLY your memory note, without any timestamp, username, or prefix. Just the note itself.`,
+          },
+        ];
+
+        const responseText = await this.chat(responseMessages, {
+          maxTokens: 256,
+          temperature: 0.7,
+        });
+
+        if (responseText?.trim()) {
+          const cleanResponse = responseText
+            .trim()
+            .replace(/^\[\d{2}:\d{2}:\d{2}\]\s+\w+:\s*/, "");
+          this.log(`🧠 LLM memory note: "${cleanResponse}"`);
+
+          // Add to chat history as internal memory (not sent to Twitch)
+          addToHistoryFn("[LLM_MEMORY]", cleanResponse);
+        }
+      } else if (
+        shouldRespondAnswer.trim().toLowerCase().startsWith("action: respond")
+      ) {
+        const responseMessages = [
+          { role: "system", content: systemPrompt },
+          {
+            role: "user",
+            content: `Here is the chat history:\n
+            ${chatLog}\n
+            You decide to ${shouldRespondAnswer}\n
+            What should you say in response? Write ONLY your response text, without any timestamp, username, or prefix. Just the message itself.`,
+          },
+        ];
+
+        const responseText = await this.chat(responseMessages, {
+          maxTokens: 256,
+          temperature: 0.7,
+        });
+
+        if (responseText?.trim()) {
+          const cleanResponse = responseText
+            .trim()
+            .replace(/^\[\d{2}:\d{2}:\d{2}\]\s+\w+:\s*/, "");
+          this.log(`🤖 LLM response: "${cleanResponse}"`);
+
+          const sent = sendFn(cleanResponse);
+          if (!sent) {
+            this.log(`💥 Failed to send LLM response to chat!`);
+          }
+        }
+      } else if (
+        shouldRespondAnswer.trim().toLowerCase().startsWith("action: silence")
+      ) {
+        // Note: This is the fixed version (case-insensitive)
+        this.log("🤖 LLM decided to request user silencing");
+        const responseMessages = [
+          { role: "system", content: systemPrompt },
+          {
+            role: "user",
+            content: `Here is the chat history:\n
+            ${chatLog}\n
+            What user must we silence? Name please.`,
+          },
+        ];
+
+        const responseText = await this.chat(responseMessages, {
+          maxTokens: 256,
+          temperature: 0.7,
+        });
+
+        if (responseText?.trim()) {
+          const cleanResponse = responseText
+            .trim()
+            .replace(/^\[\d{2}:\d{2}:\d{2}\]\s+\w+:\s*/, "");
+          this.log(`🤖 LLM identified user: "${cleanResponse}"`);
+          const sent = sendFn(
+            "Moderators, please silence for 10 minutes: " + cleanResponse,
+          );
+          if (!sent) {
+            this.log(`💥 Failed to send LLM moderation request to chat!`);
+          }
+        }
+      } else {
+        // Check if it matches any LLM_ACTIONS
+        const answerLower = shouldRespondAnswer.trim().toLowerCase();
+
+        // Extract first word from answer (action name)
+        const actionMatch = answerLower.match(/^action:\s*([^,]+)/);
+        if (actionMatch) {
+          const firstWord = actionMatch[1];
+
+          // Find matching action by comparing first word
+          for (const [actionName, actionClosure] of Object.entries(
+            LLM_ACTIONS,
+          )) {
+            const actionFirstWord = actionName.toLowerCase().split(/\s+/)[0];
+
+            if (firstWord === actionFirstWord) {
+              this.log(`🎯 LLM triggered action: ${actionName}`);
+
+              try {
+                // Extract reason from the answer
+                const reasonMatch =
+                  shouldRespondAnswer.match(/reason:\s*(.+)/i);
+                const reason = reasonMatch
+                  ? reasonMatch[1].trim()
+                  : shouldRespondAnswer;
+
+                // Extract username from the last message
+                const lastMessage = chatHistory[chatHistory.length - 1];
+                const username = lastMessage?.username || "unknown";
+
+                // Execute the action with context, username, and reason
+                await actionClosure(context, username, reason);
+                this.log(`✅ LLM action "${actionName}" executed successfully`);
+              } catch (error) {
+                this.log(
+                  `💥 Failed to execute LLM action "${actionName}": ${error.message}`,
+                );
+              }
+              break;
+            }
+          }
+        }
+      }
+
+      return chatHistory.length;
+    } catch (error) {
+      this.log(`💥 LLM processing error: ${error.message}`);
+      return markerPosition;
+    }
+  }
+
+  /**
    * Provide context for actions
    */
   getContextContribution() {
@@ -358,6 +611,7 @@ export class LLMModule extends BaseModule {
         isConnected: () => this.isConnected(),
         systemPrompt: this.getConfigValue("system_prompt", ""),
         connected: this.connected,
+        monitorChat: this.monitorChat.bind(this),
       },
     };
   }

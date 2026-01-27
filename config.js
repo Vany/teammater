@@ -29,6 +29,11 @@ export const CHAT_ACTIONS = [
   [voice(), /^!voice\s+(.+)/i], // TTS command: !voice <text>
 ];
 
+export const LLM_ACTIONS = {
+  "mute → apply moderation mute for 10 minute": mute(10),
+  "say → say outloud to attract attention of the owner": voice(),
+};
+
 // Get nickname from localStorage (default set via stored_default in HTML)
 export function getNickName() {
   return localStorage.getItem("nick_name");
@@ -63,18 +68,7 @@ export const TWITCH_SCOPES = [
 ];
 
 // Default WebSocket URLs (can be overridden via localStorage)
-// Get WebSocket URLs from localStorage (defaults set via stored_default in HTML)
-export const WEBSOCKET_URLS = {
-  get TWITCH_IRC() {
-    return localStorage.getItem("twitch_irc_url");
-  },
-  get TWITCH_EVENTSUB() {
-    return localStorage.getItem("twitch_eventsub_url");
-  },
-  get MINARET_SERVER() {
-    return localStorage.getItem("minaret_url");
-  },
-};
+// WebSocket URLs removed - modules read directly from localStorage via their config schemas
 
 export const TWITCH_API_BASE = "https://api.twitch.tv/helix";
 
@@ -82,25 +76,13 @@ export const TWITCH_API_BASE = "https://api.twitch.tv/helix";
 // MUSIC CONFIGURATION
 // ============================
 
-export const MUSIC_URL_PATTERN =
-  /^https:\/\/music\.yandex\.(ru|com)\/(album\/\d+\/)?track\/\d+/;
-export const EMPTY_MUSIC_URL = "https://music.yandex.ru/";
-export const INITIAL_SONG_NAME = "Silence by silencer";
-export const VOTE_SKIP_THRESHOLD = 3;
+// Music configuration removed - now handled by music-queue module config schema
 
 // ============================
 // AUDIO CONFIGURATION
 // ============================
 
-export const AUDIO_DIRECTORY = "mp3/";
-export const VALID_SOUND_EFFECTS = ["boo", "creeper", "tentacle", "woop"];
-
-export const SPEECH_SETTINGS = {
-  LANGUAGE: "en-US",
-  RATE: 1,
-  PITCH: 1,
-  VOLUME: 0.2, // Used in test function
-};
+// Audio configuration removed - sound effects and TTS handled by actions.js
 
 // ============================
 // MINECRAFT INTEGRATION CONFIGURATION
@@ -123,20 +105,14 @@ export const TIMING = {
   HATE_COOLDOWN_MS: 60_000,
   HATE_INITIAL_OFFSET_MS: 61_000,
   LOVE_PROTECTION_DURATION_MS: 60_000,
-  get RECONNECT_DELAY_MS() {
-    return parseInt(localStorage.getItem("twitch_reconnect_delay"));
-  },
-  get MINARET_RECONNECT_DELAY_MS() {
-    return parseInt(localStorage.getItem("minaret_reconnect_delay"));
-  },
+  // RECONNECT_DELAY_MS and MINARET_RECONNECT_DELAY_MS removed - handled by module configs
 };
 
 // ============================
 // LLM CHAT MONITORING CONFIGURATION
 // ============================
 
-// Number of messages to keep in chat history buffer for LLM context
-export const CHAT_HISTORY_SIZE = 50;
+// Chat history size removed - handled by twitch-chat module config schema
 
 // ============================
 // USER CONFIGURATION

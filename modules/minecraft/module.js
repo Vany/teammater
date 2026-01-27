@@ -17,9 +17,6 @@ import { BaseModule } from "../base-module.js";
 export class MinecraftModule extends BaseModule {
   constructor() {
     super();
-    this.ws = null;
-    this.reconnectTimer = null;
-    this.shouldReconnect = true;
   }
 
   /**
@@ -93,17 +90,8 @@ export class MinecraftModule extends BaseModule {
           this.log(`❌ Connection closed (code: ${event.code})`);
         }
 
-        // Auto-reconnect if not explicitly disconnected AND module is still enabled
-        if (this.shouldReconnect && this.enabled) {
-          const reconnectDelay = parseInt(
-            this.getConfigValue("reconnect_delay", "5000"),
-          );
-          this.log(`🔄 Reconnecting in ${reconnectDelay}ms...`);
-          this.reconnectTimer = setTimeout(
-            () => this.connect(),
-            reconnectDelay,
-          );
-        }
+        // Auto-reconnect using shared helper
+        this._scheduleReconnect();
       };
 
       this.ws.onerror = (error) => {
@@ -111,7 +99,7 @@ export class MinecraftModule extends BaseModule {
       };
 
       // Wait for connection to establish
-      await this._waitForConnection();
+      await this._waitForWebSocket(this.ws);
     } catch (error) {
       this.log(`💥 Connection failed: ${error.message}`);
       throw error;
@@ -122,48 +110,9 @@ export class MinecraftModule extends BaseModule {
    * Disconnect from Minecraft server
    */
   async doDisconnect() {
-    this.shouldReconnect = false;
-
-    // Clear any pending reconnect timer
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-
-    // Close WebSocket connection
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
-      this.log("🔌 Disconnected from Minecraft");
-    }
-  }
-
-  /**
-   * Wait for WebSocket connection to establish
-   */
-  _waitForConnection() {
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        reject(new Error("Connection timeout"));
-      }, 10000);
-
-      const checkConnection = () => {
-        if (this.ws.readyState === WebSocket.OPEN) {
-          clearTimeout(timeout);
-          resolve();
-        } else if (
-          this.ws.readyState === WebSocket.CLOSED ||
-          this.ws.readyState === WebSocket.CLOSING
-        ) {
-          clearTimeout(timeout);
-          reject(new Error("Connection failed"));
-        } else {
-          setTimeout(checkConnection, 100);
-        }
-      };
-
-      checkConnection();
-    });
+    // Cleanup using shared helper
+    this._cleanupReconnect();
+    this.log("🔌 Disconnected from Minecraft");
   }
 
   /**

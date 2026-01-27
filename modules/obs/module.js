@@ -21,9 +21,6 @@ import { BaseModule } from "../base-module.js";
 export class OBSModule extends BaseModule {
   constructor() {
     super();
-    this.ws = null;
-    this.reconnectTimer = null;
-    this.shouldReconnect = true;
     this.statusPollTimer = null;
 
     // OBS state
@@ -220,23 +217,15 @@ export class OBSModule extends BaseModule {
           this.log(`❌ OBS connection closed (code: ${event.code})`);
         }
 
-        if (this.shouldReconnect && this.enabled) {
-          const reconnectDelay = parseInt(
-            this.getConfigValue("reconnect_delay", "5000"),
-          );
-          this.log(`🔄 Reconnecting in ${reconnectDelay}ms...`);
-          this.reconnectTimer = setTimeout(
-            () => this.connect(),
-            reconnectDelay,
-          );
-        }
+        // Auto-reconnect using shared helper
+        this._scheduleReconnect();
       };
 
       this.ws.onerror = () => {
         this.log("💥 OBS WebSocket error");
       };
 
-      await this._waitForConnection();
+      await this._waitForWebSocket(this.ws);
     } catch (error) {
       this.log(`💥 OBS connection failed: ${error.message}`);
       throw error;
@@ -244,49 +233,16 @@ export class OBSModule extends BaseModule {
   }
 
   async doDisconnect() {
-    this.shouldReconnect = false;
     this._stopStatusPolling();
 
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
-      this.log("🔌 Disconnected from OBS");
-    }
+    // Cleanup using shared helper
+    this._cleanupReconnect();
+    this.log("🔌 Disconnected from OBS");
 
     this.streaming = false;
     this.recording = false;
     this.recordingPaused = false;
     this.updateCustomIndicators();
-  }
-
-  _waitForConnection() {
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(
-        () => reject(new Error("Connection timeout")),
-        10000,
-      );
-
-      const check = () => {
-        if (this.ws.readyState === WebSocket.OPEN) {
-          clearTimeout(timeout);
-          resolve();
-        } else if (
-          this.ws.readyState === WebSocket.CLOSED ||
-          this.ws.readyState === WebSocket.CLOSING
-        ) {
-          clearTimeout(timeout);
-          reject(new Error("Connection failed"));
-        } else {
-          setTimeout(check, 100);
-        }
-      };
-      check();
-    });
   }
 
   /**

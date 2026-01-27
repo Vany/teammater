@@ -403,7 +403,7 @@ Check for more messages, repeat if needed
 [HH:MM:SS] username: message
 [HH:MM:SS] username: message
 [HH:MM:SS] username: message
- -> new messages
+ -> new messages:
 [HH:MM:SS] username: message (new)
 [HH:MM:SS] username: message (new)
 ```

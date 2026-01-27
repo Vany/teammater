@@ -19,7 +19,6 @@ import { parseIrcTags, parseIrcMessage } from "../../utils.js";
 export class TwitchChatModule extends BaseModule {
   constructor() {
     super();
-    this.ws = null;
     this.channel = null;
     this.username = null;
     this.token = null;
@@ -27,7 +26,6 @@ export class TwitchChatModule extends BaseModule {
     this.chatHistory = [];
     this.chatMarkerPosition = 0;
     this.messageHandlers = []; // Array of {priority, handler} objects
-    this.reconnectTimer = null;
   }
 
   /**
@@ -140,18 +138,8 @@ export class TwitchChatModule extends BaseModule {
       this.log("❌ WebSocket closed");
       this.updateStatus(false);
 
-      // Auto-reconnect only if module is still enabled
-      if (this.enabled) {
-        const reconnectDelay = parseInt(
-          this.getConfigValue("reconnect_delay", "5000"),
-        );
-        this.log(`🔄 Reconnecting in ${reconnectDelay}ms...`);
-        this.reconnectTimer = setTimeout(() => {
-          this.connect().catch((err) => {
-            this.log(`💥 Reconnect failed: ${err.message}`);
-          });
-        }, reconnectDelay);
-      }
+      // Auto-reconnect using shared helper
+      this._scheduleReconnect();
     };
 
     this.ws.onopen = () => {
@@ -170,7 +158,7 @@ export class TwitchChatModule extends BaseModule {
     };
 
     // Wait for connection
-    await this._waitForConnection();
+    await this._waitForWebSocket(this.ws);
   }
 
   /**
@@ -179,47 +167,10 @@ export class TwitchChatModule extends BaseModule {
   async doDisconnect() {
     this.log("🔌 Disconnecting from Twitch IRC...");
 
-    // Clear reconnect timer
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-
-    // Close WebSocket
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
-    }
+    // Cleanup using shared helper
+    this._cleanupReconnect();
 
     this.log("✅ Disconnected from Twitch IRC");
-  }
-
-  /**
-   * Wait for WebSocket connection
-   */
-  _waitForConnection() {
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        reject(new Error("Connection timeout"));
-      }, 10000);
-
-      const checkConnection = () => {
-        if (this.ws.readyState === WebSocket.OPEN) {
-          clearTimeout(timeout);
-          resolve();
-        } else if (
-          this.ws.readyState === WebSocket.CLOSED ||
-          this.ws.readyState === WebSocket.CLOSING
-        ) {
-          clearTimeout(timeout);
-          reject(new Error("Connection failed"));
-        } else {
-          setTimeout(checkConnection, 100);
-        }
-      };
-
-      checkConnection();
-    });
   }
 
   /**
@@ -407,7 +358,7 @@ export class TwitchChatModule extends BaseModule {
         index === this.chatMarkerPosition - 1 &&
         this.chatMarkerPosition < this.chatHistory.length
       ) {
-        return line + "\n -> new messages";
+        return line + "\n -> new messages:";
       }
 
       return line;

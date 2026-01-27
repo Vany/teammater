@@ -254,29 +254,3 @@ export function detectLanguage(text) {
   if (latinCount > cyrillicCount) return "en";
   return "unknown";
 }
-
-async function ANNOUNCE(message) {
-  const text = "@everyone https://www.twitch.tv/vanyserezhkin " + message;
-  await fetch(
-    "https://discord.com/api/webhooks/1461831116016324834/Qd_uqaxb6SMxGrcCdZpjr-tyjW889i8J-q3ZwFMMNeOA2NamYsa2qqVFAyJp17wm42W0",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: text }),
-    },
-  );
-
-  await fetch(
-    "https://api.telegram.org/bot8559873655:AAG9OfV8xkpjFKEKSP8Kmq-xbfzz9Z2LK_0/sendMessage",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: "@minecraftvanyannouncements",
-        text: text,
-      }),
-    },
-  );
-
-  console.log("SENT " + text);
-}
