@@ -1,20 +1,28 @@
 # Teammater - Twitch Stream Bot
 
-Advanced Twitch streaming assistant with Minecraft integration, channel point rewards, automated moderation, and music control.
+Advanced modular Twitch streaming assistant with AI-powered chat monitoring, Minecraft integration, channel point rewards, automated moderation, and music control.
 
 **Quick Start:** Authenticate once and the bot connects to your own channel automatically. No configuration needed.
 
 ## Features
 
+### AI-Powered Chat Monitoring (NEW)
+- **LLM Integration**: Local Ollama LLM monitors chat and responds naturally
+- **Smart Decision Making**: LLM decides when to respond, remember, or moderate
+- **Configurable Actions**: LLM can trigger custom actions (mute, voice TTS, etc.)
+- **Context-Aware**: Understands chat history and broadcaster context
+- **Privacy-First**: Runs locally on your machine, no cloud API calls
+
 ### Stream Management
 - **Preset System**: Quick-switch stream configurations (title, category, tags, pinned messages)
-- **Channel Point Rewards**: 6 interactive rewards with automatic redemption handling
+- **Channel Point Rewards**: 7 interactive rewards with automatic redemption handling
 - **Automatic Pinned Messages**: Context-aware chat pins for different stream types
-- **Real-time Status**: Visual indicators for all connections
+- **Real-time Status**: Visual indicators for all 8 independent modules
 
 ### Chat Moderation
-- **Pattern-Based Banning**: Configurable regex rules with AND/OR logic
+- **Pattern-Based Actions**: Configurable regex rules with AND/OR logic
 - **Three Action Types**: Ban, timeout (mute), or delete messages
+- **LLM-Assisted Moderation**: AI can request moderator actions when needed
 - **Automatic Execution**: Real-time moderation via Twitch API
 - **Smart Filtering**: Skips bot's own messages, comprehensive logging
 
@@ -38,13 +46,23 @@ Advanced Twitch streaming assistant with Minecraft integration, channel point re
 
 ## Prerequisites
 
+### Required
 - Modern web browser (Chrome, Firefox, Edge)
 - Twitch account with **moderator or broadcaster** status on your channel
 - Caddy or similar web server for HTTPS serving (localhost:8443 by default)
-- Minecraft server with WebSocket plugin (optional, for game integration)
+
+### Optional (for enhanced features)
+- **[Ollama](https://ollama.ai)** - Local LLM server for AI chat monitoring
+  * Download and install Ollama
+  * Pull a model: `ollama pull llama3.2` (or any other model)
+  * Server runs on localhost:11434 by default
+  * Enables AI-powered chat responses and moderation
+- **Minecraft server** with WebSocket plugin (for game integration)
   * Recommended: [Minaret](https://github.com/Vany/minaret) - WebSocket bridge for Minecraft server
-- UserScript manager (Tampermonkey/Greasemonkey) for music features
+  * Enables lightning strikes, health boosts, chat bridge
+- **UserScript manager** (Tampermonkey/Greasemonkey) for music features
   * Required for Yandex Music integration via included UserScript
+  * Enables song requests, vote skip, now playing
 
 ## Installation
 
@@ -60,11 +78,7 @@ Advanced Twitch streaming assistant with Minecraft integration, channel point re
 
 ### 2. Configure Bot
 
-Edit `index.js`:
-
-```javascript
-const CLIENT_ID = "your_client_id_here";  // Replace with your Client ID
-```
+On first run, you'll be prompted to enter your Twitch Client ID. This is stored in localStorage and persists across sessions.
 
 **Note:** Channel is configured via URL parameter (see Usage section).
 
@@ -111,7 +125,36 @@ The bot can communicate with Minecraft via WebSocket for interactive features.
 - Chat bridge between Twitch and Minecraft
 - Custom commands executed on server
 
-### 6. Music Integration (Optional)
+### 6. LLM Integration (Optional)
+
+The bot can use a local LLM for intelligent chat monitoring and responses.
+
+**Setup Ollama:**
+
+1. Install Ollama from https://ollama.ai
+2. Pull a model (recommended: llama3.2):
+   ```bash
+   ollama pull llama3.2
+   ```
+3. Server runs automatically on localhost:11434
+4. Enable in bot UI: Check "🤖 LLM (Ollama)" module
+5. Configure system prompt and enable chat monitoring
+
+**Features when connected:**
+- Automatic chat monitoring with context awareness
+- Natural conversation responses (no command prefix needed)
+- Memory system for remembering information
+- AI-assisted moderation decisions
+- Custom actions via LLM_ACTIONS (mute users, voice TTS, etc.)
+
+**Configuration:**
+- Base URL: http://localhost:11434 (default)
+- Model: Select from dropdown (populated from Ollama)
+- System Prompt: Define bot personality and behavior
+- Temperature: 0.7 (default, higher = more creative)
+- Max Tokens: 256 (response length limit)
+
+### 7. Music Integration (Optional)
 
 Install UserScript manager:
 - Chrome/Edge: Install Tampermonkey extension
@@ -132,9 +175,42 @@ Add the included UserScript:
 
 ## Configuration
 
+### Modular Architecture
+
+The bot uses 8 independent modules with enable/disable checkboxes:
+
+1. **🤖 LLM (Ollama)** - AI chat monitoring and responses
+2. **💬 Twitch Chat** - IRC chat connection
+3. **🎁 Twitch EventSub** - Channel point redemptions
+4. **📺 Twitch Stream** - Stream metadata and presets
+5. **🎵 Music Queue** - Yandex Music integration
+6. **🎮 Minecraft** - Game server WebSocket
+7. **📡 Echowire** - Android STT (Speech-to-Text)
+8. **🎬 OBS** - Stream monitoring and control
+
+Each module has its own config panel (gear icon) with schema-based UI generation.
+
+### LLM Actions System
+
+Define custom actions the LLM can trigger in `config.js`:
+
+```javascript
+export const LLM_ACTIONS = {
+  "mute for 10 minute": mute(10),
+  "Say by voice": voice(),
+  // Add more actions as needed
+};
+```
+
+**How it works:**
+- LLM receives available actions in its system prompt
+- When LLM responds with `action: mute, reason: spamming`, the action executes
+- First word matching: "mute" matches "mute for 10 minute"
+- Reason is passed as the third parameter to the action
+
 ### Stream Presets
 
-Edit `DEFAULT_PRESETS` in `index.js`:
+Edit `DEFAULT_PRESETS` in `config.js`:
 
 ```javascript
 const DEFAULT_PRESETS = {
@@ -151,9 +227,28 @@ const DEFAULT_PRESETS = {
 **Find Category IDs:**
 Search at https://www.streamweasels.com/tools/twitch-category-id-finder/
 
+### Chat Actions
+
+Define pattern-based actions in `config.js`:
+
+```javascript
+export const CHAT_ACTIONS = [
+  [ban(), /badword/i, /spam/i],     // Ban if both patterns match
+  [mute(30), /profanity/i],         // 30s timeout
+  [voice(), /^!voice\s+(.+)/i],     // TTS command (captured text used)
+];
+```
+
+**Action Types:**
+- `ban()` - Permanent ban
+- `mute(seconds)` - Temporary timeout
+- `delete_()` - Delete message only
+- `voice()` - Text-to-speech
+- Any action from `actions.js`
+
 ### Channel Point Rewards
 
-Edit `DEFAULT_REWARDS` in `index.js`:
+Edit rewards via `getDefaultRewards()` in `config.js`:
 
 ```javascript
 const DEFAULT_REWARDS = {
@@ -170,23 +265,14 @@ const DEFAULT_REWARDS = {
 
 Rewards auto-create on first connection.
 
-### Moderation Rules
-
-Edit `BAN_RULES` in `index.js`:
-
-```javascript
-const BAN_RULES = [
-  [ban(), /badword/i],                      // Ban if contains "badword"
-  [mute(600), /spam/i, /link/i],            // 10min timeout if both match
-  [delete(), /mild/i],                      // Delete message only
-];
-```
-
-**Rule Logic:**
-- Outer array: OR (any rule triggers)
-- Inner array: AND (all patterns must match)
-- First element: action (`ban()`, `mute(seconds)`, `delete()`)
-- Rest: regex patterns (case-insensitive with `/i` flag)
+**Default Rewards:**
+- **⚡ Hate [Streamer]** (300pts) - Lightning strike + sound
+- **💚 Love [Streamer]** (200pts) - Health boost + protection
+- **🎵 Music Request** (150pts) - Queue Yandex Music song
+- **🧠 Ask Neuro** (100pts) - LLM-powered chat response
+- **🤖 Voice** (50pts) - Custom TTS message
+- **🎵 Skip Song** (30pts) - Vote to skip current track
+- **What's Playing** (30pts) - Display current song info
 
 ## Usage
 
@@ -214,11 +300,11 @@ The selected channel will be logged on connection:
 ### Starting the Bot
 
 1. Open https://localhost:8443
-2. Bot connects automatically if authenticated
-3. Check status indicators:
-   - 🟢 Twitch Chat - IRC connection
-   - 🟢 Minaret - Local server
-   - 🟢 Stream API - Twitch API
+2. Enter Twitch Client ID (if first run)
+3. Authenticate with Twitch (if first run)
+4. Enable desired modules via checkboxes
+5. Configure each module via gear icon
+6. Check connection status indicators (green = connected)
 
 ### Applying Presets
 
@@ -244,15 +330,7 @@ The selected channel will be logged on connection:
 
 ### Channel Point Rewards
 
-**Default Rewards:**
-- **⚡ Hate Vany** (300pts): Lightning strike + sound
-- **💚 Love Vany** (200pts): Health boost + protection
-- **🎵 Music Request** (150pts): Queue song from Yandex Music
-- **🤖 Voice** (50pts): Custom TTS message
-- **🎵 Skip Song** (30pts): Vote to skip (3 votes needed)
-- **What's Playing** (30pts): Display current track
-
-Rewards auto-enable/disable based on active preset.
+All rewards are configured in `config.js` and auto-create on first connection. Rewards auto-enable/disable based on active preset.
 
 ## Troubleshooting
 
@@ -331,12 +409,13 @@ If not using Minaret, ensure your custom WebSocket server:
 - Handles JSON messages: `{"command": "...", "message": "...", "user": "..."}`
 - Responds to bot messages appropriately
 
-### Moderation Not Triggering
+### Chat Actions Not Triggering
 
 **Check:**
-1. BAN_RULES not empty?
+1. CHAT_ACTIONS not empty in `config.js`?
 2. Patterns using `/pattern/i` format (with slashes)?
-3. Check console for "🔨 BANNED" / "⏱️ MUTED" / "🗑️ DELETED" logs
+3. Check console for action execution logs
+4. Module "💬 Twitch Chat" enabled and connected?
 
 **Test Pattern:**
 ```javascript
@@ -346,35 +425,50 @@ const pattern = /badword/i;
 console.log(pattern.test(testMsg));  // Should return true
 ```
 
+### LLM Not Responding
+
+**Check:**
+1. Ollama installed and running? Test: `curl http://localhost:11434`
+2. Model pulled? Test: `ollama list`
+3. "🤖 LLM (Ollama)" module enabled?
+4. Chat monitoring checkbox enabled in LLM config panel?
+5. System prompt configured?
+
+**Debug:**
+- Check browser console for LLM logs: "🤖 LLM processing chat batch..."
+- Verify model selected in dropdown
+- Test Ollama directly: `ollama run llama3.2 "Hello"`
+
 ## Architecture
 
 ```
-┌─────────────────┐
-│   Browser UI    │
-│   (index.html)  │
-└────────┬────────┘
-         │
-    ┌────▼────┐
-    │index.js │◄──── OAuth Token (localStorage)
-    └────┬────┘
-         │
-    ┌────▼────────────────────────┐
-    │  WebSocket Connections      │
-    ├─────────────────────────────┤
-    │ IRC: chat.twitch.tv:443     │
-    │ EventSub: eventsub.wss...   │
-    │ Minaret: localhost:8765     │
-    └─────────────────────────────┘
-         │
-    ┌────▼────────────────────────┐
-    │    Twitch Helix API         │
-    ├─────────────────────────────┤
-    │ /channels - Stream info     │
-    │ /chat - Settings & mod      │
-    │ /whispers - Private msgs    │
-    │ /channel_points - Rewards   │
-    │ /moderation - Ban/timeout   │
-    └─────────────────────────────┘
+┌─────────────────────────────────────────────────────┐
+│                   Browser UI                         │
+│                  (index.html)                        │
+└──────────────────────┬──────────────────────────────┘
+                       │
+         ┌─────────────▼─────────────┐
+         │     Module Manager         │
+         │  (8 independent modules)   │
+         └─────────────┬──────────────┘
+                       │
+    ┌──────────────────┼──────────────────┐
+    │                  │                  │
+┌───▼────┐      ┌──────▼──────┐   ┌──────▼──────┐
+│  LLM   │      │   Twitch    │   │  Minecraft  │
+│ Ollama │      │ IRC/API/ES  │   │   Minaret   │
+└────────┘      └─────────────┘   └─────────────┘
+localhost       WebSocket+API      WebSocket
+:11434          Helix REST API     :8765
+
+┌──────────────────────────────────────────┐
+│         Action Registry System            │
+├───────────────────────────────────────────┤
+│ • CHAT_ACTIONS - Pattern-based triggers  │
+│ • LLM_ACTIONS - AI-callable functions    │
+│ • Reward Actions - Channel point handlers│
+│ • Context Builder - Unified execution    │
+└──────────────────────────────────────────┘
 ```
 
 ## API Rate Limits
@@ -420,10 +514,12 @@ This is a personal streaming bot. Modify freely for your own channel.
 ## Technical Details
 
 **Built with:**
-- Vanilla JavaScript (no frameworks)
+- Vanilla JavaScript (ES6 modules)
+- Modular architecture with BaseModule pattern
 - Twitch IRC WebSocket (chat)
 - Twitch EventSub WebSocket (redemptions)
 - Twitch Helix API (REST)
+- Ollama API (local LLM)
 - Web Speech API (TTS)
 - HTML5 Audio API (sounds)
 
@@ -436,18 +532,36 @@ This is a personal streaming bot. Modify freely for your own channel.
 **File Structure:**
 ```
 teammater/
-├── index.html                    # UI layout
-├── index.css                     # Styling
-├── index.js                      # Core logic
-├── yandex-music-userscript.js   # Tampermonkey script for Yandex Music
-├── mp3/                         # Sound effects
+├── index.html                      # UI layout
+├── index.css                       # Styling
+├── index.js                        # Application entry point
+├── config.js                       # Centralized configuration
+├── actions.js                      # Action closures (rewards, chat, LLM)
+├── utils.js                        # Shared utilities
+├── core/                           # Core system
+│   ├── module-manager.js           # Module lifecycle & context
+│   ├── action-registry.js          # Action execution system
+│   └── ui-builder.js               # Schema-based UI generation
+├── modules/                        # 8 independent modules
+│   ├── base-module.js              # Base class for all modules
+│   ├── llm/module.js               # LLM (Ollama) integration
+│   ├── twitch-chat/module.js       # IRC chat connection
+│   ├── twitch-eventsub/module.js   # Channel point redemptions
+│   ├── twitch-stream/module.js     # Stream metadata & presets
+│   ├── music-queue/module.js       # Yandex Music integration
+│   ├── minecraft/module.js         # Game server WebSocket
+│   ├── echowire/module.js          # Android STT
+│   └── obs/module.js               # OBS stream monitoring
+├── mp3/                            # Sound effects
 │   ├── icq.mp3
 │   ├── ahhh.mp3
 │   ├── boo.mp3
 │   └── ...
-├── REQUIREMENTS.md              # Feature specs
-├── MEMO.md                      # Implementation notes
-└── README.md                    # This file
+├── yandex-music-userscript.js      # Tampermonkey script
+├── SPEC.md                         # Complete specification
+├── MEMO.md                         # Development notes
+├── TODO.md                         # Task tracking
+└── README.md                       # This file
 ```
 
 **External Dependencies:**
