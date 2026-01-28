@@ -204,7 +204,7 @@ export class ModuleManager {
   /**
    * Build unified execution context for actions
    * Combines:
-   * - Module context contributions (ws, llm, minecraft, musicQueue, etc.)
+   * - Module references (llm, minecraft, musicQueue, etc.)
    * - Helper functions (log, mp3, speak, etc.)
    * - Global state (currentUserId, CHANNEL, throttle, etc.)
    *
@@ -212,14 +212,13 @@ export class ModuleManager {
    * @returns {Object} - Complete execution context
    */
   buildContext(additionalContext = {}) {
-    // Start with base context
-    const context = {
-      ...additionalContext,
-    };
+    const context = { ...additionalContext };
 
-    // Add module contributions
-    const moduleContext = this.buildActionContext();
-    Object.assign(context, moduleContext);
+    // Add module references (all modules, not just connected)
+    for (const [id, module] of this.modules.entries()) {
+      const contribution = module.getContextContribution();
+      Object.assign(context, contribution);
+    }
 
     // Add global state
     Object.assign(context, this.globalState);
@@ -227,50 +226,13 @@ export class ModuleManager {
     // Add helper functions
     Object.assign(context, this.helpers);
 
-    // Add legacy compatibility helpers
-    this._addLegacyHelpers(context);
-
-    return context;
-  }
-
-  /**
-   * Build execution context for actions from all enabled modules
-   * Always includes module context - functions handle disconnected state internally
-   * @param {Object} baseContext - Base context to extend
-   * @returns {Object} - Context object with all module connectors and helpers
-   */
-  buildActionContext(baseContext = {}) {
-    const context = { ...baseContext };
-
-    // Add each enabled module to context (not just connected)
-    // Functions should handle disconnected state gracefully
-    for (const [id, module] of this.modules.entries()) {
-      if (module.isEnabled()) {
-        const moduleContext = module.getContextContribution();
-        Object.assign(context, moduleContext);
-      }
-    }
-
-    return context;
-  }
-
-  /**
-   * Add legacy compatibility helpers for old actions
-   * This ensures existing actions.js code continues to work
-   * @private
-   */
-  _addLegacyHelpers(context) {
-    // Music queue compatibility
-    if (context.musicQueue) {
-      context.needVoteSkip = context.musicQueue.needVoteSkip;
-      context.currentSong = context.musicQueue.currentSong || "Unknown Track";
-    }
-
-    // Ensure all expected fields exist (prevents crashes in actions)
+    // Ensure required fields exist
     context.throttle = context.throttle || {};
     context.love_timer = context.love_timer || Date.now();
     context.currentUserId = context.currentUserId || null;
     context.CHANNEL = context.CHANNEL || null;
+
+    return context;
   }
 
   /**
@@ -283,17 +245,8 @@ export class ModuleManager {
     if (context.throttle) {
       this.globalState.throttle = context.throttle;
     }
-
     if (context.love_timer !== undefined) {
       this.globalState.love_timer = context.love_timer;
-    }
-
-    // Sync music queue state
-    if (context.musicQueue && context.needVoteSkip !== undefined) {
-      // Update in module if needed
-      if (context.musicQueue.needVoteSkip !== context.needVoteSkip) {
-        context.musicQueue.needVoteSkip = context.needVoteSkip;
-      }
     }
   }
 

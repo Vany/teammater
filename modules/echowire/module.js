@@ -293,14 +293,16 @@ export class EchowireModule extends BaseModule {
 
   /**
    * Provide context for actions
+   * Returns module reference - actions access methods directly
    */
   getContextContribution() {
-    return {
-      echowire: {
-        getWebSocket: this.getWebSocket.bind(this),
-        isConnected: () => this.isConnected(),
-        getCurrentText: () => this.currentText,
-      },
-    };
+    return { echowire: this };
+  }
+
+  /**
+   * Get current transcription text
+   */
+  getCurrentText() {
+    return this.currentText;
   }
 }

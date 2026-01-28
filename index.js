@@ -429,6 +429,8 @@ async function handleChatMessage(messageData) {
 }
 
 async function processLLMMonitoring() {
+  if (llmProcessing) return;
+
   const llmModule = moduleManager.get("llm");
   const chatModule = moduleManager.get("twitch-chat");
 
@@ -436,29 +438,11 @@ async function processLLMMonitoring() {
     return;
   }
 
-  if (llmProcessing) {
-    return;
-  }
-
-  const chatHistory = chatModule.getChatHistory();
-  const chatMarkerPosition = chatModule.getChatMarkerPosition();
-
   llmProcessing = true;
 
   try {
-    // Build context for LLM actions
     const context = moduleManager.buildContext();
-
-    const newMarkerPosition = await llmModule.monitorChat(
-      chatHistory,
-      chatMarkerPosition,
-      () => chatModule.formatChatHistoryForLLM(),
-      (msg) => chatModule.send(msg),
-      (user, msg) => chatModule._addToChatHistory(user, msg),
-      context,
-    );
-
-    chatModule.setChatMarkerPosition(newMarkerPosition);
+    await llmModule.monitorChat(chatModule, context);
   } catch (error) {
     log(`💥 LLM monitoring error: ${error.message}`);
   } finally {

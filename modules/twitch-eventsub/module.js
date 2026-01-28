@@ -390,22 +390,9 @@ export class TwitchEventSubModule extends BaseModule {
 
   /**
    * Provide context for actions
+   * Returns module reference - actions access methods directly
    */
   getContextContribution() {
-    if (!this.isConnected()) {
-      return {
-        eventSubSocket: null,
-        sessionId: null,
-        customRewards: {},
-        updateRedemptionStatus: null,
-      };
-    }
-
-    return {
-      eventSubSocket: this.ws,
-      sessionId: this.sessionId,
-      customRewards: this.customRewards,
-      updateRedemptionStatus: this.updateRedemptionStatus.bind(this),
-    };
+    return { eventSub: this };
   }
 }

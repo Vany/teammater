@@ -167,17 +167,12 @@ export class MinecraftModule extends BaseModule {
 
   /**
    * Provide context for actions
-   * Always provides functions (they handle disconnected state internally)
+   * Returns module reference - actions access methods directly
    */
   getContextContribution() {
     return {
-      minecraft: {
-        sendMessage: this.sendMessage.bind(this),
-        sendCommand: this.sendCommand.bind(this),
-        getWebSocket: this.getWebSocket.bind(this),
-        isConnected: () => this.isConnected(),
-      },
-      minaret: this.ws, // Legacy compatibility (may be null)
+      minecraft: this,
+      // Legacy flat helpers for actions
       sendMessageMinaret: (msg) => this.sendMessage("", msg),
       sendCommandMinaret: (cmd) => this.sendCommand(cmd),
     };

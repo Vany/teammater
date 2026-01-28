@@ -572,28 +572,11 @@ export class OBSModule extends BaseModule {
     };
   }
 
+  /**
+   * Provide context for actions
+   * Returns module reference - actions access methods directly
+   */
   getContextContribution() {
-    if (!this.isConnected()) {
-      return { obs: null };
-    }
-
-    return {
-      obs: {
-        isConnected: () => this.isConnected(),
-        isStreaming: () => this.isStreaming(),
-        isRecording: () => this.isRecording(),
-        isRecordingPaused: () => this.isRecordingPaused(),
-        getDroppedFrames: () => this.getDroppedFrames(),
-        startStream: () => this.startStream(),
-        stopStream: () => this.stopStream(),
-        toggleStream: () => this.toggleStream(),
-        startRecord: () => this.startRecord(),
-        stopRecord: () => this.stopRecord(),
-        toggleRecord: () => this.toggleRecord(),
-        pauseRecord: () => this.pauseRecord(),
-        resumeRecord: () => this.resumeRecord(),
-        toggleRecordPause: () => this.toggleRecordPause(),
-      },
-    };
+    return { obs: this };
   }
 }

@@ -559,25 +559,13 @@ export class MusicQueueModule extends BaseModule {
 
   /**
    * Provide context for actions
+   * Returns module reference - actions access methods directly
    */
   getContextContribution() {
-    if (!this.isConnected()) {
-      return { musicQueue: null };
-    }
-
     return {
-      musicQueue: {
-        add: this.add.bind(this),
-        smartAdd: this.smartAdd.bind(this),
-        skip: this.skip.bind(this),
-        voteSkip: this.voteSkip.bind(this),
-        clear: this.clear.bind(this),
-        getStatus: this.getStatus.bind(this),
-        getCurrentSong: this.getCurrentSong.bind(this),
-        setOnSongStart: this.setOnSongStart.bind(this),
-        needVoteSkip: this.needVoteSkip,
-        currentSong: this.currentSongName,
-      },
+      musicQueue: this,
+      // Legacy flat helpers
+      currentSong: this.currentSongName,
     };
   }
 }

@@ -359,42 +359,35 @@ export class LLMModule extends BaseModule {
    * 1. Should respond? (nothing/remember/respond/silence_user)
    * 2. What to say? (generate response)
    *
-   * @param {Array} chatHistory - Array of {timestamp, username, message} objects
-   * @param {number} markerPosition - Position in history of last processed message
-   * @param {Function} formatHistoryFn - Function to format chat history for LLM
-   * @param {Function} sendFn - Function to send message to chat
-   * @param {Function} addToHistoryFn - Function to add message to chat history
+   * @param {TwitchChatModule} chatModule - Chat module reference
    * @param {Object} context - Execution context for actions (optional)
-   * @returns {Promise<number>} - New marker position
+   * @returns {Promise<void>}
    */
-  async monitorChat(
-    chatHistory,
-    markerPosition,
-    formatHistoryFn,
-    sendFn,
-    addToHistoryFn,
-    context = {},
-  ) {
-    if (!this.isConnected()) {
-      return markerPosition;
+  async monitorChat(chatModule, context = {}) {
+    if (!this.isConnected() || !chatModule?.isConnected()) {
+      return;
     }
 
     const chatMonitoring =
       this.getConfigValue("chat_monitoring", "false") === "true";
     if (!chatMonitoring) {
-      return markerPosition;
+      return;
     }
+
+    // Get chat state from module
+    const chatHistory = chatModule.getChatHistory();
+    const markerPosition = chatModule.getChatMarkerPosition();
 
     // Check if there are new messages
     if (markerPosition >= chatHistory.length) {
-      return markerPosition;
+      return;
     }
 
     this.log("🤖 LLM processing chat batch...");
 
     try {
       const systemPrompt = this.getConfigValue("system_prompt", "");
-      const chatLog = formatHistoryFn();
+      const chatLog = chatModule.formatChatHistoryForLLM();
 
       console.log(`>>>>>> ${chatLog}`);
 
@@ -413,7 +406,7 @@ export class LLMModule extends BaseModule {
             - Asking awkward and inappropriate questions
             - Only half toxic messages
             - Interract with any dialogues
-            - Sarcastic, non direct rule violations.
+            - Sarcastic, non direct rule violations for fun without profit.
 
             Sense sarcasm, not all the messages is malisious,
             Disallowed content includes:
@@ -482,7 +475,7 @@ export class LLMModule extends BaseModule {
           this.log(`🧠 LLM memory note: "${cleanResponse}"`);
 
           // Add to chat history as internal memory (not sent to Twitch)
-          addToHistoryFn("[LLM_MEMORY]", cleanResponse);
+          chatModule._addToChatHistory("[LLM_MEMORY]", cleanResponse);
         }
       } else if (
         shouldRespondAnswer.trim().toLowerCase().startsWith("action: respond")
@@ -509,7 +502,7 @@ export class LLMModule extends BaseModule {
             .replace(/^\[\d{2}:\d{2}:\d{2}\]\s+\w+:\s*/, "");
           this.log(`🤖 LLM response: "${cleanResponse}"`);
 
-          const sent = sendFn(cleanResponse);
+          const sent = chatModule.send(cleanResponse);
           if (!sent) {
             this.log(`💥 Failed to send LLM response to chat!`);
           }
@@ -539,7 +532,7 @@ export class LLMModule extends BaseModule {
             .trim()
             .replace(/^\[\d{2}:\d{2}:\d{2}\]\s+\w+:\s*/, "");
           this.log(`🤖 LLM identified user: "${cleanResponse}"`);
-          const sent = sendFn(
+          const sent = chatModule.send(
             "Moderators, please silence for 10 minutes: " + cleanResponse,
           );
           if (!sent) {
@@ -590,29 +583,25 @@ export class LLMModule extends BaseModule {
         }
       }
 
-      return chatHistory.length;
+      // Update marker position
+      chatModule.setChatMarkerPosition(chatHistory.length);
     } catch (error) {
       this.log(`💥 LLM processing error: ${error.message}`);
-      return markerPosition;
     }
   }
 
   /**
    * Provide context for actions
+   * Returns module reference - actions access methods directly
    */
   getContextContribution() {
-    if (!this.isConnected()) {
-      return { llm: null };
-    }
+    return { llm: this };
+  }
 
-    return {
-      llm: {
-        chat: this.chat.bind(this),
-        isConnected: () => this.isConnected(),
-        systemPrompt: this.getConfigValue("system_prompt", ""),
-        connected: this.connected,
-        monitorChat: this.monitorChat.bind(this),
-      },
-    };
+  /**
+   * Get system prompt (for actions that need it)
+   */
+  get systemPrompt() {
+    return this.getConfigValue("system_prompt", "");
   }
 }

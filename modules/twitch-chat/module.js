@@ -390,26 +390,16 @@ export class TwitchChatModule extends BaseModule {
 
   /**
    * Provide context for actions
+   * Returns module reference - actions access methods directly
    */
   getContextContribution() {
-    if (!this.isConnected()) {
-      return {
-        ws: null,
-        CHANNEL: null,
-        send_twitch: null,
-        sendAction: null,
-      };
-    }
-
     return {
+      twitchChat: this,
+      // Legacy flat helpers for actions
       ws: this.ws,
       CHANNEL: this.channel,
-      send_twitch: this.send.bind(this),
-      sendAction: this.sendAction.bind(this),
-      chatHistory: this.chatHistory,
-      chatMarkerPosition: this.chatMarkerPosition,
-      setChatMarkerPosition: this.setChatMarkerPosition.bind(this),
-      formatChatHistoryForLLM: this.formatChatHistoryForLLM.bind(this),
+      send_twitch: (msg) => this.send(msg),
+      sendAction: (msg) => this.sendAction(msg),
     };
   }
 }

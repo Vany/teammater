@@ -14,7 +14,12 @@
 //     };
 //   }
 //
-// context contains: { ws, minaret, llm, currentUserId, CHANNEL, ...globals }
+// context contains:
+//   - Module references: llm, minecraft, musicQueue, twitchChat, obs, echowire, eventSub, twitchStream
+//   - Legacy helpers: ws, CHANNEL, send_twitch, sendAction, sendMessageMinaret, sendCommandMinaret, currentSong
+//   - Global state: currentUserId, throttle, love_timer
+//   - Utilities: log, mp3, speak, request
+//
 // user: username string
 // message: message/input string
 

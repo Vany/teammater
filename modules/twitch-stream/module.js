@@ -461,24 +461,9 @@ export class TwitchStreamModule extends BaseModule {
 
   /**
    * Provide context for actions
+   * Returns module reference - actions access methods directly
    */
   getContextContribution() {
-    if (!this.isConnected()) {
-      return {
-        streamModule: null,
-      };
-    }
-
-    return {
-      streamModule: {
-        getCurrentStreamInfo: this.getCurrentStreamInfo.bind(this),
-        applyPreset: this.applyPreset.bind(this),
-        updateStreamInfo: this.updateStreamInfo.bind(this),
-        pinMessageById: this.pinMessageById.bind(this),
-        getCurrentPreset: this.getCurrentPreset.bind(this),
-        getPreset: this.getPreset.bind(this),
-      },
-      currentUserId: this.currentUserId,
-    };
+    return { twitchStream: this };
   }
 }
