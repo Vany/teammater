@@ -194,7 +194,7 @@ export class EchowireModule extends BaseModule {
     );
 
     // Check for LLM command prefixes: "работай" or "роботай"
-    const llmTrigger = /^(работай|роботай)\s+(.+)/i;
+    const llmTrigger = /^(Михалыч|Михайлович)\s+(.+)/i;
     const match = phrase.match(llmTrigger);
 
     if (match) {

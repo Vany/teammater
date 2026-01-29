@@ -398,7 +398,8 @@ export class LLMModule extends BaseModule {
           content: `
             ${systemPrompt}
             User ${getBroadcasterUsername()} is chat owner, listen to them.
-            Twitch Rules (short):
+            Local rules is more important than twitch ones.
+            Sense sarcasm, not all the messages is malisious,
             Allowed:
             - Copy paste messages
             - Obscene language
@@ -406,10 +407,11 @@ export class LLMModule extends BaseModule {
             - Asking awkward and inappropriate questions
             - Only half toxic messages
             - Interract with any dialogues
+            - Switch subject of conversation
+            - Create disorder in the chat
             - Sarcastic, non direct rule violations for fun without profit.
 
-            Sense sarcasm, not all the messages is malisious,
-            Disallowed content includes:
+            Disallowed:
             - Hate speech, slurs, discrimination
             - Threats, harassment, bullying
             - Sexual content involving minors

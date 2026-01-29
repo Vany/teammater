@@ -5,16 +5,17 @@ The Teammater project now includes a Rust-based HTTPS/WSS server as a faster, mo
 ## Quick Start
 
 ```bash
-# Build the server
-cd server
-cargo build --release
+# Easiest: Run with cargo from project root
+cargo run --manifest-path server/Cargo.toml --release
 
-# Run from project root
-cd ..
+# Or build and run binary
+cd server && cargo build --release && cd ..
 ./server/target/release/teammater-server
 ```
 
 Server starts at: **https://localhost:8443**
+
+**Important:** Must run from project root directory to serve static files.
 
 ## What It Does
 

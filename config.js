@@ -32,6 +32,7 @@ export const CHAT_ACTIONS = [
 export const LLM_ACTIONS = {
   "mute → apply moderation mute for 10 minute": mute(10),
   "say → say outloud to attract attention of the owner": voice(),
+  "next_song -> skip currently playing song": vote_skip(),
 };
 
 // Get nickname from localStorage (default set via stored_default in HTML)

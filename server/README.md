@@ -13,15 +13,23 @@ Production-ready Rust HTTPS/WSS server replacing Caddy.
 ## Quick Start
 
 ```bash
-# Build (release mode recommended)
+# Option 1: Run with cargo (from project root)
+cargo run --manifest-path server/Cargo.toml --release
+
+# Option 2: Build and run binary
+cd server && cargo build --release
+cd .. && ./server/target/release/teammater-server
+
+# Option 3: Build in server/, run from root
 cd server
 cargo build --release
-
-# Run from project root
+cd ..
 ./server/target/release/teammater-server
 ```
 
 Server starts at: `https://localhost:8443`
+
+**Note:** Server must run from project root (not from `server/` directory) to serve static files correctly.
 
 ## Endpoints
 
