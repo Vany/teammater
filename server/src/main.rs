@@ -8,9 +8,9 @@ use axum::{
     routing::get,
     Router,
 };
-use axum_server::tls_rustls::RustlsConfig;
 use futures_util::{SinkExt, StreamExt};
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use rustls::ServerConfig;
+use std::{fs, net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio::net::TcpStream;
 use tokio_tungstenite::{connect_async, tungstenite::Message as TungsteniteMessage, MaybeTlsStream, WebSocketStream};
 use tower_http::{services::ServeDir, trace::TraceLayer};
@@ -38,8 +38,21 @@ async fn main() -> Result<()> {
 
     tls::ensure_cert_exists(&cert_path, &key_path)?;
 
-    let tls_config = RustlsConfig::from_pem_file(&cert_path, &key_path)
-        .await?;
+    // Load TLS config and disable HTTP/2 (required for WebSocket)
+    let cert_pem = fs::read(&cert_path)?;
+    let key_pem = fs::read(&key_path)?;
+    
+    let certs = rustls_pemfile::certs(&mut &cert_pem[..])
+        .collect::<Result<Vec<_>, _>>()?;
+    let key = rustls_pemfile::private_key(&mut &key_pem[..])?
+        .ok_or_else(|| anyhow::anyhow!("No private key found"))?;
+
+    let mut tls_config = ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)?;
+    
+    // Disable HTTP/2 - only use HTTP/1.1 for WebSocket support
+    tls_config.alpn_protocols = vec![b"http/1.1".to_vec()];
 
     let app = Router::new()
         .route("/echowire", get(websocket_proxy_handler))
@@ -52,7 +65,7 @@ async fn main() -> Result<()> {
     info!("📁 Serving static files from current directory");
     info!("🔌 WebSocket proxy: wss://{}/echowire -> ws://192.168.15.225:8080", addr);
 
-    axum_server::bind_rustls(addr, tls_config)
+    axum_server::bind_rustls(addr, axum_server::tls_rustls::RustlsConfig::from_config(Arc::new(tls_config)))
         .serve(app.into_make_service())
         .await?;
 
