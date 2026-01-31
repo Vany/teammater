@@ -8,7 +8,7 @@ tokio = { version = "1.42", features = ["full"] }
 axum = { version = "0.7", features = ["ws"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["fs", "trace"] }
-tokio-tungstenite = "0.24"
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
 futures-util = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -18,3 +18,8 @@ rustls = "0.23"
 rustls-pemfile = "2.2"
 tokio-rustls = "0.26"
 anyhow = "1.0"
+url = "2.5"
+mdns-sd = "0.10"
+
+[dev-dependencies]
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
