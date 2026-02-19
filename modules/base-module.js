@@ -215,12 +215,52 @@ export class BaseModule {
   }
 
   /**
+   * Validate all required config fields have non-empty values in localStorage.
+   * Required fields are those with `required: true` in config schema.
+   * If no fields are marked required, all fields are considered required.
+   * @returns {string[]} - List of missing field labels
+   */
+  validateConfig() {
+    const config = this.getConfig();
+    const missing = [];
+
+    for (const [sectionName, section] of Object.entries(config)) {
+      for (const [fieldName, fieldConfig] of Object.entries(section)) {
+        if (fieldConfig.required === false) continue;
+        if (fieldConfig.type === "checkbox") continue;
+        const storageKey =
+          fieldConfig.stored_as || `${this.moduleId}_${fieldName}`;
+        const value = localStorage.getItem(storageKey);
+        if (!value || !value.trim()) {
+          missing.push(fieldConfig.label || fieldName);
+        }
+      }
+    }
+
+    return missing;
+  }
+
+  /**
    * Connect to external service
-   * Calls doConnect() which must be implemented by subclass
+   * Validates config, then calls doConnect() which must be implemented by subclass
    */
   async connect() {
     if (this.connected) {
       this.log(`⚠️ Module ${this.moduleId} already connected`);
+      return;
+    }
+
+    // Validate config before connecting
+    const missing = this.validateConfig();
+    if (missing.length > 0) {
+      this.log(
+        `❌ ${this.getDisplayName()} missing config: ${missing.join(", ")}`,
+      );
+      this.setEnabled(false);
+      if (this.ui.enableCheckbox) this.ui.enableCheckbox.checked = false;
+      if (this.ui.configPanel)
+        this.ui.configPanel.classList.remove("collapsed");
+      this.updateStatus(false);
       return;
     }
 

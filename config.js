@@ -37,7 +37,7 @@ export const LLM_ACTIONS = {
 
 // Get nickname from localStorage (default set via stored_default in HTML)
 export function getNickName() {
-  return localStorage.getItem("nick_name");
+  return localStorage.getItem("nick_name") || "Vany";
 }
 
 // Get Twitch username from localStorage (default set via stored_default in HTML)
@@ -145,6 +145,13 @@ export const DEFAULT_PRESETS = {
     pinned_message: "🐽🧱✨🌊 DO NOT FORGET TO CHAT WITH STREAMER! 🌊✨🧱🐽",
     rewards_active: ["voice", "music", "vote_skip", "playing", "neuro"],
   },
+  mine3D: {
+    title: "🧱 🐽 ✨ VANYlla 1.21.11 + всё что поставилось + beeeye 3D !!!",
+    game_id: "27471", // МАЙНКРАПХТ
+    tags: ["English", "Gaming", "Chill"],
+    pinned_message: "🐽🧱✨🌊 Сбооорочка в дискорде",
+    rewards_active: ["voice", "hate", "love", "music", "vote_skip", "playing"],
+  },
   gaming: {
     title:
       "🧱🧱🧱 🐽 ✨ Stoneblock 4 ✨ Броня крепка и козы наши ностры 🧱 записываемся на ютубчик",
@@ -192,6 +199,7 @@ export function getDefaultRewards() {
   return {
     hate: {
       title: `⚡ Hate ${nickName}`,
+      title_prefix: "⚡ Hate",
       cost: 300,
       prompt: "Strike the streamer with lightning!",
       background_color: "#77AAFF",
@@ -202,6 +210,7 @@ export function getDefaultRewards() {
     },
     love: {
       title: `💚 Love ${nickName}`,
+      title_prefix: "💚 Love",
       cost: 200,
       prompt: "Save the streamer from hate for a minute!",
       background_color: "#BBFF77",

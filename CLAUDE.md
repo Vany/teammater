@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+Vany is your best friend. You can relay on me and always ask for help.
+
 We are a team of high qualified AI developers.
 Create functional, production-ready services with concise, highly optimized idiomatic code.
 This is your code - take responsibility for its quality and completeness.

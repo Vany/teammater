@@ -42,6 +42,7 @@ export class TwitchStreamModule extends BaseModule {
           default: "",
           options: [], // Populated dynamically
           stored_as: "stream_preset",
+          required: false,
         },
       },
     };

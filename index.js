@@ -468,15 +468,23 @@ async function initializeRewards() {
   // Get reward configs with current nickname
   const rewards = getDefaultRewards();
 
-  // Create missing rewards
+  // Create missing rewards, match by title prefix or exact title
   for (const [key, config] of Object.entries(rewards)) {
-    const exists = existingRewards.find((r) => r.title === config.title);
+    const prefix = config.title_prefix;
+    const exists = existingRewards.find((r) =>
+      prefix ? r.title.startsWith(prefix) : r.title === config.title,
+    );
     if (!exists) {
       log(`➕ Creating missing reward: ${config.title}`);
       await createCustomReward(key, config);
     } else {
       customRewards[exists.id] = { ...exists, action: config.action, key: key };
-      log(`✅ Found existing reward: ${exists.title}`);
+      if (exists.title !== config.title) {
+        log(`📝 Renaming reward: "${exists.title}" → "${config.title}"`);
+        await updateRewardTitle(exists.id, config.title);
+      } else {
+        log(`✅ Found existing reward: ${exists.title}`);
+      }
     }
   }
 
@@ -531,6 +539,20 @@ async function createCustomReward(rewardKey, rewardConfig) {
   } catch (error) {
     log(`❌ Error creating reward: ${error.message}`);
     return null;
+  }
+}
+
+async function updateRewardTitle(rewardId, newTitle) {
+  try {
+    await moduleManager.helpers.request(
+      `https://api.twitch.tv/helix/channel_points/custom_rewards?broadcaster_id=${currentUserId}&id=${rewardId}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ title: newTitle }),
+      },
+    );
+  } catch (error) {
+    log(`❌ Error updating reward title: ${error.message}`);
   }
 }
 

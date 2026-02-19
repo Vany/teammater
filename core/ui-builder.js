@@ -359,7 +359,10 @@ export class UIBuilder {
    */
   _getStoredValue(key, defaultValue) {
     const stored = localStorage.getItem(key);
-    return stored !== null ? stored : defaultValue || "";
+    if (stored !== null) return stored;
+    const value = defaultValue || "";
+    if (value) localStorage.setItem(key, value);
+    return value;
   }
 
   /**
