@@ -16,6 +16,8 @@
 import { BaseModule } from "../base-module.js";
 import { parseIrcTags, parseIrcMessage } from "../../utils.js";
 
+const CHAT_STORAGE_KEY = "CHAT";
+
 export class TwitchChatModule extends BaseModule {
   constructor() {
     super();
@@ -23,9 +25,46 @@ export class TwitchChatModule extends BaseModule {
     this.username = null;
     this.token = null;
     this.userIdCache = {};
+    this.chatHistory = this._loadChatHistory();
+    this.chatMarkerPosition = this.chatHistory.length; // mark all restored as already seen
+    this.messageHandlers = []; // Array of {priority, handler} objects
+  }
+
+  /**
+   * Load chat history from localStorage, restoring Date objects
+   */
+  _loadChatHistory() {
+    try {
+      const raw = localStorage.getItem(CHAT_STORAGE_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return parsed.map((entry) => ({
+        ...entry,
+        timestamp: new Date(entry.timestamp),
+      }));
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Persist current chat history to localStorage
+   */
+  _saveChatHistory() {
+    try {
+      localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(this.chatHistory));
+    } catch {
+      // Storage full or unavailable — fail silently
+    }
+  }
+
+  /**
+   * Clear chat history from memory and localStorage
+   */
+  clearChatHistory() {
     this.chatHistory = [];
     this.chatMarkerPosition = 0;
-    this.messageHandlers = []; // Array of {priority, handler} objects
+    localStorage.removeItem(CHAT_STORAGE_KEY);
   }
 
   /**
@@ -78,6 +117,13 @@ export class TwitchChatModule extends BaseModule {
           default: "vanyserezhkin",
           stored_as: "twitch_username",
         },
+        channel: {
+          type: "text",
+          label: "Channel (default: own username)",
+          default: "",
+          required: false,
+          stored_as: "twitch_channel",
+        },
       },
       chat_history: {
         history_size: {
@@ -95,12 +141,14 @@ export class TwitchChatModule extends BaseModule {
   /**
    * Set authentication token and user info
    * Must be called before connect()
+   * Channel is read from config; falls back to own username if not set
    * If module is enabled, will automatically connect
    */
-  async setAuth(token, username, channel) {
+  async setAuth(token, username) {
     this.token = token;
     this.username = username;
-    this.channel = channel;
+    const configChannel = this.getConfigValue("channel", "").trim();
+    this.channel = configChannel || username;
 
     // If module is enabled, connect now that we have auth
     if (this.enabled && !this.connected) {
@@ -229,6 +277,8 @@ export class TwitchChatModule extends BaseModule {
         this.chatMarkerPosition--;
       }
     }
+
+    this._saveChatHistory();
   }
 
   /**

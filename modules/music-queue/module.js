@@ -327,6 +327,12 @@ export class MusicQueueModule extends BaseModule {
         this._updateStatusDisplay(statusDisplay);
       }
 
+      // Inject into LLM chat history so the AI knows what's playing
+      const chatModule = this.moduleManager?.get("twitch-chat");
+      if (chatModule?._addToChatHistory) {
+        chatModule._addToChatHistory("[music]", `Now playing: ${formatted}`);
+      }
+
       if (this.onSongStartCallback) {
         this.onSongStartCallback(formatted);
       }

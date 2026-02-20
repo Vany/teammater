@@ -52,6 +52,16 @@ export class EchowireModule extends BaseModule {
           stored_as: "echowire_reconnect_delay",
         },
       },
+      identity: {
+        owner: {
+          type: "text",
+          label: "Owner name (injected as chat sender)",
+          // Empty = fall back to LLM bot name at runtime
+          default: "",
+          required: false,
+          stored_as: "echowire_owner",
+        },
+      },
     };
   }
 
@@ -193,12 +203,15 @@ export class EchowireModule extends BaseModule {
       `🎤 [FINAL] "${phrase}" (${language}, confidence: ${confidence.toFixed(2)})`,
     );
 
-    // Check for LLM command prefixes: "работай" or "роботай"
-    const llmTrigger = /^(Михалыч|Михайлович)\s+(.+)/i;
+    // Check for LLM command prefixes — aliases come from LLM module config
+    const llmModule = this.moduleManager?.get("llm");
+    const aliases = llmModule?.getBotAliases() ?? ["Михалыч", "Михайлович"];
+    const escaped = aliases.map((a) => a.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    const llmTrigger = new RegExp(`^(${escaped.join("|")})\\s+(.+)`, "i");
     const match = phrase.match(llmTrigger);
 
     if (match) {
-      const commandText = match[2]; // Text after prefix
+      const commandText = match[2]; // Text after the bot name
       this._forwardToLLM(commandText);
     }
 
@@ -239,8 +252,9 @@ export class EchowireModule extends BaseModule {
    * @private
    */
   _forwardToLLM(text) {
-    // Check if echowire is enabled in LLM config
     const llmModule = this.moduleManager.get("llm");
+
+    // Check if echowire is enabled in LLM config
     if (llmModule?.isConnected()) {
       const echowireEnabled = llmModule.getConfigValue(
         "echowire_enabled",
@@ -259,27 +273,27 @@ export class EchowireModule extends BaseModule {
       return;
     }
 
-    // Get trusted username from config
-    const trustedUsername = chatModule.getConfigValue(
-      "twitch_username",
-      "vanyserezhkin",
-    );
+    // Owner name: echowire config → LLM bot name → "owner"
+    const ownerName =
+      this.getConfigValue("owner", "").trim() ||
+      llmModule?.getBotName() ||
+      "owner";
 
-    this.log(`🎤 Injecting echowire message as ${trustedUsername}: "${text}"`);
+    this.log(`🎤 Injecting echowire message as ${ownerName}: "${text}"`);
 
     // Add to chat history (this makes it visible to LLM monitoring)
-    chatModule._addToChatHistory(trustedUsername, text);
+    chatModule._addToChatHistory(ownerName, text);
 
     // Notify message handlers (triggers actions, LLM monitoring, etc.)
     chatModule._notifyMessageHandlers({
-      username: trustedUsername,
+      username: ownerName,
       message: text,
       tags: {
         "user-id": "echowire-superuser", // Special marker for trusted source
       },
       userId: "echowire-superuser",
       messageId: null,
-      rawData: `echowire://${trustedUsername}/${text}`,
+      rawData: `echowire://${ownerName}/${text}`,
       source: "echowire", // Mark as echowire source
     });
   }

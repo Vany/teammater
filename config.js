@@ -15,6 +15,7 @@ import {
   vote_skip,
   playing,
   neuro,
+  fireball,
 } from "./actions.js";
 
 // Chat Actions Configuration
@@ -29,10 +30,12 @@ export const CHAT_ACTIONS = [
   [voice(), /^!voice\s+(.+)/i], // TTS command: !voice <text>
 ];
 
+// will became MCP TOOLS
 export const LLM_ACTIONS = {
-  "mute → apply moderation mute for 10 minute": mute(10),
-  "say → say outloud to attract attention of the owner": voice(),
-  "next_song -> skip currently playing song": vote_skip(),
+  "mute  apply moderation mute for 10 minute": mute(600),
+  "say  say outloud to attract attention of the owner": voice(),
+  "next_song  skip currently playing song": vote_skip(),
+  "fireball  help cast fireball for player": fireball(),
 };
 
 // Get nickname from localStorage (default set via stored_default in HTML)

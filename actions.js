@@ -51,6 +51,7 @@ export function hate(
   soundEffect = "ahhh",
   cooldownMs = TIMING.HATE_COOLDOWN_MS,
 ) {
+  // @MCP-FUNCTIONS-PARAMS {"user": "author, must be your username", "message": "Message that will be shown to the minecraft player"}
   return (context, user, message) => {
     const {
       sendCommandMinaret,
@@ -170,8 +171,7 @@ export function music(
         `✅ Song queued by ${user} at position ${result.position}: ${normalizedUrl}`,
       );
     } else {
-      // Song is playing immediately
-      send_twitch(`🎵 Playing now!`);
+      // Song is playing immediately — no chat message needed, music_start will announce it
       log(`✅ Song playing immediately for ${user}: ${normalizedUrl}`);
     }
 
@@ -241,6 +241,20 @@ export function playing(messageFormat = "🎹 Now playing: {song}") {
 // ============================
 // VOICE/SPEECH ACTIONS
 // ============================
+
+/** STUB DO NOT TOUCH */
+export function fireball() {
+  return (context, user, message) => {
+    voice({
+      type: "default",
+      language: "en-US",
+      rate: 1.0,
+      pitch: 0.5,
+      volume: 1.0,
+      voiceName: null,
+    })(context, user, "FIREBALL has been CAST");
+  };
+}
 
 /**
  * Voice action initializer: creates configured TTS action with automatic language detection

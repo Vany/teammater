@@ -80,7 +80,7 @@ Advanced modular Twitch streaming assistant with AI-powered chat monitoring, Min
 
 On first run, you'll be prompted to enter your Twitch Client ID. This is stored in localStorage and persists across sessions.
 
-**Note:** Channel is configured via URL parameter (see Usage section).
+**Note:** Channel is configured via the Twitch Chat module config panel (gear icon).
 
 ### 3. Set Up Web Server
 
@@ -147,12 +147,15 @@ The bot can use a local LLM for intelligent chat monitoring and responses.
 - AI-assisted moderation decisions
 - Custom actions via LLM_ACTIONS (mute users, voice TTS, etc.)
 
-**Configuration:**
-- Base URL: http://localhost:11434 (default)
-- Model: Select from dropdown (populated from Ollama)
+**Configuration (all in LLM module gear panel):**
+- Base URL: `http://localhost:11434` (default)
+- Bot Names: comma-separated (first = primary nickname, rest = echowire aliases)
+- Model: Auto-selected from Ollama on connect, or pick from dropdown
 - System Prompt: Define bot personality and behavior
-- Temperature: 0.7 (default, higher = more creative)
-- Max Tokens: 256 (response length limit)
+- Temperature: 0.7 (default)
+- Max Tokens: 512 (default, raise to ≥ 4096 when using thinking mode)
+- Context Window (num_ctx): 8192 (default, controls how much history fits)
+- Thinking Mode: Enable for Qwen3/DeepSeek-R1 — streams live reasoning to control panel
 
 ### 7. Music Integration (Optional)
 
@@ -278,23 +281,13 @@ Rewards auto-create on first connection.
 
 ### Channel Selection
 
-The bot connects to a channel based on URL parameter or defaults to your own channel:
+The bot connects to the authenticated user's own channel by default.
 
-**Your own channel (default):**
-```
-https://localhost:8443/
-```
-Bot connects to the authenticated user's channel automatically.
-
-**Another channel:**
-```
-https://localhost:8443/?channel=other_channel_name
-```
-Use this to moderate another channel where you have mod permissions.
+To connect to a different channel (where you have mod permissions), open the **💬 Twitch Chat** module config panel (gear icon) and set the **Channel** field. Leave it empty to use your own channel.
 
 The selected channel will be logged on connection:
 ```
-🎯 Connecting to channel: #channelname (authenticated as: your_username)
+📺 Joining channel: #channelname (as your_username)
 ```
 
 ### Starting the Bot
@@ -436,8 +429,10 @@ console.log(pattern.test(testMsg));  // Should return true
 
 **Debug:**
 - Check browser console for LLM logs: "🤖 LLM processing chat batch..."
-- Verify model selected in dropdown
-- Test Ollama directly: `ollama run llama3.2 "Hello"`
+- Verify model selected in dropdown (auto-selected on connect if empty)
+- Test Ollama directly: `ollama run qwen3 "Hello"`
+- Enable `window.DEBUG = true` in browser console for full request/response logs
+- Thinking mode requires Max Tokens ≥ 4096 — bot warns on connect if too low
 
 ## Architecture
 

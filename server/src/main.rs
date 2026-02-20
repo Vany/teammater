@@ -37,7 +37,7 @@ const LISTEN_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0,
 const CERT_PATH: &str = "server/certs/cert.pem";
 const KEY_PATH: &str = "server/certs/key.pem";
 const MDNS_RETRY_DELAY: Duration = Duration::from_secs(5);
-const OBS_BROADCAST_CAPACITY: usize = 256;
+const OBS_BROADCAST_CAPACITY: usize = 8;
 const SERVICE_TYPE: &str = "_echowire._tcp.local.";
 
 #[derive(Debug, Clone, PartialEq, Eq)]

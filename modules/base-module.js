@@ -83,6 +83,15 @@ export class BaseModule {
   }
 
   /**
+   * Get icon for the control panel toggle button
+   * Override in subclass to customize
+   * @returns {string}
+   */
+  getControlPanelIcon() {
+    return "🎵";
+  }
+
+  /**
    * Render control panel content
    * Override in subclass if hasControlPanel() returns true
    * @returns {HTMLElement|null}
@@ -137,7 +146,7 @@ export class BaseModule {
     if (this.hasControlPanel()) {
       this.ui.controlToggle = builder.createControlToggle(() => {
         this.toggleControlModal();
-      });
+      }, this.getControlPanelIcon());
       this.ui.container
         .querySelector(".module-header")
         .appendChild(this.ui.controlToggle);

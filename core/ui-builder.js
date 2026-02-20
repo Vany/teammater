@@ -96,12 +96,13 @@ export class UIBuilder {
   /**
    * Create control toggle button (for modal)
    * @param {Function} onClick - Click handler
+   * @param {string} icon - Button icon (default: 🎵)
    * @returns {HTMLElement} - Control toggle button
    */
-  createControlToggle(onClick) {
+  createControlToggle(onClick, icon = "🎵") {
     const button = document.createElement("button");
     button.className = "control-toggle";
-    button.textContent = "🎵";
+    button.textContent = icon;
     button.title = "Show controls";
     button.addEventListener("click", onClick);
     return button;
@@ -194,6 +195,14 @@ export class UIBuilder {
       modal.style.display = "none";
     });
     header.appendChild(closeBtn);
+
+    // Close on Escape key — listener removed when modal is hidden
+    const onKeyDown = (e) => {
+      if (e.key === "Escape" && modal.style.display !== "none") {
+        modal.style.display = "none";
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
 
     content.appendChild(header);
 
@@ -359,7 +368,7 @@ export class UIBuilder {
    */
   _getStoredValue(key, defaultValue) {
     const stored = localStorage.getItem(key);
-    if (stored !== null) return stored;
+    if (stored !== null && stored !== "") return stored;
     const value = defaultValue || "";
     if (value) localStorage.setItem(key, value);
     return value;

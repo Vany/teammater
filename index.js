@@ -44,11 +44,11 @@ let moduleManager = null;
 let actionRegistry = null;
 
 let currentUserId = null;
-let CHANNEL = null;
 let throttle = {};
 let love_timer = Date.now();
 let customRewards = {};
 let llmProcessing = false;
+let llmPendingRun = false; // new messages arrived while LLM was busy
 
 // DOM cache
 const DOM = {};
@@ -194,12 +194,7 @@ async function setupAuthentication() {
     return;
   }
 
-  // Set channel (URL param or own channel)
-  const urlParams = new URLSearchParams(window.location.search);
-  CHANNEL = urlParams.get("channel") || username;
-
   log(`🎯 Authenticated as: ${username}`);
-  log(`📺 Target channel: #${CHANNEL}`);
 
   // Setup module manager with global state and helpers
   setupModuleManagerContext();
@@ -315,7 +310,7 @@ async function connectModules(token, username) {
   // Connect Twitch Chat
   const chatModule = moduleManager.get("twitch-chat");
   if (chatModule) {
-    await chatModule.setAuth(token, username, CHANNEL).catch((err) => {
+    await chatModule.setAuth(token, username).catch((err) => {
       log(`⚠️ Twitch Chat connection failed: ${err.message}`);
     });
 
@@ -359,7 +354,6 @@ function setupModuleManagerContext() {
   // Set global state
   moduleManager.setGlobalState({
     currentUserId,
-    CHANNEL,
     throttle,
     love_timer,
   });
@@ -429,7 +423,10 @@ async function handleChatMessage(messageData) {
 }
 
 async function processLLMMonitoring() {
-  if (llmProcessing) return;
+  if (llmProcessing) {
+    llmPendingRun = true; // remember to re-run after current cycle
+    return;
+  }
 
   const llmModule = moduleManager.get("llm");
   const chatModule = moduleManager.get("twitch-chat");
@@ -439,6 +436,7 @@ async function processLLMMonitoring() {
   }
 
   llmProcessing = true;
+  llmPendingRun = false;
 
   try {
     const context = moduleManager.buildContext();
@@ -447,6 +445,10 @@ async function processLLMMonitoring() {
     log(`💥 LLM monitoring error: ${error.message}`);
   } finally {
     llmProcessing = false;
+    if (llmPendingRun) {
+      llmPendingRun = false;
+      processLLMMonitoring(); // process accumulated messages
+    }
   }
 }
 
@@ -643,18 +645,6 @@ function speak(str) {
 // ============================
 // START APPLICATION
 // ============================
-
-// Check for ?wipe parameter
-const urlParams = new URLSearchParams(window.location.search);
-if (urlParams.has("wipe")) {
-  localStorage.clear();
-  console.log("✅ localStorage wiped");
-  urlParams.delete("wipe");
-  const newUrl =
-    window.location.pathname +
-    (urlParams.toString() ? "?" + urlParams.toString() : "");
-  window.history.replaceState({}, "", newUrl);
-}
 
 // Initialize when DOM is ready
 if (document.readyState === "loading") {

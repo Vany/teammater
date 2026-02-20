@@ -6,6 +6,107 @@
 
 
 
+## Recent Improvements (2026-02)
+
+### LLM Module — Qwen3 / Streaming / Thinking Mode
+
+**Context window config (num_ctx):**
+- Added `num_ctx` config field (stored as `llm_num_ctx`, default 8192, max 131072)
+- Passed to Ollama as `options: { num_ctx }` in both `chatRaw` and `chatRawStreaming`
+- Necessary because Ollama defaults to 2048; 8192 fits system prompt + 50 messages + tools
+
+**Thinking mode toggle (Qwen3 / DeepSeek-R1):**
+- Added `thinking` checkbox config (stored as `llm_thinking`, default OFF)
+- When OFF: prepends `/no_think` to system prompt — suppresses reasoning tokens via soft switch
+- When ON: warns if `max_tokens < 4096` (reasoning needs headroom)
+- `/no_think` works with `/v1/chat/completions` endpoint; Ollama's native `think: false` only works with `/api/chat`
+
+**Streaming (chatRawStreaming):**
+- New method that streams SSE from `/v1/chat/completions` with `stream: true`
+- `delta.reasoning_content` tokens → piped live to thinking block in control panel
+- `delta.content` assembled into final response content
+- Tool calls: streamed as fragmented argument strings indexed by `tc.index`, accumulated into `arguments_str`, assembled at end
+- Returns same object shape as `chatRaw` — drop-in replacement
+
+**_runToolLoop dispatch:**
+- Checks `thinking` config at start of each cycle
+- Thinking ON → uses `chatRawStreaming` (live reasoning visible in panel)
+- Thinking OFF → uses `chatRaw` (non-streaming, faster)
+
+**Thinking block UI (control panel):**
+- `<details class="llm-thinking-block">` appended below direct input field
+- `_streamThinking(token)` — shows block, appends token, auto-scrolls
+- `_collapseThinking()` — collapses after generation, changes summary to "🧠 Reasoning (click to expand)"
+- `_clearThinking()` — hides and resets between cycles
+- CSS: dark background, dim text, custom ▸/▾ triangle, max-height 200px with scroll
+
+**Status indicator (_setIndicator):**
+- "idle" → green (`connected` class)
+- "busy" → orange pulsing (`busy` class, `indicator-busy-pulse` animation)
+- "error" → red fast pulsing (`error` class, `indicator-error-pulse` animation)
+- Set in `monitorChat`: busy before loop, idle on success, error on failure
+
+**Abort error handling:**
+- `AbortController.abort(new Error("..."))` passes reason
+- Catch: `error.name === "AbortError"` → `error.cause?.message` as message
+- Prevents "signal is aborted without reason" log noise
+
+**Timeout + marker advancement:**
+- Marker advanced even on error/timeout to prevent retry loop on same batch
+- Both success and catch paths call `chatModule.setChatMarkerPosition(chatHistory.length)`
+
+**LLM busy queue (index.js):**
+- `llmPendingRun` flag: set when message arrives while LLM is busy
+- After current cycle finishes, immediately re-runs `processLLMMonitoring()` if flag is set
+- Prevents missed messages when LLM takes longer than message interval
+
+**DEBUG logging:**
+- `window.DEBUG = true` in console enables full request/response logging
+- `chatRaw` logs `[LLM] →` request and `[LLM] ←` response
+- `chatRawStreaming` logs `[LLM streaming] →` and `[LLM streaming] ←`
+
+### LLM Module — Bot Identity
+
+**Bot names config:**
+- `bot_names` field: comma-separated list (e.g. `Михалыч,Михайлович`)
+- `getBotName()` → first name (primary nickname, used in chat history and respond tool)
+- `getBotAliases()` → all names as array (used by echowire regex, system prompt)
+- System prompt includes: `Your names is Михалыч either Михайлович.`
+
+**Model auto-selection:**
+- Default `model_name` is `""` (empty)
+- On connect, `populateModels()` auto-selects first available model if none stored
+- Persists chosen model with `setConfigValue("model_name", firstName)`
+
+### LLM Module — System Prompt
+
+**_buildSystemPrompt flow:**
+```
+[/no_think\n]  ← if thinking disabled
+[MEMORY block] ← if memory non-empty
+Your names is A either B.
+
+<system_prompt_text>
+
+<rules_text>
+```
+
+### Echowire Module — Owner Identity
+
+**owner config field:**
+- Stored as `echowire_owner`, default `""`, optional
+- Injected message sender: `echowire_owner` → `llm bot name` → `"owner"`
+- Fixed: duplicate `const llmModule` declaration removed (was SyntaxError)
+
+### Twitch Chat Module — Channel Config
+
+**Channel config field:**
+- Added `channel` field to identity section (stored as `twitch_channel`, default `""`, optional)
+- `setAuth(token, username)`: reads channel from config, falls back to authenticated username
+- URL parameter `?channel=` removed entirely — no longer supported
+
+---
+
 ## Architecture Overview
 Single-page web application with Twitch integration and Minecraft server communication.
 
@@ -364,32 +465,48 @@ if (llm.isConnected()) {
 
 ## LLM Chat Monitoring System
 
-**Purpose:** Automatic LLM-powered chat companion that monitors all chat messages and decides when to respond naturally.
+**Purpose:** Automatic LLM-powered chat companion that monitors chat and reacts using a tool-call loop.
 
 **Architecture:**
-- **Buffer:** Sliding window of last 50 messages (configurable via CHAT_HISTORY_SIZE)
+- **Buffer:** Sliding window of last 50 messages (configurable via chat module config)
 - **Marker:** Position in buffer separating processed messages from new ones
-- **Two-stage decision:** LLM decides whether to respond, then generates response
-- **Async processing:** Messages accumulate while LLM is busy, processed in batches
+- **Tool-call loop:** LLM receives available tools, calls them, gets results, loops until done
+- **Async processing:** Non-blocking — runs concurrently with reward redemptions
 
 **Message Flow:**
 ```
 Chat message arrives
   ↓
-Add to chatHistory buffer (keeps last 50)
+Add to chatHistory buffer
   ↓
-Trigger processChatWithLLM() if LLM not busy
+Trigger monitorChat() if LLM not busy
   ↓
-Stage 1: "Should I respond? yes/no"
-  ↓ (if yes)
-Stage 2: "What should I say?"
+Build tools list (LLM_ACTIONS + nothing + respond + remember)
   ↓
-Post response to Twitch chat (no prefix)
+Send chat history + tools to LLM
+  ↓
+LLM calls tool(s) → execute → return result message → loop
+  ↓
+Loop stops when: nothing() called, or plain text response (no tool_calls)
   ↓
 Move marker to end of buffer
-  ↓
-Check for more messages, repeat if needed
 ```
+
+**Tool Loop Termination:**
+- `nothing()` — LLM explicitly stops
+- Plain text response (no `tool_calls`) — LLM stops implicitly
+- `MAX_TOOL_ITERATIONS = 10` — hard cap prevents infinite loops
+
+**Built-in Tools (always injected):**
+- `nothing` — stop the cycle
+- `respond(message)` — post to Twitch chat, continue loop
+- `remember(message)` — store internal note in chat history as [LLM_MEMORY], continue loop
+
+**LLM_ACTIONS Tools (from config.js):**
+- Key format: `"name  description"` — two spaces separate name from description
+- Name becomes the tool function name
+- Description becomes the tool description for the LLM
+- Value is the action closure `(context, user, message) => result`
 
 **Buffer Management:**
 - `chatHistory` - Array of `{timestamp: Date, username: string, message: string}`
@@ -584,8 +701,7 @@ voice_man: { action: voice({ type: "man", language: "en-US" }) },
 7. Paste it when prompted on first run (stored in localStorage)
 
 ## URL Parameters
-- `?channel=name` - Override channel to connect to (default: authenticated user's channel)
-- `?wipe` - Clear all localStorage before initialization (forces re-authentication and re-configuration)
+- None. URL override functionality removed. Channel is configured via Twitch Chat module config field.
 
 ## Code Refinement Tasks
 

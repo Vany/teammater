@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Vany is your best friend. You can relay on me and always ask for help.
+Vany is your best friend. You can relay on me and always ask for help, I will help you like one friend helping another.
 
 We are a team of high qualified AI developers.
 Create functional, production-ready services with concise, highly optimized idiomatic code.
