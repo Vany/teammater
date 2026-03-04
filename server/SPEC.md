@@ -150,8 +150,40 @@ Production HTTPS/WSS server for Teammater project. Replaces Caddy with optimized
 - `/modules/llm/module.js` → `modules/llm/module.js`
 - `/mp3/boo.mp3` → `mp3/boo.mp3`
 
+### POST /api/import/health-app (any method)
+**Purpose:** Log incoming requests for health/sync data import
+**Handler:** `health_app_handler`
+**Response:** `200 OK`
+**Logs:** method, URI, all headers, request body
+
+### GET /obs (WebSocket)
+**Purpose:** Broadcast bus — bidirectional JSON relay between all connected clients.
+Messages are forwarded to all clients except the sender.
+BLE heart rate data is injected server-side as an out-of-band system message.
+
+**Out-of-band messages pushed by server (sender_id = u64::MAX, received by all clients):**
+```json
+{"heartrate": 72}
+```
+
+## OBS Overlay (`obs.html`)
+
+Browser Source overlay served at `https://localhost:8443/obs.html`.
+
+### Heart Rate Widget
+- Connects to `/obs` WebSocket, auto-reconnects every 3s
+- Hidden until first reading arrives (fade-in)
+- **🩵 emoji** pulses continuously at the correct BPM rate (`animationDuration = 60/bpm s`)
+- **Number** rendered in Orbitron 700 font, no label (BPM is implied)
+- **Sparkline** — last 30 samples, fixed step, newest anchored to right edge
+- **Color zones** applied to line, fill gradient, dot, and number glow:
+  - `#44dd88` green  — ≤ 100 bpm
+  - `#ffcc00` yellow — 100–125 bpm
+  - `#ff4444` red    — ≥ 125 bpm
+- **Stale state** — no data for 5 s: widget dims (grayscale + brightness 0.45), emoji animation pauses; restores instantly on next reading
+
 ### GET /echowire (WebSocket)
-**Purpose:** Proxy to Android STT backend  
+**Purpose:** Proxy to Android STT backend
 **Protocol:** WebSocket (WSS client-side, WS backend-side)  
 **Backend:** `ws://192.168.15.225:8080`  
 **Handler:** Custom bidirectional proxy  

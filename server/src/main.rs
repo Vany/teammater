@@ -1,12 +1,13 @@
 use anyhow::{anyhow, Context, Result};
 use axum::{
+    body::to_bytes,
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        State,
+        Request, State,
     },
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{any, get},
     Router,
 };
 use futures_util::{SinkExt, StreamExt};
@@ -28,12 +29,15 @@ use tokio_tungstenite::{
     connect_async, tungstenite::Message as TungsteniteMessage, MaybeTlsStream, WebSocketStream,
 };
 use tower_http::{services::ServeDir, trace::TraceLayer};
+use tracing::Span;
 use tracing::{error, info, info_span, warn, Instrument};
 
+mod ble;
 mod tls;
 
 // Configuration constants
-const LISTEN_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8443);
+const LISTEN_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8443);
+const HTTP_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8442);
 const CERT_PATH: &str = "server/certs/cert.pem";
 const KEY_PATH: &str = "server/certs/key.pem";
 const MDNS_RETRY_DELAY: Duration = Duration::from_secs(5);
@@ -86,11 +90,12 @@ fn to_client(msg: TungsteniteMessage) -> Option<Message> {
     }
 }
 
-/// Message with sender ID for broadcast filtering
+/// Message with sender ID for broadcast filtering.
+/// sender_id == u64::MAX means system/BLE — all clients receive it.
 #[derive(Clone, Debug)]
-struct ObsMessage {
-    sender_id: u64,
-    text: String,
+pub struct ObsMessage {
+    pub sender_id: u64,
+    pub text: String,
 }
 
 struct AppState {
@@ -154,20 +159,40 @@ async fn main() -> Result<()> {
     // Start mDNS discovery background task
     tokio::spawn(mdns_discovery_task(state.clone()).instrument(info_span!("mdns")));
 
+    // Start BLE heart rate monitor
+    tokio::spawn(ble::ble_task(state.obs_broadcast.clone()).instrument(info_span!("ble")));
+
     let tls_config = load_tls_config(Path::new(CERT_PATH), Path::new(KEY_PATH))?;
 
     let app = Router::new()
         .route("/echowire", get(websocket_proxy_handler))
         .route("/obs", get(obs_websocket_handler))
+        .route("/api/health", any(|| async { StatusCode::OK }))
+        .route("/api/import/health-app", any(health_app_handler))
         .nest_service(
             "/",
             ServeDir::new(".").append_index_html_on_directories(true),
         )
-        .layer(TraceLayer::new_for_http())
+        .layer(
+            TraceLayer::new_for_http().on_request(
+                |req: &axum::http::Request<_>, _: &Span| {
+                    info!("→ {} {}", req.method(), req.uri());
+                },
+            ),
+        )
         .with_state(state);
 
-    info!("🚀 Server listening on https://{}", LISTEN_ADDR);
+    info!("🚀 HTTPS listening on https://{}", LISTEN_ADDR);
+    info!("🌐 HTTP  listening on http://{}", HTTP_ADDR);
     info!("📁 Serving static files from current directory");
+
+    let http_app = app.clone();
+    let http_listener = tokio::net::TcpListener::bind(HTTP_ADDR).await?;
+    tokio::spawn(async move {
+        if let Err(e) = axum::serve(http_listener, http_app).await {
+            error!("HTTP server error: {e}");
+        }
+    });
 
     axum_server::bind_rustls(
         LISTEN_ADDR,
@@ -427,4 +452,28 @@ async fn handle_obs_websocket(socket: WebSocket, state: Arc<AppState>, client_id
     }
 
     info!("📺 OBS client {} disconnected", client_id);
+}
+
+async fn health_app_handler(req: Request) -> StatusCode {
+    let method = req.method().clone();
+    let uri = req.uri().clone();
+    let headers: Vec<String> = req
+        .headers()
+        .iter()
+        .map(|(k, v)| format!("{}: {}", k, v.to_str().unwrap_or("<binary>")))
+        .collect();
+    let body = to_bytes(req.into_body(), usize::MAX)
+        .await
+        .unwrap_or_default();
+    let body_str = String::from_utf8_lossy(&body);
+
+    info!(
+        "🏥 health-app {} {} | headers=[{}] | body={}",
+        method,
+        uri,
+        headers.join(", "),
+        if body_str.is_empty() { "<empty>" } else { &body_str }
+    );
+
+    StatusCode::OK
 }
