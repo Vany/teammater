@@ -21,6 +21,14 @@ const MEMORY_STORAGE_KEY = "MEMORY";
 // Trigger compression when memory exceeds this many lines
 const MEMORY_COMPRESS_THRESHOLD = 100;
 
+// Indicator state → CSS class + tooltip title
+const INDICATOR = {
+  idle:         { cls: "llm-icon-idle",         title: "LLM ready" },
+  busy:         { cls: "llm-icon-busy",         title: "LLM generating…" },
+  error:        { cls: "llm-icon-error",         title: "LLM error" },
+  disconnected: { cls: "llm-icon-disconnected", title: "LLM disconnected" },
+};
+
 export class LLMModule extends BaseModule {
   constructor() {
     super();
@@ -29,6 +37,9 @@ export class LLMModule extends BaseModule {
 
     // Cached tools array — built once on connect, invalidated on disconnect
     this._toolsCache = null;
+
+    // Lazily-built Map<actionName, closure> derived from LLM_ACTIONS keys
+    this._actionsMap = null;
 
     // DOM reference for the control panel chat log — updated in real time
     this._chatLogEl = null;
@@ -42,13 +53,21 @@ export class LLMModule extends BaseModule {
     // the control panel modal is open or has ever been opened.
     this._thinkingDetailsEl = null;
     this._thinkingTextEl = null;
+
+    // 🤖 emoji icon in module header — serves as the color state indicator
+    // (replaces the standard status dot for LLM)
+    this._llmIconEl = null;
+
+    // Live chat log handler registered on first modal open
+    this._chatLogHandler = null;
   }
 
-  /**
-   * Module display name
-   */
+  // ===========================================================================
+  // MODULE IDENTITY
+  // ===========================================================================
+
   getDisplayName() {
-    return "🤖 LLM (Ollama)";
+    return "LLM";
   }
 
   /**
@@ -224,6 +243,10 @@ Disallowed (use mute tool):
       .filter(Boolean);
   }
 
+  // ===========================================================================
+  // INITIALIZATION & DOM
+  // ===========================================================================
+
   /**
    * Override initialize to inject a second "memory" button + modal into the module header.
    */
@@ -244,13 +267,22 @@ Disallowed (use mute tool):
 
     await super.initialize(container);
 
+    // 🤖 icon — model state indicator (idle/busy/error), placed right after the
+    // connection dot. Dot = Ollama reachable; 🤖 = model actively working or idle.
+    const llmIcon = document.createElement("span");
+    llmIcon.className = "llm-icon llm-icon-disconnected";
+    llmIcon.title = "LLM model state";
+    llmIcon.textContent = "🤖";
+    this._llmIconEl = llmIcon;
+    const header = this.ui.container.querySelector(".module-header");
+    this.ui.statusIndicator.after(llmIcon);
+
     // Memory toggle button — inserted before ⚙️ (config toggle) so order is: 🧠 💾 ⚙️
     const memBtn = document.createElement("button");
     memBtn.className = "control-toggle";
     memBtn.textContent = "💾";
     memBtn.title = "Show memory";
     memBtn.addEventListener("click", () => this._toggleMemoryModal());
-    const header = this.ui.container.querySelector(".module-header");
     header.insertBefore(memBtn, this.ui.configToggle);
 
     // Memory modal
@@ -275,7 +307,6 @@ Disallowed (use mute tool):
     const content = document.createElement("div");
     content.className = "modal-content";
 
-    // Header
     const header = document.createElement("div");
     header.className = "modal-header";
 
@@ -290,7 +321,7 @@ Disallowed (use mute tool):
     saveBtn.textContent = "💾 Save";
     saveBtn.className = "panel-action-btn";
     saveBtn.addEventListener("click", () => {
-      localStorage.setItem(MEMORY_STORAGE_KEY, textarea.value);
+      this._saveMemory(textarea.value);
       saveBtn.textContent = "✅ Saved";
       setTimeout(() => {
         saveBtn.textContent = "💾 Save";
@@ -386,7 +417,8 @@ Disallowed (use mute tool):
   }
 
   /**
-   * Render control panel — shows real-time chat context sent to LLM + direct input
+   * Render control panel — shows real-time chat context sent to LLM + direct input.
+   * Called once at init by base class (modal body is built here).
    */
   renderControlPanel() {
     const container = document.createElement("div");
@@ -397,7 +429,7 @@ Disallowed (use mute tool):
     headerRow.className = "llm-panel-header";
 
     const heading = document.createElement("h3");
-    heading.textContent = "Chat context sent to LLM";
+    heading.textContent = "Chat context";
     headerRow.appendChild(heading);
 
     const clearBtn = document.createElement("button");
@@ -409,7 +441,7 @@ Disallowed (use mute tool):
         chatModule.clearChatHistory();
         this.log("🗑️ Chat history cleared");
       }
-      this._updateChatLog("(no chat context yet)");
+      this._refreshChatLog();
     });
     headerRow.appendChild(clearBtn);
 
@@ -423,7 +455,7 @@ Disallowed (use mute tool):
     // Direct input line
     const input = document.createElement("input");
     input.type = "text";
-    input.placeholder = "Send direct message to LLM (Enter)";
+    input.placeholder = "Send direct message to LLM… (Enter)";
     input.className = "llm-direct-input";
 
     input.addEventListener("keydown", (e) => {
@@ -438,16 +470,15 @@ Disallowed (use mute tool):
         return;
       }
 
-      // Inject as owner — same pattern as echowire's _forwardToLLM
-      const owner = `[${getBroadcasterUsername() || "owner"}]`;
-      chatModule._addToChatHistory(owner, text);
+      const ownerName = this._getOwnerName();
+      chatModule._addToChatHistory(ownerName, text);
       chatModule._notifyMessageHandlers({
-        username: owner,
+        username: ownerName,
         message: text,
         tags: { "user-id": "direct-input" },
         userId: "direct-input",
         messageId: null,
-        rawData: `direct://${owner}/${text}`,
+        rawData: `direct://${ownerName}/${text}`,
         source: "direct",
       });
     });
@@ -455,37 +486,69 @@ Disallowed (use mute tool):
     container.appendChild(input);
 
     // Thinking block — reuse the element created in initialize()
-    // (refs already set; just attach to this panel's container)
     container.appendChild(this._thinkingDetailsEl);
 
     // Keep reference for real-time updates
     this._chatLogEl = log;
 
-    // Register live update handler — refresh log on every incoming message
-    const chatModule = this.moduleManager?.get("twitch-chat");
-    const onMessage = () => {
-      if (chatModule) this._updateChatLog(chatModule.formatChatHistoryForLLM());
-    };
-    chatModule?.registerMessageHandler(onMessage, -100); // lowest priority — observe only
-
-    // Unregister when panel is removed from DOM
-    new MutationObserver((_, obs) => {
-      if (!document.contains(container)) {
-        chatModule?.unregisterMessageHandler(onMessage);
-        obs.disconnect();
-      }
-    }).observe(document.body, { childList: true, subtree: true });
-
-    // Populate with restored history (or placeholder if empty)
-    const initialLog = chatModule?.formatChatHistoryForLLM();
-    this._updateChatLog(initialLog || "(no chat context yet)");
-
     return container;
   }
 
   /**
-   * Update chat log display in the control panel.
-   * Renders " -> new messages:" marker lines with a bright highlight.
+   * Override toggleControlModal to refresh log on open and register live handler.
+   */
+  toggleControlModal() {
+    super.toggleControlModal();
+
+    const isOpen = this.ui.controlModal?.style.display !== "none";
+    if (!isOpen) return;
+
+    this._refreshChatLog();
+
+    // Register live message handler if not already registered
+    if (!this._chatLogHandler) {
+      const chatModule = this.moduleManager?.get("twitch-chat");
+      if (chatModule) {
+        this._chatLogHandler = () => this._refreshChatLog();
+        chatModule.registerMessageHandler(this._chatLogHandler, -100);
+      }
+    }
+  }
+
+  /**
+   * Pull latest chat history and render it.
+   * If twitch-chat module is live, use its formatter (includes marker).
+   * Otherwise fall back to reading the "CHAT" localStorage key directly
+   * so the log is populated even before Twitch Chat connects.
+   */
+  _refreshChatLog() {
+    const chatModule = this.moduleManager?.get("twitch-chat");
+    if (chatModule) {
+      this._updateChatLog(chatModule.formatChatHistoryForLLM());
+      return;
+    }
+
+    // Fallback: read raw storage
+    try {
+      const raw = localStorage.getItem("CHAT");
+      if (!raw) { this._updateChatLog("(no chat context yet)"); return; }
+      const entries = JSON.parse(raw);
+      if (!entries.length) { this._updateChatLog("(no chat context yet)"); return; }
+      const lines = entries.map((e) => {
+        const ts = new Date(e.timestamp).toLocaleTimeString("en-US", {
+          hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit",
+        });
+        return `[${ts}] ${e.username}: ${e.message}`;
+      });
+      this._updateChatLog(lines.join("\n"));
+    } catch {
+      this._updateChatLog("(no chat context yet)");
+    }
+  }
+
+  /**
+   * Render text into the chat log element.
+   * Highlights " -> new messages:" marker lines.
    */
   _updateChatLog(text) {
     // Update cached reference if element still in DOM
@@ -508,13 +571,27 @@ Disallowed (use mute tool):
     this._chatLogEl.scrollTop = this._chatLogEl.scrollHeight;
   }
 
+  // ===========================================================================
+  // THINKING BLOCK HELPERS
+  // ===========================================================================
+
+  /**
+   * Guard helper — executes fn() only when both thinking DOM elements exist.
+   * Eliminates repeated null checks in _streamThinking/_collapseThinking/_clearThinking.
+   */
+  _thinkingOp(fn) {
+    if (!this._thinkingDetailsEl || !this._thinkingTextEl) return;
+    fn();
+  }
+
   /** Show thinking block and append a token to it (called during streaming) */
   _streamThinking(token) {
-    if (!this._thinkingDetailsEl || !this._thinkingTextEl) return;
-    this._thinkingDetailsEl.style.display = "";
-    this._thinkingDetailsEl.open = true;
-    this._thinkingTextEl.textContent += token;
-    this._thinkingTextEl.scrollTop = this._thinkingTextEl.scrollHeight;
+    this._thinkingOp(() => {
+      this._thinkingDetailsEl.style.display = "";
+      this._thinkingDetailsEl.open = true;
+      this._thinkingTextEl.textContent += token;
+      this._thinkingTextEl.scrollTop = this._thinkingTextEl.scrollHeight;
+    });
   }
 
   /** Collapse thinking block when generation finishes (keep content readable on expand) */
@@ -527,29 +604,39 @@ Disallowed (use mute tool):
 
   /** Hide and clear thinking block (between cycles) */
   _clearThinking() {
-    if (!this._thinkingDetailsEl || !this._thinkingTextEl) return;
-    this._thinkingDetailsEl.style.display = "none";
-    this._thinkingDetailsEl.open = false;
-    this._thinkingTextEl.textContent = "";
-    const summary = this._thinkingDetailsEl.querySelector("summary");
-    if (summary) summary.textContent = "🧠 Thinking…";
+    this._thinkingOp(() => {
+      this._thinkingDetailsEl.style.display = "none";
+      this._thinkingDetailsEl.open = false;
+      this._thinkingTextEl.textContent = "";
+      const summary = this._thinkingDetailsEl.querySelector("summary");
+      if (summary) summary.textContent = "🧠 Thinking…";
+    });
   }
 
+  // ===========================================================================
+  // INDICATOR
+  // ===========================================================================
+
   /**
-   * Set status indicator state: "idle" | "busy" | "error"
-   * idle  → green (connected, doing nothing)
-   * busy  → yellow pulsing (model is generating)
-   * error → red pulsing (last request failed)
+   * Set 🤖 icon state: "idle" | "busy" | "error" | "disconnected"
    */
   _setIndicator(state) {
-    const el = this.ui.statusIndicator;
-    if (!el) return;
-    el.classList.remove("connected", "busy", "error", "disconnected");
-    if (state === "idle") el.classList.add("connected");
-    else if (state === "busy") el.classList.add("busy");
-    else if (state === "error") el.classList.add("error");
-    else el.classList.add("disconnected");
+    const icon = this._llmIconEl;
+    if (!icon) return;
+    icon.classList.remove(
+      "llm-icon-idle",
+      "llm-icon-busy",
+      "llm-icon-error",
+      "llm-icon-disconnected",
+    );
+    const def = INDICATOR[state] ?? INDICATOR.disconnected;
+    icon.classList.add(def.cls);
+    icon.title = def.title;
   }
+
+  // ===========================================================================
+  // CONNECTION
+  // ===========================================================================
 
   /**
    * Connect to Ollama server
@@ -576,12 +663,10 @@ Disallowed (use mute tool):
           this.log(`⚠️ Thinking mode is ON but Max Tokens is ${maxTok} — recommended ≥ 4096, responses may be cut off`);
         }
 
-        // Start periodic health checks
         if (healthCheckInterval > 0) {
-          this._startHealthChecks(healthCheckInterval);
+          this.healthCheckTimer = setInterval(() => this.checkHealth(), healthCheckInterval);
         }
 
-        // Fetch and populate available models
         await this.populateModels();
 
         // Pre-build tools cache — LLM_ACTIONS is static, no need to rebuild per cycle
@@ -602,8 +687,12 @@ Disallowed (use mute tool):
    */
   async doDisconnect() {
     this.log(`🔌 Disconnecting from Ollama...`);
-    this._stopHealthChecks();
+    if (this.healthCheckTimer) {
+      clearInterval(this.healthCheckTimer);
+      this.healthCheckTimer = null;
+    }
     this._toolsCache = null;
+    this._setIndicator("disconnected");
     this.log(`✅ Disconnected from Ollama`);
   }
 
@@ -632,8 +721,10 @@ Disallowed (use mute tool):
         this.updateStatus(isHealthy);
 
         if (isHealthy) {
+          this._setIndicator("idle");
           this.log(`✅ Ollama server is back online`);
         } else {
+          this._setIndicator("disconnected");
           this.log(`⚠️ Ollama server stopped responding`);
         }
       }
@@ -644,6 +735,7 @@ Disallowed (use mute tool):
 
       if (wasConnected) {
         this.updateStatus(false);
+        this._setIndicator("disconnected");
         this.log(`⚠️ Health check failed: ${error.message}`);
       }
 
@@ -673,17 +765,14 @@ Disallowed (use mute tool):
         return;
       }
 
-      // Update the model select dropdown in config panel
       const modelSelect = this.ui.configPanel?.querySelector(
         'select[stored_as="llm_model"]',
       );
       if (modelSelect) {
         const storedModel = this.getConfigValue("model_name", "");
 
-        // Clear existing options
         modelSelect.innerHTML = "";
 
-        // Add model options
         let hasStoredModel = false;
         models.forEach((model) => {
           const option = document.createElement("option");
@@ -713,8 +802,93 @@ Disallowed (use mute tool):
     }
   }
 
+  // ===========================================================================
+  // LLM API — SHARED HELPERS
+  // ===========================================================================
+
   /**
-   * Send messages to Ollama chat/completions API.
+   * Read generation config values in one place.
+   * @returns {{baseUrl:string, model:string, temperature:number, maxTokens:number, numCtx:number, timeout:number}}
+   */
+  _readConfig() {
+    return {
+      baseUrl:     this.getConfigValue("base_url", "http://localhost:11434"),
+      model:       this.getConfigValue("model_name", ""),
+      temperature: parseFloat(this.getConfigValue("temperature", "0.7")),
+      maxTokens:   parseInt(this.getConfigValue("max_tokens", "512")),
+      numCtx:      parseInt(this.getConfigValue("num_ctx", "8192")),
+      timeout:     parseInt(this.getConfigValue("timeout", "30000")),
+    };
+  }
+
+  /**
+   * Build the Ollama-compatible request body.
+   * Config values are merged with per-call option overrides.
+   * @param {Array}   messages
+   * @param {Object}  options   - {model, temperature, maxTokens, tools}
+   * @param {boolean} stream
+   * @returns {Object}
+   */
+  _buildRequestBody(messages, options, stream = false) {
+    const { model, temperature, maxTokens, numCtx } = this._readConfig();
+    const { model: overrideModel, temperature: overrideTemp, maxTokens: overrideMaxTokens, tools } = options;
+
+    const body = {
+      model:       overrideModel || model,
+      messages,
+      temperature: overrideTemp     !== undefined ? overrideTemp     : temperature,
+      max_tokens:  overrideMaxTokens !== undefined ? overrideMaxTokens : maxTokens,
+      options:     { num_ctx: numCtx },
+    };
+
+    if (stream) body.stream = true;
+
+    if (tools?.length > 0) {
+      body.tools = tools;
+      body.tool_choice = "auto";
+    }
+
+    return body;
+  }
+
+  /**
+   * Perform the fetch to /v1/chat/completions with abort-on-timeout.
+   * Returns the raw Response — callers decide whether to .json() or stream it.
+   * @param {string} url
+   * @param {Object} body
+   * @param {number} timeout  ms
+   * @returns {Promise<{response: Response, clearTimeout: Function}>}
+   */
+  async _fetchChat(url, body, timeout) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(
+      () => controller.abort(new Error(`Request timed out after ${timeout}ms`)),
+      timeout,
+    );
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      clearTimeout(timeoutId);
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    // Return both response and a way to clear the timer — streaming callers
+    // must call clearTimer() after they finish reading the body.
+    return { response, clearTimer: () => clearTimeout(timeoutId) };
+  }
+
+  // ===========================================================================
+  // LLM API — PUBLIC
+  // ===========================================================================
+
+  /**
+   * Send messages to Ollama chat/completions API (non-streaming).
    * Returns the full message object (role, content, tool_calls) from choices[0].message.
    * Pass `options.tools` for function-calling.
    */
@@ -723,57 +897,20 @@ Disallowed (use mute tool):
       throw new Error("Not connected to Ollama server");
     }
 
-    const baseUrl = this.getConfigValue("base_url", "http://localhost:11434");
-    const model = this.getConfigValue("model_name", "");
-    const temperature = parseFloat(this.getConfigValue("temperature", "0.7"));
-    const maxTokens = parseInt(this.getConfigValue("max_tokens", "512"));
-    const numCtx = parseInt(this.getConfigValue("num_ctx", "8192"));
-    const timeout = parseInt(this.getConfigValue("timeout", "30000"));
-
-    const {
-      model: overrideModel,
-      temperature: overrideTemp,
-      maxTokens: overrideMaxTokens,
-      tools,
-    } = options;
-
-    const requestBody = {
-      model: overrideModel || model,
-      messages,
-      temperature: overrideTemp !== undefined ? overrideTemp : temperature,
-      max_tokens:
-        overrideMaxTokens !== undefined ? overrideMaxTokens : maxTokens,
-      options: { num_ctx: numCtx },
-    };
-
-    if (tools && tools.length > 0) {
-      requestBody.tools = tools;
-      requestBody.tool_choice = "auto";
-    }
+    const { baseUrl, timeout } = this._readConfig();
+    const requestBody = this._buildRequestBody(messages, options, false);
 
     if (window.DEBUG)
       console.log("[LLM] →", JSON.parse(JSON.stringify(requestBody)));
 
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(
-        () =>
-          controller.abort(new Error(`Request timed out after ${timeout}ms`)),
+      const { response, clearTimer } = await this._fetchChat(
+        `${baseUrl}/v1/chat/completions`,
+        requestBody,
         timeout,
       );
 
-      const response = await fetch(`${baseUrl}/v1/chat/completions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(requestBody),
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
+      clearTimer();
 
       const data = await response.json();
       const message = data.choices?.[0]?.message || {
@@ -810,58 +947,41 @@ Disallowed (use mute tool):
   async chatRawStreaming(messages, options = {}) {
     if (!this.isConnected()) throw new Error("Not connected to Ollama server");
 
-    const baseUrl = this.getConfigValue("base_url", "http://localhost:11434");
-    const model = this.getConfigValue("model_name", "");
-    const temperature = parseFloat(this.getConfigValue("temperature", "0.7"));
-    const maxTokens = parseInt(this.getConfigValue("max_tokens", "512"));
-    const numCtx = parseInt(this.getConfigValue("num_ctx", "8192"));
-    const timeout = parseInt(this.getConfigValue("timeout", "30000"));
-    const { model: overrideModel, temperature: overrideTemp, maxTokens: overrideMaxTokens, tools } = options;
-
-    const requestBody = {
-      model: overrideModel || model,
-      messages,
-      temperature: overrideTemp !== undefined ? overrideTemp : temperature,
-      max_tokens: overrideMaxTokens !== undefined ? overrideMaxTokens : maxTokens,
-      options: { num_ctx: numCtx },
-      stream: true,
-    };
-    if (tools?.length > 0) {
-      requestBody.tools = tools;
-      requestBody.tool_choice = "auto";
-    }
+    const { baseUrl, timeout } = this._readConfig();
+    const requestBody = this._buildRequestBody(messages, options, true);
 
     if (window.DEBUG) console.log("[LLM streaming] →", JSON.parse(JSON.stringify(requestBody)));
 
     this._clearThinking();
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(
-      () => controller.abort(new Error(`Request timed out after ${timeout}ms`)),
-      timeout,
-    );
+    let response, clearTimer;
+    try {
+      ({ response, clearTimer } = await this._fetchChat(
+        `${baseUrl}/v1/chat/completions`,
+        requestBody,
+        timeout,
+      ));
+    } catch (error) {
+      this._collapseThinking();
+      const msg = error.name === "AbortError"
+        ? (error.cause?.message ?? `Request timed out after ${timeout}ms`)
+        : error.message;
+      this.log(`💥 ChatRaw streaming failed: ${msg}`);
+      throw new Error(msg);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+
+    // Assembled final message
+    let role = "assistant";
+    let content = "";
+    let toolCalls = null; // {index -> {id, name, arguments_str}}
+    // <think> tag parser state — fallback for models that embed thinking in content
+    let inThinkTag = false;
+    let thinkBuf = ""; // partial tag accumulation across chunks
 
     try {
-      const response = await fetch(`${baseUrl}/v1/chat/completions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(requestBody),
-        signal: controller.signal,
-      });
-
-      if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-
-      // Assembled final message
-      let role = "assistant";
-      let content = "";
-      let toolCalls = null; // {index -> {id, name, arguments_str}}
-      // <think> tag parser state — fallback for models that embed thinking in content
-      let inThinkTag = false;
-      let thinkBuf = ""; // partial tag accumulation across chunks
-
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -893,7 +1013,6 @@ Disallowed (use mute tool):
               if (inThinkTag) {
                 const end = raw.indexOf("</think>");
                 if (end === -1) {
-                  // Whole chunk is thinking
                   this._streamThinking(raw);
                   raw = "";
                 } else {
@@ -938,7 +1057,7 @@ Disallowed (use mute tool):
         }
       }
 
-      clearTimeout(timeoutId);
+      clearTimer();
       this._collapseThinking();
 
       // Assemble final message matching chatRaw output format
@@ -955,7 +1074,7 @@ Disallowed (use mute tool):
       return message;
 
     } catch (error) {
-      clearTimeout(timeoutId);
+      clearTimer();
       this._collapseThinking();
       const msg = error.name === "AbortError"
         ? (error.cause?.message ?? `Request timed out after ${timeout}ms`)
@@ -978,13 +1097,22 @@ Disallowed (use mute tool):
   }
 
   /**
+   * Persist memory text to localStorage.
+   * Single write point — all callers use this instead of setItem directly.
+   * @param {string} text
+   */
+  _saveMemory(text) {
+    localStorage.setItem(MEMORY_STORAGE_KEY, text);
+  }
+
+  /**
    * Append a note to persistent memory and trigger compression if needed.
    * @param {string} note
    */
   async _appendMemory(note) {
     const current = this._loadMemory();
     const updated = current ? `${current}\n${note}` : note;
-    localStorage.setItem(MEMORY_STORAGE_KEY, updated);
+    this._saveMemory(updated);
     this._refreshMemoryModal();
 
     const lineCount = updated.split("\n").filter((l) => l.trim()).length;
@@ -1024,7 +1152,7 @@ Disallowed (use mute tool):
       const compressed = result?.content?.trim();
 
       if (compressed) {
-        localStorage.setItem(MEMORY_STORAGE_KEY, compressed);
+        this._saveMemory(compressed);
         const before = memoryText.split("\n").filter((l) => l.trim()).length;
         const after = compressed.split("\n").filter((l) => l.trim()).length;
         this.log(`🧠 Memory compressed: ${before} → ${after} lines`);
@@ -1056,123 +1184,114 @@ Disallowed (use mute tool):
   }
 
   // ===========================================================================
+  // TOOLS & ACTIONS
+  // ===========================================================================
 
   /**
-   * Build OpenAI-compatible tools array from LLM_ACTIONS.
-   * Key format: "name  description" (first word is function name, rest is description).
-   * Injects built-in tools: nothing, respond, remember.
+   * Lazily build and cache the Map<actionName, closure> from LLM_ACTIONS.
+   * Key format: "name  description" (two spaces separate name from description).
+   */
+  _getActionsMap() {
+    if (this._actionsMap) return this._actionsMap;
+    this._actionsMap = new Map();
+    for (const [key, closure] of Object.entries(LLM_ACTIONS)) {
+      const spaceIdx = key.indexOf("  ");
+      const name = spaceIdx >= 0 ? key.slice(0, spaceIdx).trim() : key.trim();
+      this._actionsMap.set(name, closure);
+    }
+    return this._actionsMap;
+  }
+
+  /**
+   * Resolve action closure by tool name.
+   * @param {string} name
+   * @returns {Function|undefined}
+   */
+  _resolveAction(name) {
+    return this._getActionsMap().get(name);
+  }
+
+  /**
+   * Wrap a function definition into the OpenAI tool descriptor shape.
+   * @param {string} name
+   * @param {string} description
+   * @param {Object} parameters  JSON-schema parameters object
+   * @returns {Object}
+   */
+  _tool(name, description, parameters) {
+    return { type: "function", function: { name, description, parameters } };
+  }
+
+  /**
+   * Build OpenAI-compatible tools array from LLM_ACTIONS + built-ins.
+   * Built-ins: nothing, respond, remember.
    */
   _buildTools() {
-    const tools = [];
-
-    // Built-in tools always present
-    tools.push({
-      type: "function",
-      function: {
-        name: "nothing",
-        description: "Do nothing, wait till something happens.",
-        parameters: { type: "object", properties: {} },
-      },
-    });
-
-    tools.push({
-      type: "function",
-      function: {
-        name: "respond",
-        description: "Respond to chat with a message.",
-        parameters: {
-          type: "object",
-          properties: {
-            message: {
-              type: "string",
-              description: "Message to send to Twitch chat",
-            },
-          },
-          required: ["message"],
+    const tools = [
+      this._tool("nothing", "Do nothing, wait till something happens.", {
+        type: "object",
+        properties: {},
+      }),
+      this._tool("respond", "Respond to chat with a message.", {
+        type: "object",
+        properties: {
+          message: { type: "string", description: "Message to send to Twitch chat" },
         },
-      },
-    });
-
-    tools.push({
-      type: "function",
-      function: {
-        name: "remember",
-        description:
-          "Store an internal memory note visible in future chat history.",
-        parameters: {
+        required: ["message"],
+      }),
+      this._tool(
+        "remember",
+        "Store an internal memory note visible in future chat history.",
+        {
           type: "object",
           properties: {
             message: { type: "string", description: "Note to remember" },
           },
           required: ["message"],
         },
+      ),
+    ];
+
+    // Action tools share a common parameter schema
+    const actionParams = {
+      type: "object",
+      properties: {
+        user:    { type: "string", description: "Target user if applicable" },
+        message: { type: "string", description: "Arguments of function" },
       },
-    });
+    };
 
-    // LLM_ACTIONS: key is "name  description", value is action closure
-    for (const key of Object.keys(LLM_ACTIONS)) {
+    for (const [key] of Object.entries(LLM_ACTIONS)) {
       const spaceIdx = key.indexOf("  ");
-      const name = spaceIdx >= 0 ? key.slice(0, spaceIdx).trim() : key.trim();
+      const name        = spaceIdx >= 0 ? key.slice(0, spaceIdx).trim() : key.trim();
       const description = spaceIdx >= 0 ? key.slice(spaceIdx + 2).trim() : "";
-
-      tools.push({
-        type: "function",
-        function: {
-          name,
-          description,
-          parameters: {
-            type: "object",
-            properties: {
-              user: {
-                type: "string",
-                description: "Target user if applicable",
-              },
-              message: { type: "string", description: "Arguments of function" },
-            },
-          },
-        },
-      });
+      tools.push(this._tool(name, description, actionParams));
     }
 
     return tools;
   }
 
-  /**
-   * Resolve action closure by tool name from LLM_ACTIONS.
-   * Returns null if not found.
-   */
-  _resolveAction(name) {
-    for (const [key, closure] of Object.entries(LLM_ACTIONS)) {
-      const spaceIdx = key.indexOf("  ");
-      const actionName =
-        spaceIdx >= 0 ? key.slice(0, spaceIdx).trim() : key.trim();
-      if (actionName === name) return closure;
-    }
-    return null;
-  }
+  // ===========================================================================
+  // OWNER NAME RESOLUTION
+  // ===========================================================================
 
   /**
-   * Start periodic health checks
+   * Resolve the stream owner's display name.
+   * Priority: echowire localStorage config → getBroadcasterUsername() → "owner"
+   * Mirrors the resolution order used in echowire's _forwardToLLM.
+   * @returns {string}
    */
-  _startHealthChecks(interval) {
-    if (this.healthCheckTimer) {
-      clearInterval(this.healthCheckTimer);
-    }
-
-    this.healthCheckTimer = setInterval(() => {
-      this.checkHealth();
-    }, interval);
+  _getOwnerName() {
+    return (
+      localStorage.getItem("echowire_owner")?.trim() ||
+      getBroadcasterUsername() ||
+      "owner"
+    );
   }
 
-  /**
-   * Stop periodic health checks
-   */
-  _stopHealthChecks() {
-    if (this.healthCheckTimer) {
-      clearInterval(this.healthCheckTimer);
-      this.healthCheckTimer = null;
-    }
-  }
+  // ===========================================================================
+  // UTILITY
+  // ===========================================================================
 
   /**
    * Get time since last successful health check
@@ -1181,6 +1300,10 @@ Disallowed (use mute tool):
     if (!this.lastHealthCheck) return null;
     return Date.now() - this.lastHealthCheck;
   }
+
+  // ===========================================================================
+  // TOOL-CALL LOOP
+  // ===========================================================================
 
   /**
    * Shared tool-call loop used by monitorChat (and any future callers).
@@ -1244,7 +1367,7 @@ Disallowed (use mute tool):
             );
             if (sent) {
               chatModule._addToChatHistory(this.getBotName(), msg);
-              this._updateChatLog(chatModule.formatChatHistoryForLLM());
+              this._refreshChatLog();
             }
             toolResult = sent
               ? "Message sent to chat"
@@ -1303,6 +1426,10 @@ Disallowed (use mute tool):
     }
   }
 
+  // ===========================================================================
+  // MONITOR CHAT
+  // ===========================================================================
+
   /**
    * Monitor chat and react using tool-call loop.
    *
@@ -1343,7 +1470,14 @@ Disallowed (use mute tool):
 
     try {
       const chatLog = chatModule.formatChatHistoryForLLM();
-      this._updateChatLog(chatLog);
+      this._refreshChatLog();
+
+      // TODO: remove once ACTION messages are handled properly upstream
+      // Strip /me (ACTION) lines — \x01ACTION...\x01 clutters context without value
+      const filteredLog = chatLog
+        .split("\n")
+        .filter((line) => !line.includes("\x01ACTION"))
+        .join("\n");
 
       const tools = this._toolsCache ?? this._buildTools();
       const fallbackUser =
@@ -1358,7 +1492,7 @@ ${this.getConfigValue("rules", "") || this.getConfig().features.rules.default}`,
         },
         {
           role: "user",
-          content: `Here is the chat history:\n${chatLog}\n\nReact to the new messages using available tools.`,
+          content: `Here is the chat history:\n${filteredLog}\n\nReact to the new messages using available tools.`,
         },
       ];
 
@@ -1381,9 +1515,13 @@ ${this.getConfigValue("rules", "") || this.getConfig().features.rules.default}`,
     }
   }
 
+  // ===========================================================================
+  // EXTERNAL API
+  // ===========================================================================
+
   /**
    * Provide context for actions
-   * Returns module reference - actions access methods directly
+   * Returns module reference — actions access methods directly
    */
   getContextContribution() {
     return { llm: this };

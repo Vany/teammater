@@ -968,6 +968,52 @@ a:visited {
 }
 
 /* ============================
+   LLM MODULE ICON INDICATOR
+   ============================ */
+
+.llm-icon {
+    font-size: 16px;
+    margin-right: 6px;
+    opacity: 0.25;
+    filter: grayscale(100%);
+    transition:
+        opacity 0.3s,
+        filter 0.3s;
+}
+
+.llm-icon.llm-icon-idle {
+    opacity: 1;
+    filter: grayscale(0%) brightness(1.1);
+}
+
+.llm-icon.llm-icon-busy {
+    opacity: 1;
+    filter: grayscale(0%) sepia(100%) saturate(400%) hue-rotate(-20deg) brightness(1.2);
+    animation: llm-busy-pulse 0.9s ease-in-out infinite;
+}
+
+.llm-icon.llm-icon-error {
+    opacity: 1;
+    filter: grayscale(0%) sepia(100%) saturate(500%) hue-rotate(-60deg);
+    animation: llm-error-pulse 0.5s ease-in-out infinite;
+}
+
+.llm-icon.llm-icon-disconnected {
+    opacity: 0.25;
+    filter: grayscale(100%);
+}
+
+@keyframes llm-busy-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+@keyframes llm-error-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+}
+
+/* ============================
    OBS MODULE INDICATORS
    ============================ */
 

@@ -31,7 +31,11 @@ import {
 import { request } from "./utils.js";
 
 // Import actions for test button
-import { voice } from "./actions.js";
+import { voice, minaret_use } from "./actions.js";
+
+// Expose immediately at module load (before async initialize completes)
+window.voice = voice;
+window.minaret_use = minaret_use;
 
 // ============================
 // GLOBAL STATE
@@ -595,8 +599,6 @@ async function handleRedemption(redemption) {
 // ============================
 
 function setupUIListeners() {
-  // Expose voice action to window for HTML onclick
-  window.voice = voice;
   window.mp3 = mp3;
 
   // Page unload handler (flush music queue)

@@ -162,8 +162,9 @@
     }
 
     // ── WebSocket ─────────────────────────────────────────
-    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const WS_URL = `${proto}//${location.host}/obs`;
+    // Match protocol: wss on HTTPS (port 8443), ws on HTTP (port 8442)
+    const [proto, port] = location.protocol === 'https:' ? ['wss:', 8443] : ['ws:', 8442];
+    const WS_URL = `${proto}//${location.hostname}:${port}/obs`;
 
     function connect() {
         const ws = new WebSocket(WS_URL);

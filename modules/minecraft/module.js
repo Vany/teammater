@@ -17,13 +17,15 @@ import { BaseModule } from "../base-module.js";
 export class MinecraftModule extends BaseModule {
   constructor() {
     super();
+    this._commandLog = []; // accumulates before control panel opens
+    this._controlLog = null; // live DOM element when panel is open
   }
 
   /**
    * Module display name
    */
   getDisplayName() {
-    return "🎮 Minecraft (Minaret)";
+    return "🎮 Minaret";
   }
 
   /**
@@ -79,6 +81,14 @@ export class MinecraftModule extends BaseModule {
 
       this.ws.onmessage = (event) => {
         this.log(`📨 Minecraft: ${event.data}`);
+        // Show non-chat server responses in control panel
+        try {
+          const msg = JSON.parse(event.data);
+          // filter chat responses (type: "message") and outgoing chat echoes
+          if (msg.type !== "message" && !msg.chat) this._logCommand("in", event.data);
+        } catch {
+          this._logCommand("in", event.data);
+        }
       };
 
       this.ws.onclose = (event) => {
@@ -149,8 +159,9 @@ export class MinecraftModule extends BaseModule {
     }
 
     try {
-      this.ws.send(`{"command": "${command}"}`);
+      this.ws.send(JSON.stringify({ command }));
       this.log(`📤 Sent command: ${command}`);
+      this._logCommand("out", command);
       return true;
     } catch (error) {
       this.log(`💥 Send failed: ${error.message}`);
@@ -163,6 +174,85 @@ export class MinecraftModule extends BaseModule {
    */
   getWebSocket() {
     return this.ws;
+  }
+
+  /**
+   * This module has a control panel (command console)
+   */
+  hasControlPanel() {
+    return true;
+  }
+
+  /**
+   * Render control panel: command log + send input
+   */
+  renderControlPanel() {
+    const container = document.createElement("div");
+    container.style.display = "flex";
+    container.style.flexDirection = "column";
+    container.style.gap = "8px";
+
+    // Log list
+    const log = document.createElement("div");
+    log.style.cssText =
+      "height:260px;overflow-y:auto;background:#111;border:1px solid #333;border-radius:4px;padding:6px;font-family:monospace;font-size:12px;display:flex;flex-direction:column;gap:2px;";
+    this._controlLog = log;
+
+    // Replay existing log entries
+    for (const entry of this._commandLog) {
+      log.appendChild(this._makeLogEntry(entry.dir, entry.text));
+    }
+    log.scrollTop = log.scrollHeight;
+
+    // Input row
+    const row = document.createElement("div");
+    row.style.cssText = "display:flex;gap:6px;";
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.placeholder = "command…";
+    input.style.cssText = "flex:1;font-family:monospace;font-size:13px;";
+
+    const send = () => {
+      const cmd = input.value.trim();
+      if (!cmd) return;
+      input.value = "";
+      this.sendCommand(cmd);
+    };
+
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") send();
+    });
+
+    const btn = document.createElement("button");
+    btn.textContent = "Send";
+    btn.addEventListener("click", send);
+
+    row.appendChild(input);
+    row.appendChild(btn);
+
+    container.appendChild(log);
+    container.appendChild(row);
+
+    return container;
+  }
+
+  /** Build a single log line element */
+  _makeLogEntry(dir, text) {
+    const el = document.createElement("div");
+    el.style.color = dir === "out" ? "#7cf" : "#cf7";
+    el.textContent = `${dir === "out" ? "▶" : "◀"} ${text}`;
+    return el;
+  }
+
+  /** Append entry to in-memory log and live panel (if open) */
+  _logCommand(dir, text) {
+    if (!this._commandLog) this._commandLog = [];
+    this._commandLog.push({ dir, text });
+    if (this._controlLog) {
+      this._controlLog.appendChild(this._makeLogEntry(dir, text));
+      this._controlLog.scrollTop = this._controlLog.scrollHeight;
+    }
   }
 
   /**

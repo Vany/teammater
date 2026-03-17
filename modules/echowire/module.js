@@ -13,6 +13,7 @@
  */
 
 import { BaseModule } from "../base-module.js";
+import { VOICE_ACTIONS } from "../../config.js";
 
 export class EchowireModule extends BaseModule {
   constructor() {
@@ -213,6 +214,17 @@ export class EchowireModule extends BaseModule {
     if (match) {
       const commandText = match[2]; // Text after the bot name
       this._forwardToLLM(commandText);
+    } else {
+      // Check VOICE_ACTIONS — key is regex, whole phrase must match
+      const trimmed = phrase.trim();
+      for (const [pattern, action] of Object.entries(VOICE_ACTIONS)) {
+        if (new RegExp(pattern, "i").test(trimmed)) {
+          this.log(`🎤 Voice action "${pattern}": "${trimmed}"`);
+          const context = this.moduleManager.buildContext();
+          action(context, "echowire", trimmed);
+          break;
+        }
+      }
     }
 
     // Reset for next utterance

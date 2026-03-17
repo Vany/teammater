@@ -17,6 +17,7 @@
  */
 
 import { BaseModule } from "../base-module.js";
+import { obs_scene } from "../../actions.js";
 
 export class OBSModule extends BaseModule {
   constructor() {
@@ -38,6 +39,9 @@ export class OBSModule extends BaseModule {
     // Frame drop alert state
     this.lastAlertTime = 0;
     this.ALERT_COOLDOWN_MS = 10000; // 10 seconds between alerts
+
+    // Async request promises keyed by unique requestId
+    this._pendingRequests = new Map();
   }
 
   getDisplayName() {
@@ -46,6 +50,20 @@ export class OBSModule extends BaseModule {
 
   getConfig() {
     return {
+      scenes: {
+        glasses_scene: {
+          type: "text",
+          label: "Glasses Scene Name",
+          default: "Glasses",
+          stored_as: "obs_glasses_scene",
+        },
+        glasses_source: {
+          type: "text",
+          label: "Refresh Source Name",
+          default: "G",
+          stored_as: "obs_glasses_source",
+        },
+      },
       connection: {
         url: {
           type: "text",
@@ -107,6 +125,18 @@ export class OBSModule extends BaseModule {
 
     // Initial indicator state
     this.updateCustomIndicators();
+
+    // Add Glasses action button to config panel
+    const configPanel = this.ui.container.querySelector(".config-panel");
+    const btn = document.createElement("button");
+    btn.textContent = "👓 Glasses + Refresh";
+    btn.style.marginTop = "8px";
+    btn.onclick = () => {
+      const scene = this.getConfigValue("glasses_scene", "Glasses");
+      const source = this.getConfigValue("glasses_source", "G");
+      obs_scene(scene, source)({ obs: this, log: this.log.bind(this) });
+    };
+    configPanel.appendChild(btn);
   }
 
   /**
@@ -234,6 +264,12 @@ export class OBSModule extends BaseModule {
 
   async doDisconnect() {
     this._stopStatusPolling();
+
+    // Reject all pending async requests
+    for (const [, { reject }] of this._pendingRequests) {
+      reject(new Error("OBS disconnected"));
+    }
+    this._pendingRequests.clear();
 
     // Cleanup using shared helper
     this._cleanupReconnect();
@@ -376,6 +412,15 @@ export class OBSModule extends BaseModule {
   _handleRequestResponse(data) {
     const { requestId, requestStatus, responseData } = data;
 
+    // Resolve async callers first
+    if (this._pendingRequests.has(requestId)) {
+      const { resolve, reject } = this._pendingRequests.get(requestId);
+      this._pendingRequests.delete(requestId);
+      if (requestStatus.result) resolve({ requestStatus, responseData });
+      else reject(new Error(requestStatus.comment || `OBS request failed: ${requestId}`));
+      return;
+    }
+
     if (!requestStatus.result) {
       return;
     }
@@ -425,6 +470,62 @@ export class OBSModule extends BaseModule {
       },
     };
     this.ws.send(JSON.stringify(msg));
+  }
+
+  /**
+   * Send a request and return a Promise that resolves with the response.
+   * Uses unique requestId so concurrent calls don't collide.
+   */
+  _sendRequestAsync(requestType, requestData = {}) {
+    return new Promise((resolve, reject) => {
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+        reject(new Error("OBS not connected"));
+        return;
+      }
+      const requestId = `${requestType}_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+      this._pendingRequests.set(requestId, { resolve, reject });
+      this.ws.send(JSON.stringify({ op: 6, d: { requestType, requestId, requestData } }));
+      setTimeout(() => {
+        if (this._pendingRequests.has(requestId)) {
+          this._pendingRequests.delete(requestId);
+          reject(new Error(`OBS request timeout: ${requestType}`));
+        }
+      }, 5000);
+    });
+  }
+
+  /**
+   * Refresh a Display Capture source by toggling its Display setting.
+   * Uses GetInputPropertiesListPropertyItems to enumerate valid display values —
+   * never sets an invalid value, which would crash OBS.
+   */
+  async refreshSource(sourceName) {
+    const { responseData: settingsRes } = await this._sendRequestAsync("GetInputSettings", { inputName: sourceName });
+    const settings = settingsRes.inputSettings;
+
+    const displayKey = Object.keys(settings).find(k => /display|monitor/i.test(k));
+    if (!displayKey) {
+      this.log(`⚠️ refreshSource: no display/monitor field in "${sourceName}"`);
+      return;
+    }
+
+    const original = settings[displayKey];
+
+    // Get valid display values from OBS — setting an invalid value (empty string, out-of-range index) crashes OBS
+    const { responseData: propRes } = await this._sendRequestAsync("GetInputPropertiesListPropertyItems", {
+      inputName: sourceName,
+      propertyName: displayKey,
+    });
+    const alt = propRes.propertyItems.find(item => item.itemValue !== original);
+    if (!alt) {
+      this.log(`⚠️ refreshSource: only one display available for "${sourceName}", cannot toggle`);
+      return;
+    }
+
+    await this._sendRequestAsync("SetInputSettings", { inputName: sourceName, inputSettings: { [displayKey]: alt.itemValue } });
+    await new Promise(r => setTimeout(r, 1000));
+    await this._sendRequestAsync("SetInputSettings", { inputName: sourceName, inputSettings: { [displayKey]: original } });
+    this.log(`🔄 Refreshed "${sourceName}" via ${displayKey} (→ "${alt.itemName}" → back)`);
   }
 
   /**

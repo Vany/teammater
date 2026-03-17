@@ -30,20 +30,7 @@
             <a href="https://www.twitch.tv/vanyserezhkin" target="_blank"
                 >https://www.twitch.tv/vanyserezhkin</a
             >
-            <input
-                type="text"
-                stored_as="announce"
-                style="width: 90%"
-                onkeydown="
-                    (async () => {
-                        console.log(event.key);
-                        if (event.key === 'Enter') {
-                            eval(localStorage.getItem('ANNOUNCE'));
-                            console.log(await ANNOUNCE(this.value));
-                        }
-                    })()
-                "
-            />
+            <input type="text" id="announce-input" stored_as="announce" style="width: 90%" />
 
             <div class="control-section">
                 <label class="checkbox-label">
@@ -58,6 +45,72 @@
             </div>
         </div>
 
+        <script>
+            (() => {
+                const HISTORY_KEY = 'announce_history';
+                const MAX_HISTORY = 200;
+                let historyIndex = null; // null = not browsing
+                let draft = '';
+
+                function getHistory() {
+                    try { return JSON.parse(localStorage.getItem(HISTORY_KEY)) || []; }
+                    catch { return []; }
+                }
+                function saveHistory(h) {
+                    localStorage.setItem(HISTORY_KEY, JSON.stringify(h));
+                }
+                function pushHistory(value) {
+                    const h = getHistory();
+                    if (value && h[h.length - 1] !== value) {
+                        h.push(value);
+                        if (h.length > MAX_HISTORY) h.splice(0, h.length - MAX_HISTORY);
+                        saveHistory(h);
+                    }
+                }
+
+                document.addEventListener('DOMContentLoaded', () => {
+                    const input = document.getElementById('announce-input');
+                    if (!input) return;
+
+                    input.addEventListener('keydown', async (e) => {
+                        const h = getHistory();
+
+                        if (e.key === 'ArrowUp') {
+                            e.preventDefault();
+                            if (h.length === 0) return;
+                            if (historyIndex === null) {
+                                draft = input.value;
+                                historyIndex = h.length - 1;
+                            } else if (historyIndex > 0) {
+                                historyIndex--;
+                            }
+                            input.value = h[historyIndex];
+                        } else if (e.key === 'ArrowDown') {
+                            e.preventDefault();
+                            if (historyIndex === null) return;
+                            if (historyIndex < h.length - 1) {
+                                historyIndex++;
+                                input.value = h[historyIndex];
+                            } else {
+                                historyIndex = null;
+                                input.value = draft;
+                            }
+                        } else if (e.key === 'Enter') {
+                            const value = input.value.trim();
+                            if (!value) return;
+                            pushHistory(value);
+                            historyIndex = null;
+                            draft = '';
+                            eval(localStorage.getItem('ANNOUNCE'));
+                            console.log(await ANNOUNCE(value));
+                        } else {
+                            // Any other key resets history browsing
+                            historyIndex = null;
+                        }
+                    });
+                });
+            })();
+        </script>
         <script type="module" src="index.js"></script>
     </body>
 </html>

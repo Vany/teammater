@@ -16,6 +16,9 @@ import {
   playing,
   neuro,
   fireball,
+  minaret_use,
+  apply_effect,
+  obs_scene,
 } from "./actions.js";
 
 // Chat Actions Configuration
@@ -36,6 +39,13 @@ export const LLM_ACTIONS = {
   "say  say outloud to attract attention of the owner": voice(),
   "next_song  skip currently playing song": vote_skip(),
   "fireball  help cast fireball for player": fireball(),
+};
+
+export const VOICE_ACTIONS = {
+  "^рюкзак$": minaret_use(8),
+  "^babakh|бабах$": apply_effect("dead_blow"),
+  "^сцена очки$|glasses$": obs_scene("Glasses", "G"),
+  "^сцена экран$|game$": obs_scene("Game", "Screen"),
 };
 
 // Get nickname from localStorage (default set via stored_default in HTML)

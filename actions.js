@@ -25,6 +25,7 @@
 
 import {
   getMinecraftCommands,
+  getMinecraftUsername,
   TIMING,
   getBroadcasterUsername,
 } from "./config.js";
@@ -120,6 +121,47 @@ export function love(
 
     // Update love protection timer
     context.love_timer = Date.now();
+  };
+}
+
+/**
+ * Minaret use-item action initializer
+ * @param {number} itemSlot - Inventory slot number to use
+ * @returns {Function} - closure(context, user, message) => void
+ */
+export function minaret_use(itemSlot) {
+  return (context, user, message) => {
+    const { minecraft, log } = context;
+
+    if (!minecraft || !minecraft.isConnected()) {
+      if (log) log(`❌ minaret_use: Minecraft not connected`);
+      return;
+    }
+
+    const playerName = getMinecraftUsername();
+    minecraft.ws.send(JSON.stringify({ use: playerName, slot: itemSlot }));
+    if (log) log(`🎮 minaret_use slot=${itemSlot} player=${playerName}`);
+  };
+}
+
+/**
+ * Apply Minaret effect action initializer
+ * @param {string} effectName - Effect name (used as minaret:<effectName>)
+ * @returns {Function} - closure(context, user, message) => void
+ */
+export function apply_effect(effectName) {
+  return (context, user, message) => {
+    const { minecraft, log } = context;
+
+    if (!minecraft || !minecraft.isConnected()) {
+      if (log) log(`❌ apply_effect: Minecraft not connected`);
+      return;
+    }
+
+    const playerName = getMinecraftUsername();
+    const command = `effect give ${playerName} minaret:${effectName} 9999 0 true`;
+    minecraft.ws.send(JSON.stringify({ command }));
+    if (log) log(`🎮 apply_effect ${effectName} → ${playerName}`);
   };
 }
 
@@ -499,6 +541,33 @@ export function delete_message(silent = false) {
 
 // Alias for better naming consistency
 export const delete_ = delete_message;
+
+// ============================
+// OBS ACTIONS
+// ============================
+
+/**
+ * OBS scene switch + source refresh action
+ * @param {string} scene - OBS scene name to switch to
+ * @param {string} source - Input source name to refresh (browser source)
+ * @returns {Function} - closure(context, user, message) => void
+ */
+export function obs_scene(scene, source) {
+  return async (context, user, message) => {
+    const { obs, log } = context;
+    if (!obs || !obs.isConnected()) {
+      if (log) log(`❌ obs_scene: OBS not connected`);
+      return;
+    }
+    obs._sendRequest("SetCurrentProgramScene", { sceneName: scene });
+    if (log) log(`👓 Scene → "${scene}", refreshing source "${source}"`);
+    try {
+      await obs.refreshSource(source);
+    } catch (err) {
+      if (log) log(`❌ refreshSource failed: ${err.message}`);
+    }
+  };
+}
 
 // ============================
 // LLM ACTIONS
