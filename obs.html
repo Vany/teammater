@@ -1,162 +1,203 @@
 <!doctype html>
 <html lang="en">
-<meta charset="utf-8" />
-<title>OBS Overlay</title>
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700&display=swap" rel="stylesheet" />
-<style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    <meta charset="utf-8" />
+    <title>OBS Overlay</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link
+        href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700&display=swap"
+        rel="stylesheet"
+    />
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
 
-    body { background: transparent; overflow: hidden; }
+        body {
+            background: transparent;
+            overflow: hidden;
+        }
 
-    #hr-widget {
-        display: inline-flex;
-        flex-direction: column;
-        gap: 10px;
-        padding: 12px 16px 10px;
-        background: rgba(0, 0, 0, 0.55);
-        border-radius: 16px;
-        backdrop-filter: blur(6px);
-        margin: 16px;
-        opacity: 0;
-        transition: opacity 0.5s, filter 0.8s;
-    }
-    #hr-widget.visible { opacity: 1; }
-    #hr-widget.stale {
-        filter: grayscale(1) brightness(0.45);
-    }
-    #hr-widget.stale #hr-icon {
-        animation-play-state: paused;
-    }
+        #hr-widget {
+            display: inline-flex;
+            flex-direction: column;
+            gap: 10px;
+            padding: 12px 16px 10px;
+            background: rgba(0, 0, 0, 0.55);
+            border-radius: 16px;
+            backdrop-filter: blur(6px);
+            margin: 16px;
+            opacity: 0;
+            transition:
+                opacity 0.5s,
+                filter 0.8s;
+        }
+        #hr-widget.visible {
+            opacity: 1;
+        }
+        #hr-widget.stale {
+            filter: grayscale(1) brightness(0.45);
+        }
+        #hr-widget.stale #hr-icon {
+            animation-play-state: paused;
+        }
 
-    .hr-top {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-    }
+        .hr-top {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
 
-    #hr-icon {
-        font-size: 34px;
-        line-height: 1;
-        display: block;
-        transform-origin: center;
-        animation: heartbeat 0.8s ease-in-out infinite;
-    }
+        #hr-icon {
+            font-size: 34px;
+            line-height: 1;
+            display: block;
+            transform-origin: center;
+            animation: heartbeat 0.8s ease-in-out infinite;
+        }
 
-    @keyframes heartbeat {
-        0%,  100% { transform: scale(1);    }
-        15%        { transform: scale(1.45); }
-        35%        { transform: scale(1.05); }
-    }
+        @keyframes heartbeat {
+            0%,
+            100% {
+                transform: scale(1);
+            }
+            15% {
+                transform: scale(1.45);
+            }
+            35% {
+                transform: scale(1.05);
+            }
+        }
 
-    #hr-value {
-        font-family: "Orbitron", monospace;
-        font-size: 38px;
-        font-weight: 700;
-        color: #fff;
-        line-height: 1;
-        min-width: 3ch;
-        transition: text-shadow 0.6s;
-    }
+        #hr-value {
+            font-family: "Orbitron", monospace;
+            font-size: 38px;
+            font-weight: 700;
+            color: #fff;
+            line-height: 1;
+            min-width: 3ch;
+            transition: text-shadow 0.6s;
+        }
 
-    #hr-chart {
-        width: 220px;
-        height: 38px;
-        display: block;
-        overflow: visible;
-    }
+        #hr-chart {
+            width: 220px;
+            height: 38px;
+            display: block;
+            overflow: visible;
+        }
 
-    #np-widget {
-        display: inline-flex;
-        flex-direction: row;
-        align-items: center;
-        gap: 12px;
-        padding: 10px 16px 10px 10px;
-        background: rgba(0, 0, 0, 0.55);
-        border-radius: 16px;
-        backdrop-filter: blur(6px);
-        margin: 0 16px 16px;
-        max-width: 320px;
-        opacity: 0;
-        transition: opacity 0.5s;
-    }
-    #np-widget.visible { opacity: 1; }
+        #np-widget {
+            display: inline-flex;
+            flex-direction: column;
+            gap: 8px;
+            padding: 0;
+            background: rgba(0, 0, 0, 0.55);
+            border-radius: 16px;
+            backdrop-filter: blur(6px);
+            margin: 0 16px 16px;
+            width: 220px;
+            overflow: hidden;
+            opacity: 0;
+            transition: opacity 0.5s;
+        }
+        #np-widget.visible {
+            opacity: 1;
+        }
 
-    #np-cover {
-        width: 52px;
-        height: 52px;
-        border-radius: 8px;
-        object-fit: cover;
-        flex-shrink: 0;
-        display: none;
-    }
-    #np-cover.visible { display: block; }
+        #np-cover {
+            width: 100%;
+            height: 124px;
+            object-fit: cover;
+            display: none;
+        }
+        #np-cover.visible {
+            display: block;
+        }
 
-    #np-text {
-        display: flex;
-        flex-direction: column;
-        gap: 3px;
-        min-width: 0;
-    }
+        #np-text {
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+            padding: 0 12px 10px;
+            min-width: 0;
+        }
 
-    #np-artist {
-        font-family: "Orbitron", monospace;
-        font-size: 11px;
-        font-weight: 700;
-        color: #aaa;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
+        #np-artist {
+            font-family: "Orbitron", monospace;
+            font-size: 11px;
+            font-weight: 700;
+            color: #aaa;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
 
-    #np-title {
-        font-family: "Orbitron", monospace;
-        font-size: 15px;
-        font-weight: 700;
-        color: #fff;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        text-shadow: 0 0 14px #ffffff55;
-    }
+        #np-title {
+            font-family: "Orbitron", monospace;
+            font-size: 15px;
+            font-weight: 700;
+            color: #fff;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            text-shadow: 0 0 14px #ffffff55;
+        }
 
-    #np-queue {
-        font-family: "Orbitron", monospace;
-        font-size: 10px;
-        color: #555;
-        margin-top: 2px;
-    }
-</style>
+        #np-queue {
+            font-family: "Orbitron", monospace;
+            font-size: 10px;
+            color: #555;
+            margin-top: 2px;
+        }
+    </style>
 
-<div id="np-widget">
-    <img id="np-cover" alt="" />
-    <div id="np-text">
-        <div id="np-artist">—</div>
-        <div id="np-title">—</div>
-        <div id="np-queue"></div>
+    <div id="np-widget">
+        <img id="np-cover" alt="" />
+        <div id="np-text">
+            <div id="np-artist">—</div>
+            <div id="np-title">—</div>
+            <div id="np-queue"></div>
+        </div>
     </div>
-</div>
 
-<div id="hr-widget">
-    <div class="hr-top">
-        <span id="hr-icon">🩵</span>
-        <span id="hr-value">—</span>
+    <div id="hr-widget">
+        <div class="hr-top">
+            <span id="hr-icon">🩵</span>
+            <span id="hr-value">—</span>
+        </div>
+        <svg id="hr-chart" viewBox="0 0 220 38" preserveAspectRatio="none">
+            <defs>
+                <linearGradient id="fillGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop
+                        id="grad-top"
+                        offset="0%"
+                        stop-color="#44dd88"
+                        stop-opacity="0.28"
+                    />
+                    <stop offset="100%" stop-color="#44dd88" stop-opacity="0" />
+                </linearGradient>
+            </defs>
+            <polygon
+                id="hr-fill"
+                fill="url(#fillGrad)"
+                stroke="none"
+                points=""
+            />
+            <polyline
+                id="hr-line"
+                fill="none"
+                stroke="#44dd88"
+                stroke-width="1.5"
+                stroke-linejoin="round"
+                stroke-linecap="round"
+                points=""
+            />
+            <circle id="hr-dot" r="2.5" fill="#44dd88" cx="-10" cy="0" />
+        </svg>
     </div>
-    <svg id="hr-chart" viewBox="0 0 220 38" preserveAspectRatio="none">
-        <defs>
-            <linearGradient id="fillGrad" x1="0" y1="0" x2="0" y2="1">
-                <stop id="grad-top" offset="0%"   stop-color="#44dd88" stop-opacity="0.28"/>
-                <stop             offset="100%" stop-color="#44dd88" stop-opacity="0"/>
-            </linearGradient>
-        </defs>
-        <polygon  id="hr-fill" fill="url(#fillGrad)" stroke="none" points=""/>
-        <polyline id="hr-line" fill="none" stroke="#44dd88" stroke-width="1.5"
-                  stroke-linejoin="round" stroke-linecap="round" points=""/>
-        <circle   id="hr-dot"  r="2.5" fill="#44dd88" cx="-10" cy="0"/>
-    </svg>
-</div>
 
-<script src="obs.js"></script>
+    <script src="obs.js"></script>
 </html>
