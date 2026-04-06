@@ -197,7 +197,14 @@
                           ?? document.querySelector('div[class^="Meta_metaContainer"]');
             const coverImg = playerBar?.querySelector('img[class*="_cover_"]');
             const cover    = coverImg?.src?.replace(/\/\d+x\d+$/, "/200x200") ?? null;
-            const name     = meta?.innerText ?? "";
+            const titleEl   = meta?.querySelector('[class*="Meta_title"]');
+            const versionEl = meta?.querySelector('[class*="Meta_version"]');
+            const artistEl  = meta?.querySelector('[class*="Meta_artists"]') ?? meta?.querySelectorAll('[class*="Meta_text"]')?.[1];
+            // Fallback: full innerText split by newline (old behaviour)
+            const rawText  = meta?.innerText ?? "";
+            const name     = titleEl
+              ? (titleEl.textContent.trim() + (versionEl ? "\n" + versionEl.textContent.trim() : "") + "\n" + (artistEl?.textContent.trim() ?? ""))
+              : rawText;
             log(`music_start: "${name}" cover=${cover}`);
             sendToMaster("music_start", { name, cover });
           });
@@ -285,7 +292,8 @@
         title:    p.videoDetails?.title  ?? "Unknown",
         author:   p.videoDetails?.author ?? "",
         duration: parseInt(p.videoDetails?.lengthSeconds ?? "0"),
-        cover:    videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : null,
+        cover:         videoId ? `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg` : null,
+        coverFallback: videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : null,
         url:      location.href,
       };
       log(`hooking "${info.title}" by "${info.author}"`);

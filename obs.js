@@ -73,17 +73,23 @@
     }
 
     // ── Now Playing ───────────────────────────────────────
-    const npWidget = document.getElementById('np-widget');
-    const npCover  = document.getElementById('np-cover');
-    const npArtist = document.getElementById('np-artist');
-    const npTitle  = document.getElementById('np-title');
-    const npQueue  = document.getElementById('np-queue');
+    const npWidget  = document.getElementById('np-widget');
+    const npCover   = document.getElementById('np-cover');
+    const npArtist  = document.getElementById('np-artist');
+    const npTitle   = document.getElementById('np-title');
+    const npVersion = document.getElementById('np-version');
+    const npQueue   = document.getElementById('np-queue');
 
-    function onNowPlaying({ artist, title, cover, queue_size }) {
-        npArtist.textContent = artist || '';
-        npTitle.textContent  = title  || '';
+    function onNowPlaying({ artist, title, version, cover, coverFallback, queue_size }) {
+        npArtist.textContent  = artist  || '';
+        npTitle.textContent   = title   || '';
+        npVersion.textContent = version || '';
         npQueue.textContent  = `${queue_size} in queue`;
         if (cover) {
+            npCover.onerror = coverFallback ? () => {
+                npCover.onerror = null;
+                npCover.src = coverFallback;
+            } : null;
             npCover.src = cover;
             npCover.classList.add('visible');
         } else {

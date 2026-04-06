@@ -51,7 +51,7 @@ export class MusicQueueModule extends BaseModule {
     super();
     this.queue           = null;
     this.currentlyPlaying = null;   // URL sent to player; emptyUrl = My Vibes
-    this.nowPlaying      = { title: "", artist: "", cover: null };
+    this.nowPlaying      = { title: "", artist: "", version: "", cover: null };
     this.needVoteSkip    = 3;
     this._obsWs          = null;
     this._emptyUrl       = "https://music.yandex.ru/";
@@ -140,14 +140,14 @@ export class MusicQueueModule extends BaseModule {
     bridge.listen("music_start", (payload) => {
       const name  = typeof payload === "string" ? payload : (payload?.name ?? "");
       const cover = typeof payload === "object"  ? (payload?.cover ?? null) : null;
-      this.nowPlaying = { ...this._parseSongName(name), cover };
+      this.nowPlaying = { ...this._parseSongName(name), cover, coverFallback: null };
       this.log(`🎵 Now playing: ${this.nowPlaying.title} by ${this.nowPlaying.artist}`);
       this._broadcastNowPlaying();
       this._refreshStatusDisplay();
     });
 
     bridge.listen("youtube_ready", (info) => {
-      this.nowPlaying      = { title: this._stripArtistFromTitle(info.title ?? "Unknown", info.author ?? ""), artist: info.author ?? "", cover: info.cover ?? null };
+      this.nowPlaying      = { title: this._stripArtistFromTitle(info.title ?? "Unknown", info.author ?? ""), artist: info.author ?? "", cover: info.cover ?? null, coverFallback: info.coverFallback ?? null };
       this._ytPlayerActive = true;
       this.log(`▶️ YouTube ready: ${this.nowPlaying.title} by ${this.nowPlaying.artist}`);
       this._broadcastNowPlaying();
@@ -157,6 +157,7 @@ export class MusicQueueModule extends BaseModule {
 
     bridge.listen("youtube_invalid", ({ url, reason }) => {
       this.log(`❌ YouTube invalid [${reason}]: ${url}`);
+      bridge.closeYoutube();
       this._resetTrack();
       this._playNext();
     });
@@ -348,22 +349,30 @@ export class MusicQueueModule extends BaseModule {
     if (!this._obsWs || this._obsWs.readyState !== WebSocket.OPEN) return;
     this._obsWs.send(JSON.stringify({
       now_playing: {
-        artist:     this.nowPlaying.artist,
-        title:      this.nowPlaying.title,
-        cover:      this.nowPlaying.cover,
-        queue_size: this.queue?.size() ?? 0,
+        artist:        this.nowPlaying.artist,
+        title:         this.nowPlaying.title,
+        version:       this.nowPlaying.version ?? "",
+        cover:         this.nowPlaying.cover,
+        coverFallback: this.nowPlaying.coverFallback ?? null,
+        queue_size:    this.queue?.size() ?? 0,
       },
     }));
   }
 
   // ── Song name parsing ────────────────────────────────────
 
-  /** Parse "title\nauthor" or "title by author" → {title, artist}. Strips artist from title. */
+  /** Parse "title[\nversion]\nauthor" or "title by author" → {title, version, artist}. */
   _parseSongName(name) {
-    let title, artist;
+    let title, version = "", artist;
     if (name.includes("\n")) {
-      [title, artist = ""] = name.split("\n");
-      title = title.trim(); artist = artist.trim();
+      const parts = name.split("\n").map(s => s.trim()).filter(Boolean);
+      if (parts.length >= 3) {
+        [title, version, artist] = parts;
+      } else if (parts.length === 2) {
+        [title, artist] = parts;
+      } else {
+        title = parts[0] ?? ""; artist = "";
+      }
     } else {
       const byIdx = name.lastIndexOf(" by ");
       if (byIdx > 0) {
@@ -373,7 +382,7 @@ export class MusicQueueModule extends BaseModule {
         title = name.trim(); artist = "";
       }
     }
-    return { title: this._stripArtistFromTitle(title, artist), artist };
+    return { title: this._stripArtistFromTitle(title, artist), version, artist };
   }
 
   /**
