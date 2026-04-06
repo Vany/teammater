@@ -278,10 +278,12 @@
       if (video._bridgeHooked) { log("already hooked"); return; }
       video._bridgeHooked = true;
 
+      const videoId = p.videoDetails?.videoId ?? "";
       const info = {
         title:    p.videoDetails?.title  ?? "Unknown",
         author:   p.videoDetails?.author ?? "",
         duration: parseInt(p.videoDetails?.lengthSeconds ?? "0"),
+        cover:    videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : null,
         url:      location.href,
       };
       log(`hooking "${info.title}" by "${info.author}"`);

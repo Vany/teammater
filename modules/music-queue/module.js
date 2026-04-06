@@ -147,7 +147,7 @@ export class MusicQueueModule extends BaseModule {
     });
 
     bridge.listen("youtube_ready", (info) => {
-      this.nowPlaying      = { title: this._stripArtistFromTitle(info.title ?? "Unknown", info.author ?? ""), artist: info.author ?? "", cover: null };
+      this.nowPlaying      = { title: this._stripArtistFromTitle(info.title ?? "Unknown", info.author ?? ""), artist: info.author ?? "", cover: info.cover ?? null };
       this._ytPlayerActive = true;
       this.log(`▶️ YouTube ready: ${this.nowPlaying.title} by ${this.nowPlaying.artist}`);
       this._broadcastNowPlaying();
