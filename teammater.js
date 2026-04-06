@@ -25,297 +25,57 @@
 // Roles:
 //   MASTER       — localhost:8443  (i_am_a_master = true on window)
 //   Yandex CLIENT — music.yandex.ru
-//   YouTube CLIENT — youtube.com, with i_am_youtube_player = true (sessionStorage)
+//   YouTube CLIENT — youtube.com, with yt_player in sessionStorage
 // ─────────────────────────────────────────────────────────────
 
 (function () {
   "use strict";
 
-  const isMaster  = !!unsafeWindow.i_am_a_master;
-  const isYandex  = location.hostname.includes("music.yandex.");
-  const isYoutube = location.hostname.includes("youtube.com");
-
-  const TAG = "[MusicBridge]";
+  const TAG  = "[MusicBridge]";
   const log  = (...a) => console.log(TAG, ...a);
   const warn = (...a) => console.warn(TAG, "⚠️", ...a);
   const err  = (...a) => console.error(TAG, "💥", ...a);
 
+  const isMaster  = !!unsafeWindow.i_am_a_master;
+  const isYandex  = location.hostname.includes("music.yandex.");
+  const isYoutube = location.hostname.includes("youtube.com");
+
   log(`init — isMaster=${isMaster} isYandex=${isYandex} isYoutube=${isYoutube} url=${location.href}`);
 
-  // Persist YouTube player role across navigations within the same tab
-  let isYoutubePlayer = false;
-  if (isYoutube && !isMaster) {
-    const flag = GM_getValue("yt_next_is_player");
-    log(`YouTube tab — yt_next_is_player=${flag} sessionStorage.yt_player=${sessionStorage.getItem("yt_player")}`);
-    if (flag) {
-      isYoutubePlayer = true;
-      sessionStorage.setItem("yt_player", "1");
-      GM_deleteValue("yt_next_is_player");
-      log("YouTube tab designated as PLAYER (flag from GM)");
-    } else if (sessionStorage.getItem("yt_player")) {
-      isYoutubePlayer = true;
-      log("YouTube tab resumed as PLAYER (sessionStorage)");
-    }
-    unsafeWindow.i_am_youtube_player = isYoutubePlayer;
-  }
-
-  // ── Transport ──────────────────────────────────────────────
+  // ── Shared transport ───────────────────────────────────────
 
   function sendMsg(target, command, payload) {
-    log(`→ send target=${target} command=${command}`, payload ?? "");
+    log(`→ ${target}::${command}`, payload ?? "");
     GM_setValue("message", { target, command, payload });
     GM_deleteValue("message");
   }
 
   function sendToMaster(command, payload) {
-    log(`→ master command=${command}`, payload ?? "");
     sendMsg("master", command, payload);
   }
 
-  // ── MASTER ─────────────────────────────────────────────────
-
-  if (isMaster) {
-    const replyListeners = {};
-
-    GM_addValueChangeListener("message", (name, _old, msg) => {
+  function onMessage(targetRole, handler) {
+    GM_addValueChangeListener("message", (_name, _old, msg) => {
       try {
         if (!msg || typeof msg !== "object") return;
-        if (msg.target !== "master" && msg.target !== "all") return;
-        log(`← recv command=${msg.command}`, msg.payload ?? "");
-        if (replyListeners[msg.command]) replyListeners[msg.command](msg.payload);
-        else warn(`no listener for command=${msg.command}`);
-      } catch (e) { err("MASTER handler error", e); }
+        if (msg.target !== targetRole && msg.target !== "all") return;
+        log(`← ${targetRole}::${msg.command}`, msg.payload ?? "");
+        handler(msg.command, msg.payload);
+      } catch (e) { err(`${targetRole} handler error`, e); }
     });
-
-    unsafeWindow.sendCommandToOtherTabs = (command, payload, target = "all") => {
-      log(`sendCommandToOtherTabs target=${target} command=${command}`, payload ?? "");
-      sendMsg(target, command, payload);
-    };
-
-    unsafeWindow.registerReplyListener = (name, fn) => {
-      log(`registerReplyListener: ${name}`);
-      replyListeners[name] = fn;
-    };
-
-    let _ytTab = null; // GM tab handle for the current YouTube player tab
-
-    unsafeWindow.openYoutubePlayer = (url) => {
-      log(`openYoutubePlayer: ${url}`);
-      if (_ytTab) { log("openYoutubePlayer: closing previous YT tab"); _ytTab.close(); _ytTab = null; }
-      GM_setValue("yt_next_is_player", true);
-      _ytTab = GM_openInTab(url, { active: true });
-      log("openYoutubePlayer: tab opened, ref stored");
-    };
-
-    unsafeWindow.closeYoutubePlayer = () => {
-      if (_ytTab) { log("closeYoutubePlayer: closing YT tab"); _ytTab.close(); _ytTab = null; }
-      else warn("closeYoutubePlayer: no tab ref to close");
-    };
-
-    log("role: MASTER");
-    return;
   }
 
-  // ── YANDEX CLIENT ──────────────────────────────────────────
+  // ── Shared utils ───────────────────────────────────────────
 
-  if (isYandex) {
-    let _audioEl = null;       // set when audio element first plays
-    let _pauseInterval = null;
-    let _pausePending = false; // pause requested before audio existed
-
-    function yandexPause() {
-      log("yandexPause called");
-      _pauseInterval && clearInterval(_pauseInterval);
-      if (!_audioEl) {
-        warn("yandexPause: no audio yet — setting pending flag");
-        _pausePending = true;
-        return;
-      }
-      _pausePending = false;
-      log(`yandexPause: audio found paused=${_audioEl.paused} muted=${_audioEl.muted}`);
-      _audioEl.muted = true;
-      _audioEl.pause();
-      // Force-hold: Yandex React may try to resume — keep muting + pausing
-      _pauseInterval = setInterval(() => {
-        if (!_audioEl) { clearInterval(_pauseInterval); return; }
-        if (!_audioEl.paused) { log("yandexPause interval: re-pausing"); _audioEl.pause(); }
-        _audioEl.muted = true;
-      }, 200);
-    }
-
-    function yandexResume() {
-      log("yandexResume called");
-      _pausePending = false;
-      clearInterval(_pauseInterval);
-      _pauseInterval = null;
-      if (!_audioEl) { warn("yandexResume: no audio element"); return; }
-      log(`yandexResume: audio found paused=${_audioEl.paused} muted=${_audioEl.muted}`);
-      _audioEl.muted = false;
-      _audioEl.play();
-    }
-
-    // Store audio ref as soon as Yandex creates it; apply pending pause if needed
-    function _onAudioReady(audio) {
-      _audioEl = audio;
-      log(`_onAudioReady: audio element captured, _pausePending=${_pausePending}`);
-      if (_pausePending) yandexPause();
-    }
-
-    GM_addValueChangeListener("message", (name, _old, msg) => {
-      try {
-        if (!msg || typeof msg !== "object") return;
-        if (msg.target !== "yandex" && msg.target !== "all") return;
-        log(`← Yandex recv command=${msg.command}`, msg.payload ?? "");
-        handleYandexCommand(msg.command, msg.payload, { yandexPause, yandexResume });
-      } catch (e) { err("Yandex handler error", e); }
-    });
-
-    autoPlayYandex(_onAudioReady);
-    log("role: Yandex CLIENT");
-    return;
-  }
-
-  // ── YOUTUBE CLIENT ─────────────────────────────────────────
-
-  if (isYoutube && isYoutubePlayer) {
-    GM_addValueChangeListener("message", (name, _old, msg) => {
-      try {
-        if (!msg || typeof msg !== "object") return;
-        if (msg.target !== "youtube" && msg.target !== "all") return;
-        log(`← YouTube recv command=${msg.command}`, msg.payload ?? "");
-        handleYoutubeCommand(msg.command, msg.payload);
-      } catch (e) { err("YouTube handler error", e); }
-    });
-
-    // Auto-setup if page loaded directly at a watch URL
-    if (isYoutubeWatchUrl()) {
-      log("YouTube PLAYER: watch URL on load — calling setupYoutubePlayer()");
-      setupYoutubePlayer();
-    } else {
-      log(`YouTube PLAYER: non-watch URL on load (${location.href}), waiting for song command`);
-    }
-
-    log("role: YouTube PLAYER");
-    return;
-  }
-
-  if (isYoutube) {
-    log("role: YouTube observer (not a player tab)");
-  } else {
-    log("role: observer (no role)");
-  }
-
-  // ════════════════════════════════════════════════════════════
-  // YANDEX handlers
-  // ════════════════════════════════════════════════════════════
-
-  function handleYandexCommand(command, payload, { yandexPause, yandexResume } = {}) {
-    switch (command) {
-      case "song":         handleYandexSong(payload, yandexResume); break;
-      case "pause":        yandexPause?.(); break;
-      case "resume":       yandexResume?.(); break;
-      case "next":         safeClick('button[aria-label="Next song"]'); break;
-      case "query_status": sendToMaster("status_reply", yandexStatus()); break;
-      case "ping":         sendToMaster("pong", { type: "yandex" }); break;
-      default:             warn(`Yandex: unknown command "${command}"`);
-    }
-  }
-
-  function handleYandexSong(url, yandexResume) {
-    if (!url) { warn("handleYandexSong: empty url"); return; }
-    log(`handleYandexSong: url=${url} current=${location.href}`);
-    if (window.location.href !== url) {
-      log("handleYandexSong: navigating to URL");
-      window.location = url;
-    } else {
-      log("handleYandexSong: already on URL, resuming");
-      yandexResume?.();
-    }
-  }
-
-  function yandexStatus() {
-    const audio = document.querySelector("audio");
-    const meta = document.querySelector(
-      'div[class^="PlayerBarDesktopWithBackgroundProgressBar"] div[class^="Meta_metaContainer"]'
-    );
-    const status = {
-      playing: audio ? !audio.paused : false,
-      currentTime: audio?.currentTime ?? 0,
-      duration: audio?.duration ?? 0,
-      trackInfo: meta?.innerText ?? "Unknown",
-      url: location.href,
-    };
-    log("yandexStatus:", status);
-    return status;
-  }
-
-  function autoPlayYandex(onAudioReady) {
-    const trackRe = /^https:\/\/music\.yandex\.(ru|com)\/album\/\d+\/track\/\d+/;
-    if (trackRe.test(location.href)) {
-      log("autoPlayYandex: track URL, hooking audio + clicking play in 4s");
-      hookYandexAudio(onAudioReady);
-      setTimeout(() => safeClick('header[class^="TrackModal_header_"] button[aria-label="Playback"]'), 4000);
-    } else if (location.href === "https://music.yandex.ru/") {
-      log("autoPlayYandex: My Vibes URL, hooking audio + clicking My Vibe in 4s");
-      hookYandexAudio(onAudioReady);
-      setTimeout(() => safeClick('button[aria-label="Play My Vibe"]'), 4000);
-    } else {
-      log(`autoPlayYandex: no autoplay for URL=${location.href}, still hooking audio`);
-      hookYandexAudio(onAudioReady);
-    }
-  }
-
-  function hookYandexAudio(onAudioReady) {
-    log("hookYandexAudio: patching HTMLMediaElement.prototype.play");
-    const origPlay = HTMLMediaElement.prototype.play;
-    HTMLMediaElement.prototype.play = function (...args) {
-      if (!this._endedHooked) {
-        this._endedHooked = true;
-        log("hookYandexAudio: attaching play/ended listeners to audio element");
-        onAudioReady?.(this); // capture audio element ref
-        this.addEventListener("play", () => {
-          const meta = document.querySelector(
-            'div[class^="PlayerBarDesktopWithBackgroundProgressBar"] div[class^="Meta_metaContainer"]'
-          );
-          const name = meta?.innerText ?? "";
-          log(`Yandex music_start: "${name}"`);
-          sendToMaster("music_start", name);
-        });
-        this.addEventListener("ended", () => {
-          log(`Yandex music_done: ${location.href}`);
-          sendToMaster("music_done", location.href);
-        });
-      }
-      return origPlay.apply(this, args);
-    };
-  }
-
-  // ════════════════════════════════════════════════════════════
-  // YOUTUBE handlers
-  // ════════════════════════════════════════════════════════════
-
-  function handleYoutubeCommand(command, payload) {
-    switch (command) {
-      case "song":         handleYoutubeSong(payload); break;
-      case "pause":        {
-        log("YouTube pause");
-        document.querySelector("video")?.pause();
-        break;
-      }
-      case "resume":       {
-        log("YouTube resume");
-        document.querySelector("video")?.play();
-        break;
-      }
-      case "query_status": sendToMaster("status_reply", youtubeStatus()); break;
-      case "ping":         sendToMaster("pong", { type: "youtube" }); break;
-      default:             warn(`YouTube: unknown command "${command}"`);
-    }
+  function safeClick(selector) {
+    const el = document.querySelector(selector);
+    if (el) { log(`click: "${selector}"`); el.click(); }
+    else warn(`element not found: "${selector}"`);
   }
 
   function cleanYoutubeUrl(url) {
     try {
-      const u = new URL(url);
+      const u     = new URL(url);
       const clean = new URL("https://www.youtube.com/watch");
       if (u.searchParams.has("v")) clean.searchParams.set("v", u.searchParams.get("v"));
       if (u.searchParams.has("t")) clean.searchParams.set("t", u.searchParams.get("t"));
@@ -323,144 +83,333 @@
     } catch { return url; }
   }
 
-  function handleYoutubeSong(url) {
-    if (!url) { warn("handleYoutubeSong: empty url"); return; }
-    const clean = cleanYoutubeUrl(url);
-    log(`handleYoutubeSong: url=${clean} (original=${url}) current=${location.href}`);
-    const currentClean = cleanYoutubeUrl(location.href);
-    if (currentClean !== clean) {
-      log("handleYoutubeSong: navigating to URL");
-      window.location = clean; // page reloads → setupYoutubePlayer() on next load
-    } else {
-      log("handleYoutubeSong: already on URL, calling setupYoutubePlayer()");
-      setupYoutubePlayer();
-    }
-  }
+  // ══════════════════════════════════════════════════════════
+  // MASTER role
+  // ══════════════════════════════════════════════════════════
 
-  function isYoutubeWatchUrl() {
-    return /youtube\.com\/watch/.test(location.href);
-  }
+  function initMaster() {
+    const listeners = {};
 
-  function setupYoutubePlayer() {
-    log("setupYoutubePlayer: waiting for YT ready...");
-    waitForYtReady()
-      .then(({ p, video, player }) => {
-        const details = p.videoDetails;
-        log(`setupYoutubePlayer: got data — title="${details?.title}" category="${p.microformat?.playerMicroformatRenderer?.category}" duration=${details?.lengthSeconds}s views=${details?.viewCount}`);
-        const error = validateYoutubeVideo(p);
-        if (error) {
-          warn(`setupYoutubePlayer: validation failed — ${error}`);
-          sendToMaster("youtube_invalid", { url: location.href, reason: error });
-          return;
-        }
-        log("setupYoutubePlayer: validation passed, hooking events + playing");
-        hookYoutubeVideoEvents(p, video, player);
-        playYoutubeVideo(player, video);
-      })
-      .catch((reason) => {
-        warn(`setupYoutubePlayer: failed — ${reason}`);
-        sendToMaster("youtube_invalid", { url: location.href, reason: reason ?? "timeout" });
-      });
-  }
-
-  // Wait for ytInitialPlayerResponse, video element, and #movie_player to all be ready
-  function waitForYtReady(timeout = 10000) {
-    return new Promise((resolve, reject) => {
-      const deadline = Date.now() + timeout;
-      (function check() {
-        const p      = unsafeWindow.ytInitialPlayerResponse;
-        const video  = document.querySelector("video");
-        const player = document.querySelector("#movie_player");
-        const ready  = !!(p?.videoDetails?.videoId && video && player);
-        if (ready) {
-          log(`waitForYtReady: ready — videoId=${p.videoDetails.videoId}`);
-          return resolve({ p, video, player });
-        }
-        if (Date.now() > deadline) return reject("timeout waiting for player");
-        setTimeout(check, 200);
-      })();
+    onMessage("master", (command, payload) => {
+      if (listeners[command]) listeners[command](payload);
+      else warn(`no listener for command=${command}`);
     });
-  }
 
-  function validateYoutubeVideo(p) {
-    const details  = p.videoDetails;
-    const category = p.microformat?.playerMicroformatRenderer?.category ?? "";
-    const views    = parseInt(details?.viewCount ?? "0");
-    const duration = parseInt(details?.lengthSeconds ?? "0");
-
-    if (category !== "Music")  return `category "${category}" ≠ "Music"`;
-    if (views < 1000)          return `only ${views} views`;
-    if (duration < 120)        return `too short (${duration}s, min 120)`;
-    if (duration > 480)        return `too long (${duration}s, max 480)`;
-    return null;
-  }
-
-  function hookYoutubeVideoEvents(p, video, player) {
-    if (video._ytHooked) { log("hookYoutubeVideoEvents: already hooked, skipping"); return; }
-    video._ytHooked = true;
-
-    const info = {
-      title:    p.videoDetails?.title  ?? "Unknown",
-      author:   p.videoDetails?.author ?? "",
-      duration: parseInt(p.videoDetails?.lengthSeconds ?? "0"),
-      url:      location.href,
+    unsafeWindow.sendCommandToOtherTabs = (command, payload, target = "all") => {
+      sendMsg(target, command, payload);
     };
-    log(`hookYoutubeVideoEvents: hooking "${info.title}" by "${info.author}"`);
 
-    video.addEventListener("play", () => {
-      log(`YouTube play event → youtube_ready: "${info.title}"`);
-      sendToMaster("youtube_ready", info);
-    }, { once: true });
+    unsafeWindow.registerReplyListener = (name, fn) => {
+      log(`registerReplyListener: ${name}`);
+      listeners[name] = fn;
+    };
 
-    if (!video.paused) {
-      log("hookYoutubeVideoEvents: video already playing → immediate youtube_ready");
-      sendToMaster("youtube_ready", info);
-    }
+    let _ytTab = null;
 
-    video.addEventListener("ended", () => {
-      player.stopVideo?.();
-      const clean = cleanYoutubeUrl(location.href);
-      log(`YouTube ended → music_done: ${clean}`);
-      sendToMaster("music_done", clean);
-      // MASTER closes the tab via GM tab handle
-    });
+    unsafeWindow.openYoutubePlayer = (url) => {
+      log(`openYoutubePlayer: ${url}`);
+      if (_ytTab) { log("closing previous YT tab"); _ytTab.close(); _ytTab = null; }
+      GM_setValue("yt_next_is_player", true);
+      _ytTab = GM_openInTab(url, { active: true });
+    };
+
+    unsafeWindow.closeYoutubePlayer = () => {
+      if (_ytTab) { log("closeYoutubePlayer"); _ytTab.close(); _ytTab = null; }
+      else warn("closeYoutubePlayer: no tab ref");
+    };
+
+    log("role: MASTER");
   }
 
-  // Use YouTube's internal player API — most reliable, no DOM fragility
-  function playYoutubeVideo(player, video) {
-    if (typeof player.playVideo === "function") {
-      log("playYoutubeVideo: calling player.playVideo()");
-      player.playVideo();
+  // ══════════════════════════════════════════════════════════
+  // YANDEX role
+  // ══════════════════════════════════════════════════════════
+
+  function initYandex() {
+    // Audio element captured on first play; pausing with interval beats React's state machine
+    let audioEl       = null;
+    let pauseInterval = null;
+    let pausePending  = false;
+
+    function onAudioReady(audio) {
+      audioEl = audio;
+      log(`audio captured, pausePending=${pausePending}`);
+      if (pausePending) pause();
+    }
+
+    function pause() {
+      clearInterval(pauseInterval);
+      if (!audioEl) { warn("pause: no audio yet — pending"); pausePending = true; return; }
+      pausePending = false;
+      log(`pause audio (paused=${audioEl.paused} muted=${audioEl.muted})`);
+      audioEl.muted = true;
+      audioEl.pause();
+      pauseInterval = setInterval(() => {
+        if (!audioEl) { clearInterval(pauseInterval); return; }
+        if (!audioEl.paused) { log("re-pausing"); audioEl.pause(); }
+        audioEl.muted = true;
+      }, 200);
+    }
+
+    function resume() {
+      pausePending = false;
+      clearInterval(pauseInterval);
+      pauseInterval = null;
+      if (!audioEl) { warn("resume: no audio"); return; }
+      log(`resume audio (paused=${audioEl.paused} muted=${audioEl.muted})`);
+      audioEl.muted = false;
+      audioEl.play();
+    }
+
+    function navigateOrResume(url) {
+      if (!url) { warn("song: empty url"); return; }
+      log(`song url=${url} current=${location.href}`);
+      if (location.href !== url) { log("navigating"); window.location = url; }
+      else { log("already on URL, resuming"); resume(); }
+    }
+
+    function status() {
+      const meta = document.querySelector(
+        'div[class^="PlayerBarDesktopWithBackgroundProgressBar"] div[class^="Meta_metaContainer"]'
+      );
+      return {
+        playing:     audioEl ? !audioEl.paused : false,
+        currentTime: audioEl?.currentTime ?? 0,
+        duration:    audioEl?.duration ?? 0,
+        trackInfo:   meta?.innerText ?? "Unknown",
+        url:         location.href,
+      };
+    }
+
+    function hookAudio() {
+      log("hooking HTMLMediaElement.prototype.play");
+      const origPlay = HTMLMediaElement.prototype.play;
+      HTMLMediaElement.prototype.play = function (...args) {
+        if (!this._bridgeHooked) {
+          this._bridgeHooked = true;
+          log("attaching play/ended listeners");
+          onAudioReady(this);
+          this.addEventListener("play", () => {
+            const meta = document.querySelector(
+              'div[class^="PlayerBarDesktopWithBackgroundProgressBar"] div[class^="Meta_metaContainer"]'
+            );
+            const name = meta?.innerText ?? "";
+            log(`music_start: "${name}"`);
+            sendToMaster("music_start", name);
+          });
+          this.addEventListener("ended", () => {
+            log(`music_done: ${location.href}`);
+            sendToMaster("music_done", location.href);
+          });
+        }
+        return origPlay.apply(this, args);
+      };
+    }
+
+    function autoPlay() {
+      const trackRe = /^https:\/\/music\.yandex\.(ru|com)\/album\/\d+\/track\/\d+/;
+      if (trackRe.test(location.href)) {
+        log("track URL — clicking play in 4s");
+        hookAudio();
+        setTimeout(() => safeClick('header[class^="TrackModal_header_"] button[aria-label="Playback"]'), 4000);
+      } else if (location.href === "https://music.yandex.ru/") {
+        log("My Vibes URL — clicking My Vibe in 4s");
+        hookAudio();
+        setTimeout(() => safeClick('button[aria-label="Play My Vibe"]'), 4000);
+      } else {
+        log(`no autoplay for ${location.href}, hooking audio only`);
+        hookAudio();
+      }
+    }
+
+    onMessage("yandex", (command, payload) => {
+      switch (command) {
+        case "song":         navigateOrResume(payload); break;
+        case "pause":        pause(); break;
+        case "resume":       resume(); break;
+        case "next":         safeClick('button[aria-label="Next song"]'); break;
+        case "query_status": sendToMaster("status_reply", status()); break;
+        case "ping":         sendToMaster("pong", { type: "yandex" }); break;
+        default:             warn(`unknown command: ${command}`);
+      }
+    });
+
+    autoPlay();
+    log("role: Yandex CLIENT");
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // YOUTUBE role
+  // ══════════════════════════════════════════════════════════
+
+  function initYoutube() {
+    function waitForReady(timeout = 10000) {
+      return new Promise((resolve, reject) => {
+        const deadline = Date.now() + timeout;
+        (function check() {
+          const p      = unsafeWindow.ytInitialPlayerResponse;
+          const video  = document.querySelector("video");
+          const player = document.querySelector("#movie_player");
+          if (p?.videoDetails?.videoId && video && player) {
+            log(`player ready — videoId=${p.videoDetails.videoId}`);
+            return resolve({ p, video, player });
+          }
+          if (Date.now() > deadline) return reject("timeout waiting for player");
+          setTimeout(check, 200);
+        })();
+      });
+    }
+
+    function validate(p) {
+      const details  = p.videoDetails;
+      const category = p.microformat?.playerMicroformatRenderer?.category ?? "";
+      const views    = parseInt(details?.viewCount ?? "0");
+      const duration = parseInt(details?.lengthSeconds ?? "0");
+      if (category !== "Music") return `category "${category}" ≠ "Music"`;
+      if (views < 1000)         return `only ${views} views`;
+      if (duration < 120)       return `too short (${duration}s, min 120)`;
+      if (duration > 480)       return `too long (${duration}s, max 480)`;
+      return null;
+    }
+
+    function hookEvents(p, video, player) {
+      if (video._bridgeHooked) { log("already hooked"); return; }
+      video._bridgeHooked = true;
+
+      const info = {
+        title:    p.videoDetails?.title  ?? "Unknown",
+        author:   p.videoDetails?.author ?? "",
+        duration: parseInt(p.videoDetails?.lengthSeconds ?? "0"),
+        url:      location.href,
+      };
+      log(`hooking "${info.title}" by "${info.author}"`);
+
+      video.addEventListener("play", () => {
+        log(`play → youtube_ready: "${info.title}"`);
+        sendToMaster("youtube_ready", info);
+      }, { once: true });
+
+      if (!video.paused) {
+        log("already playing → immediate youtube_ready");
+        sendToMaster("youtube_ready", info);
+      }
+
+      video.addEventListener("ended", () => {
+        player.stopVideo?.();
+        const clean = cleanYoutubeUrl(location.href);
+        log(`ended → music_done: ${clean}`);
+        sendToMaster("music_done", clean);
+      });
+    }
+
+    function play(player, video) {
+      if (typeof player.playVideo === "function") {
+        log("player.playVideo()");
+        player.playVideo();
+      } else {
+        warn("playVideo not available, falling back");
+        video.play().catch(() => document.querySelector(".ytp-play-button")?.click());
+      }
+    }
+
+    function setup() {
+      log("waiting for YT ready...");
+      waitForReady()
+        .then(({ p, video, player }) => {
+          const d = p.videoDetails;
+          log(`got data — "${d?.title}" category=${p.microformat?.playerMicroformatRenderer?.category} ${d?.lengthSeconds}s ${d?.viewCount} views`);
+          const error = validate(p);
+          if (error) {
+            warn(`validation failed: ${error}`);
+            sendToMaster("youtube_invalid", { url: location.href, reason: error });
+            return;
+          }
+          log("validation passed");
+          hookEvents(p, video, player);
+          play(player, video);
+        })
+        .catch((reason) => {
+          warn(`setup failed: ${reason}`);
+          sendToMaster("youtube_invalid", { url: location.href, reason: reason ?? "timeout" });
+        });
+    }
+
+    function navigateOrSetup(url) {
+      if (!url) { warn("song: empty url"); return; }
+      const clean = cleanYoutubeUrl(url);
+      log(`song url=${clean} current=${location.href}`);
+      if (cleanYoutubeUrl(location.href) !== clean) {
+        log("navigating");
+        window.location = clean;
+      } else {
+        log("already on URL, calling setup()");
+        setup();
+      }
+    }
+
+    function status() {
+      const video = document.querySelector("video");
+      const p     = unsafeWindow.ytInitialPlayerResponse;
+      return {
+        type:        "youtube",
+        playing:     video ? !video.paused : false,
+        currentTime: video?.currentTime ?? 0,
+        duration:    video?.duration ?? 0,
+        trackInfo:   p?.videoDetails?.title ?? "Unknown",
+        url:         location.href,
+      };
+    }
+
+    onMessage("youtube", (command, payload) => {
+      switch (command) {
+        case "song":         navigateOrSetup(payload); break;
+        case "pause":        { log("pause"); document.querySelector("video")?.pause(); break; }
+        case "resume":       { log("resume"); document.querySelector("video")?.play(); break; }
+        case "query_status": sendToMaster("status_reply", status()); break;
+        case "ping":         sendToMaster("pong", { type: "youtube" }); break;
+        default:             warn(`unknown command: ${command}`);
+      }
+    });
+
+    if (/youtube\.com\/watch/.test(location.href)) {
+      log("watch URL on load — calling setup()");
+      setup();
+    }
+
+    log("role: YouTube PLAYER");
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // Role dispatch
+  // ══════════════════════════════════════════════════════════
+
+  if (isMaster) {
+    initMaster();
+    return;
+  }
+
+  if (isYandex) {
+    initYandex();
+    return;
+  }
+
+  if (isYoutube) {
+    // Persist YouTube player role across navigations within the same tab
+    const flag = GM_getValue("yt_next_is_player");
+    log(`YouTube tab — yt_next_is_player=${flag} sessionStorage.yt_player=${sessionStorage.getItem("yt_player")}`);
+    if (flag) {
+      sessionStorage.setItem("yt_player", "1");
+      GM_deleteValue("yt_next_is_player");
+      log("designated as PLAYER (flag)");
+    }
+    if (sessionStorage.getItem("yt_player")) {
+      initYoutube();
       return;
     }
-    warn("playYoutubeVideo: player.playVideo not available, falling back to video.play()");
-    video.play().catch(() => {
-      warn("playYoutubeVideo: video.play() failed, clicking .ytp-play-button");
-      document.querySelector(".ytp-play-button")?.click();
-    });
+    log("role: YouTube observer (not a player tab)");
+    return;
   }
 
-  function youtubeStatus() {
-    const video = document.querySelector("video");
-    const p = unsafeWindow.ytInitialPlayerResponse;
-    const status = {
-      type:        "youtube",
-      playing:     video ? !video.paused : false,
-      currentTime: video?.currentTime ?? 0,
-      duration:    video?.duration ?? 0,
-      trackInfo:   p?.videoDetails?.title ?? "Unknown",
-      url:         location.href,
-    };
-    log("youtubeStatus:", status);
-    return status;
-  }
-
-  // ── Shared util ────────────────────────────────────────────
-
-  function safeClick(selector) {
-    const el = document.querySelector(selector);
-    if (el) { log(`safeClick: "${selector}"`); el.click(); }
-    else warn(`safeClick: element not found — "${selector}"`);
-  }
+  log("role: observer (no role)");
 
 })();
