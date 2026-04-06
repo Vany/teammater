@@ -190,12 +190,14 @@
           log("attaching play/ended listeners");
           onAudioReady(this);
           this.addEventListener("play", () => {
-            const meta = document.querySelector(
+            const meta     = document.querySelector(
               'div[class^="PlayerBarDesktopWithBackgroundProgressBar"] div[class^="Meta_metaContainer"]'
             );
-            const name = meta?.innerText ?? "";
-            log(`music_start: "${name}"`);
-            sendToMaster("music_start", name);
+            const coverImg = document.querySelector('img[class*="_cover_"]');
+            const cover    = coverImg?.src?.replace(/\/\d+x\d+$/, "/200x200") ?? null;
+            const name     = meta?.innerText ?? "";
+            log(`music_start: "${name}" cover=${cover}`);
+            sendToMaster("music_start", { name, cover });
           });
           this.addEventListener("ended", () => {
             log(`music_done: ${location.href}`);

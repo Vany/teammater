@@ -51,7 +51,7 @@ export class MusicQueueModule extends BaseModule {
     super();
     this.queue           = null;
     this.currentlyPlaying = null;   // URL sent to player; emptyUrl = My Vibes
-    this.nowPlaying      = { title: "", artist: "" };
+    this.nowPlaying      = { title: "", artist: "", cover: null };
     this.needVoteSkip    = 3;
     this._obsWs          = null;
     this._emptyUrl       = "https://music.yandex.ru/";
@@ -137,15 +137,17 @@ export class MusicQueueModule extends BaseModule {
       this._playNext();
     });
 
-    bridge.listen("music_start", (name) => {
-      this.nowPlaying = this._parseSongName(name);
+    bridge.listen("music_start", (payload) => {
+      const name  = typeof payload === "string" ? payload : (payload?.name ?? "");
+      const cover = typeof payload === "object"  ? (payload?.cover ?? null) : null;
+      this.nowPlaying = { ...this._parseSongName(name), cover };
       this.log(`🎵 Now playing: ${this.nowPlaying.title} by ${this.nowPlaying.artist}`);
       this._broadcastNowPlaying();
       this._refreshStatusDisplay();
     });
 
     bridge.listen("youtube_ready", (info) => {
-      this.nowPlaying      = { title: this._stripArtistFromTitle(info.title ?? "Unknown", info.author ?? ""), artist: info.author ?? "" };
+      this.nowPlaying      = { title: this._stripArtistFromTitle(info.title ?? "Unknown", info.author ?? ""), artist: info.author ?? "", cover: null };
       this._ytPlayerActive = true;
       this.log(`▶️ YouTube ready: ${this.nowPlaying.title} by ${this.nowPlaying.artist}`);
       this._broadcastNowPlaying();
@@ -348,6 +350,7 @@ export class MusicQueueModule extends BaseModule {
       now_playing: {
         artist:     this.nowPlaying.artist,
         title:      this.nowPlaying.title,
+        cover:      this.nowPlaying.cover,
         queue_size: this.queue?.size() ?? 0,
       },
     }));

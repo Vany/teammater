@@ -68,18 +68,36 @@
 
     #np-widget {
         display: inline-flex;
-        flex-direction: column;
-        gap: 3px;
-        padding: 10px 16px;
+        flex-direction: row;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 16px 10px 10px;
         background: rgba(0, 0, 0, 0.55);
         border-radius: 16px;
         backdrop-filter: blur(6px);
         margin: 0 16px 16px;
-        max-width: 280px;
+        max-width: 320px;
         opacity: 0;
         transition: opacity 0.5s;
     }
     #np-widget.visible { opacity: 1; }
+
+    #np-cover {
+        width: 52px;
+        height: 52px;
+        border-radius: 8px;
+        object-fit: cover;
+        flex-shrink: 0;
+        display: none;
+    }
+    #np-cover.visible { display: block; }
+
+    #np-text {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        min-width: 0;
+    }
 
     #np-artist {
         font-family: "Orbitron", monospace;
@@ -113,9 +131,12 @@
 </style>
 
 <div id="np-widget">
-    <div id="np-artist">—</div>
-    <div id="np-title">—</div>
-    <div id="np-queue"></div>
+    <img id="np-cover" alt="" />
+    <div id="np-text">
+        <div id="np-artist">—</div>
+        <div id="np-title">—</div>
+        <div id="np-queue"></div>
+    </div>
 </div>
 
 <div id="hr-widget">

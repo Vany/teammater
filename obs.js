@@ -74,14 +74,21 @@
 
     // ── Now Playing ───────────────────────────────────────
     const npWidget = document.getElementById('np-widget');
+    const npCover  = document.getElementById('np-cover');
     const npArtist = document.getElementById('np-artist');
     const npTitle  = document.getElementById('np-title');
     const npQueue  = document.getElementById('np-queue');
 
-    function onNowPlaying({ artist, title, queue_size }) {
+    function onNowPlaying({ artist, title, cover, queue_size }) {
         npArtist.textContent = artist || '';
         npTitle.textContent  = title  || '';
         npQueue.textContent  = `${queue_size} in queue`;
+        if (cover) {
+            npCover.src = cover;
+            npCover.classList.add('visible');
+        } else {
+            npCover.classList.remove('visible');
+        }
         npWidget.classList.add('visible');
     }
 
