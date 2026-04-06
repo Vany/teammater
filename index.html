@@ -20,6 +20,7 @@
             <a href="/neco.html?t=100" target="_blank">1M</a>
             <a href="/neco.html?t=300" target="_blank">5M</a>
             <a href="/neco.html?t=600" target="_blank">10M</a>
+            <a href="/obs.html" target="_blank" align="right">OBS</a>
             <hr />
             <button
                 class="test-button"
@@ -30,7 +31,12 @@
             <a href="https://www.twitch.tv/vanyserezhkin" target="_blank"
                 >https://www.twitch.tv/vanyserezhkin</a
             >
-            <input type="text" id="announce-input" stored_as="announce" style="width: 90%" />
+            <input
+                type="text"
+                id="announce-input"
+                stored_as="announce"
+                style="width: 90%"
+            />
 
             <div class="control-section">
                 <label class="checkbox-label">
@@ -47,14 +53,19 @@
 
         <script>
             (() => {
-                const HISTORY_KEY = 'announce_history';
+                const HISTORY_KEY = "announce_history";
                 const MAX_HISTORY = 200;
                 let historyIndex = null; // null = not browsing
-                let draft = '';
+                let draft = "";
 
                 function getHistory() {
-                    try { return JSON.parse(localStorage.getItem(HISTORY_KEY)) || []; }
-                    catch { return []; }
+                    try {
+                        return (
+                            JSON.parse(localStorage.getItem(HISTORY_KEY)) || []
+                        );
+                    } catch {
+                        return [];
+                    }
                 }
                 function saveHistory(h) {
                     localStorage.setItem(HISTORY_KEY, JSON.stringify(h));
@@ -63,19 +74,20 @@
                     const h = getHistory();
                     if (value && h[h.length - 1] !== value) {
                         h.push(value);
-                        if (h.length > MAX_HISTORY) h.splice(0, h.length - MAX_HISTORY);
+                        if (h.length > MAX_HISTORY)
+                            h.splice(0, h.length - MAX_HISTORY);
                         saveHistory(h);
                     }
                 }
 
-                document.addEventListener('DOMContentLoaded', () => {
-                    const input = document.getElementById('announce-input');
+                document.addEventListener("DOMContentLoaded", () => {
+                    const input = document.getElementById("announce-input");
                     if (!input) return;
 
-                    input.addEventListener('keydown', async (e) => {
+                    input.addEventListener("keydown", async (e) => {
                         const h = getHistory();
 
-                        if (e.key === 'ArrowUp') {
+                        if (e.key === "ArrowUp") {
                             e.preventDefault();
                             if (h.length === 0) return;
                             if (historyIndex === null) {
@@ -85,7 +97,7 @@
                                 historyIndex--;
                             }
                             input.value = h[historyIndex];
-                        } else if (e.key === 'ArrowDown') {
+                        } else if (e.key === "ArrowDown") {
                             e.preventDefault();
                             if (historyIndex === null) return;
                             if (historyIndex < h.length - 1) {
@@ -95,13 +107,13 @@
                                 historyIndex = null;
                                 input.value = draft;
                             }
-                        } else if (e.key === 'Enter') {
+                        } else if (e.key === "Enter") {
                             const value = input.value.trim();
                             if (!value) return;
                             pushHistory(value);
                             historyIndex = null;
-                            draft = '';
-                            eval(localStorage.getItem('ANNOUNCE'));
+                            draft = "";
+                            eval(localStorage.getItem("ANNOUNCE"));
                             console.log(await ANNOUNCE(value));
                         } else {
                             // Any other key resets history browsing

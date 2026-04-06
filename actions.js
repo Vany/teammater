@@ -177,44 +177,37 @@ export function apply_effect(effectName) {
  * @param {string} errorMessage - Message to send when URL is invalid
  * @returns {Function} - closure(context, user, message) => boolean
  */
-export function music(
-  urlPattern = /^https:\/\/music\.yandex\.(ru|com)\/(album\/\d+\/)?track\/\d+/,
-  errorMessage = "Invalid song URL. Please use Yandex Music track URL.",
-) {
+const YANDEX_RE = /^https:\/\/music\.yandex\.(ru|com)\/(album\/\d+\/)?track\/\d+/;
+const YOUTUBE_RE = /^https:\/\/(www\.)?youtube\.com\/watch\?.*v=[\w-]+/;
+
+export function music() {
   return (context, user, message) => {
     const { musicQueue, apiWhisper, send_twitch, log } = context;
 
-    const url = message.trim();
+    const raw = message.trim();
+    const isYandex = YANDEX_RE.test(raw);
+    const isYoutube = YOUTUBE_RE.test(raw);
 
-    // Validate URL
-    if (!url.match(urlPattern)) {
-      log(`❌ Invalid music URL from ${user}: ${url}`);
-      apiWhisper(user, errorMessage);
+    if (!isYandex && !isYoutube) {
+      log(`❌ Invalid music URL from ${user}: ${raw}`);
+      apiWhisper(user, "Invalid URL. Use a Yandex Music track or YouTube video URL.");
       return false;
     }
 
-    // Normalize to .ru domain
-    const normalizedUrl = url.replace(/yandex\.com/, "yandex.ru");
-
-    // Check if music queue is available
     if (!musicQueue) {
       log(`❌ Music queue not available`);
       apiWhisper(user, "Music queue is not available");
       return false;
     }
 
-    // Smart add: play immediately if queue empty, otherwise queue it
-    const result = musicQueue.smartAdd(normalizedUrl);
+    // Normalize Yandex .com → .ru
+    const url = isYandex ? raw.replace(/yandex\.com/, "yandex.ru") : raw;
+    const result = musicQueue.smartAdd(url);
 
     if (result.queued) {
-      // Song was added to queue
-      send_twitch(`🎵 Song queued! Position: ${result.position + 1}`);
-      log(
-        `✅ Song queued by ${user} at position ${result.position}: ${normalizedUrl}`,
-      );
+      log(`✅ Queued by ${user} at position ${result.position + 1}: ${url}`);
     } else {
-      // Song is playing immediately — no chat message needed, music_start will announce it
-      log(`✅ Song playing immediately for ${user}: ${normalizedUrl}`);
+      log(`✅ Playing immediately for ${user}: ${url}`);
     }
 
     return true;

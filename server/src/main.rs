@@ -190,7 +190,7 @@ async fn main() -> Result<()> {
     let http_listener = tokio::net::TcpListener::bind(HTTP_ADDR).await?;
     tokio::spawn(async move {
         if let Err(e) = axum::serve(http_listener, http_app).await {
-            error!("HTTP server error: {e}");
+            error!("🌐 HTTP server fatal error: {e}");
         }
     });
 
@@ -297,35 +297,45 @@ async fn websocket_proxy_handler(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
 ) -> Response {
+    // Subscribe to generation watch BEFORE reading the service, so we cannot
+    // miss a backend change that occurs between url extraction and connection.
+    let mut generation_rx = state.echowire_generation.subscribe();
+
     let backend_url = {
         let service = state.echowire_service.read().await;
         match service.as_ref().and_then(EchoWireService::ws_url) {
             Some(url) => url,
             None => {
                 error!("❌ No EchoWire service available");
-                return (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "No EchoWire service discovered",
-                )
+                return (StatusCode::SERVICE_UNAVAILABLE, "No EchoWire service discovered")
                     .into_response();
             }
         }
     };
 
-    let generation = *state.echowire_generation.borrow();
+    // Snapshot generation while receiver is already live — consistent with backend_url.
+    let generation = *generation_rx.borrow_and_update();
+
     ws.on_upgrade(move |socket| {
-        handle_websocket_proxy(socket, state, backend_url, generation)
+        handle_websocket_proxy(socket, state, backend_url, generation, generation_rx)
             .instrument(info_span!("echowire_proxy"))
     })
 }
 
 async fn handle_websocket_proxy(
     client_ws: WebSocket,
-    state: Arc<AppState>,
+    _state: Arc<AppState>,
     backend_url: String,
     initial_generation: u64,
+    mut generation_rx: watch::Receiver<u64>,
 ) {
     info!("📥 Client connected");
+
+    // Sanity check: reject if backend changed while the upgrade was in flight.
+    if *generation_rx.borrow() != initial_generation {
+        warn!("🔄 Backend changed before connection established, rejecting");
+        return;
+    }
 
     let Ok(backend_ws) = connect_to_backend(&backend_url).await else {
         error!("❌ Failed to connect to backend: {}", backend_url);
@@ -336,9 +346,6 @@ async fn handle_websocket_proxy(
 
     let (mut client_tx, mut client_rx) = client_ws.split();
     let (mut backend_tx, mut backend_rx) = backend_ws.split();
-
-    // Watch for backend changes
-    let mut generation_rx = state.echowire_generation.subscribe();
 
     let client_to_backend = async {
         while let Some(result) = client_rx.next().await {
@@ -370,7 +377,7 @@ async fn handle_websocket_proxy(
         }
     };
 
-    // Wait for generation change (backend address changed)
+    // Drop connection when backend address changes.
     let generation_watch = async {
         loop {
             if generation_rx.changed().await.is_err() {

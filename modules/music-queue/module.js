@@ -1,43 +1,45 @@
 /**
  * Music Queue Module
  *
- * Cross-tab Yandex Music control with queue management.
- * Depends on UserScript-provided globals:
- * - registerReplyListener(eventName, callback)
- * - sendCommandToOtherTabs(command, data)
+ * Yandex Music + YouTube queue with viewer-driven requests and vote-skip.
+ * Cross-tab control via UserScript globals:
+ *   sendCommandToOtherTabs(command, payload, target)
+ *   registerReplyListener(event, callback)
+ *   openYoutubePlayer(url)
  *
- * Features:
- * - Song queue management
- * - Vote skip system
- * - Control modal for queue inspection
- * - Cross-tab communication
+ * Now-playing state is broadcast to /obs for the OBS overlay widget.
  *
- * Based on MusicQueue from connectors.js
+ * Routing:
+ *   Yandex URLs  → target: "yandex"
+ *   YouTube URLs → target: "youtube" (opens/reuses a YouTube player tab)
+ *   When YouTube plays: Yandex is paused
+ *   When switching back to Yandex: YouTube is paused
  */
 
 import { BaseModule } from "../base-module.js";
 import { PersistentDeck } from "../../utils.js";
 
+const YOUTUBE_RE = /youtube\.com\/watch/;
+
 export class MusicQueueModule extends BaseModule {
   constructor() {
     super();
     this.queue = null;
-    this.currentlyPlaying = null;
-    this.currentSongName = "Unknown Track";
-    this.needVoteSkip = 3; // Will be set from config
-    this.onSongStartCallback = null;
+    this.currentlyPlaying = null; // URL currently sent to player; emptyUrl = My Vibes
+    this.nowPlaying = { title: "", artist: "" }; // last known track from music_start / youtube_ready
+    this.needVoteSkip = 3;
+    this._obsWs = null;
+    // cached config values set in doConnect
+    this._emptyUrl = "https://music.yandex.ru/";
+    this._voteSkipThreshold = 3;
+    // YouTube state
+    this._ytPlayerActive = false; // true while a YouTube tab is open and acting as player
+    this._watchdogTimer = null;
+    this._pongReceived = false;
   }
 
-  /**
-   * Module display name
-   */
-  getDisplayName() {
-    return "🎵 Music Queue";
-  }
+  getDisplayName() { return "🎵 Music Queue"; }
 
-  /**
-   * Module configuration schema
-   */
   getConfig() {
     return {
       queue: {
@@ -50,9 +52,7 @@ export class MusicQueueModule extends BaseModule {
           type: "number",
           label: "Vote Skip Threshold",
           default: 3,
-          min: 1,
-          max: 10,
-          step: 1,
+          min: 1, max: 10, step: 1,
         },
         initial_song_name: {
           type: "text",
@@ -71,55 +71,364 @@ export class MusicQueueModule extends BaseModule {
     };
   }
 
-  /**
-   * This module has a control panel (queue management modal)
-   */
-  hasControlPanel() {
-    return true;
+  // ── Lifecycle ────────────────────────────────────────────
+
+  async doConnect() {
+    this._emptyUrl = this.getConfigValue("empty_url", "https://music.yandex.ru/");
+    this._voteSkipThreshold = parseInt(this.getConfigValue("vote_skip_threshold", "3"));
+    this.needVoteSkip = this._voteSkipThreshold;
+
+    const initialName = this.getConfigValue("initial_song_name", "Silence by silencer");
+    this.nowPlaying = this._parseSongName(initialName);
+
+    this.queue = new PersistentDeck(this.getConfigValue("persistence_key", "toplay"));
+
+    this._setupListeners();
+    this._connectObs();
+
+    if (this.queue.size() === 0) {
+      this._playNext();
+    }
+
+    this.log("✅ Music Queue initialized");
+  }
+
+  async doDisconnect() {
+    this._stopWatchdog();
+    if (this._obsWs) {
+      this._obsWs.onclose = null;
+      this._obsWs.close();
+      this._obsWs = null;
+    }
+    this.queue?.flush();
+    this.log("🔌 Music Queue disconnected");
+  }
+
+  // ── Cross-tab communication ──────────────────────────────
+
+  _setupListeners() {
+    if (typeof registerReplyListener !== "function") {
+      this.log("⚠️ registerReplyListener not available (UserScript not loaded?)");
+      return;
+    }
+
+    registerReplyListener("music_done", (url) => {
+      // Ignore My Vibes track endings — those auto-advance internally on Yandex
+      if (this.currentlyPlaying === this._emptyUrl || this.currentlyPlaying === null) return;
+      this.log(`🎵 Track finished: ${url}`);
+      // Close YouTube tab from MASTER (only MASTER has the GM tab handle)
+      if (this._ytPlayerActive && typeof closeYoutubePlayer === "function") {
+        closeYoutubePlayer();
+      }
+      this.currentlyPlaying = null;
+      this._ytPlayerActive = false;
+      this.needVoteSkip = this._voteSkipThreshold;
+      this._stopWatchdog();
+      this._playNext();
+    });
+
+    registerReplyListener("music_start", (name) => {
+      this.nowPlaying = this._parseSongName(name);
+      this.log(`🎵 Now playing: ${this.nowPlaying.title} by ${this.nowPlaying.artist}`);
+      this._broadcastNowPlaying();
+      this._refreshStatusDisplay();
+    });
+
+    registerReplyListener("youtube_ready", (info) => {
+      this.nowPlaying = { title: info.title ?? "Unknown", artist: info.author ?? "" };
+      this._ytPlayerActive = true;
+      this.log(`▶️ YouTube ready: ${this.nowPlaying.title} by ${this.nowPlaying.artist}`);
+      this._broadcastNowPlaying();
+      this._refreshStatusDisplay();
+      this._startWatchdog("youtube");
+    });
+
+    registerReplyListener("youtube_invalid", ({ url, reason }) => {
+      this.log(`❌ YouTube invalid [${reason}]: ${url}`);
+      this.currentlyPlaying = null;
+      this._ytPlayerActive = false;
+      this._stopWatchdog();
+      this._playNext();
+    });
+
+    registerReplyListener("status_reply", (data) => {
+      if (!data?.trackInfo) return;
+      if (data.type === "youtube" && !this._ytPlayerActive) {
+        this._ytPlayerActive = true;
+        this.log("📺 YouTube player tab detected (was unknown after reconnect)");
+      }
+      this.nowPlaying = this._parseSongName(data.trackInfo);
+      this.log(`🎵 Status synced: ${this.nowPlaying.title}`);
+      this._refreshStatusDisplay();
+    });
+
+    registerReplyListener("pong", ({ type }) => {
+      this.log(`🏓 Pong from ${type}`);
+      this._pongReceived = true;
+    });
+
+    // required by UserScript protocol (MASTER receives these commands too via "all")
+    registerReplyListener("song", () => {});
+
+    if (typeof sendCommandToOtherTabs === "function") {
+      sendCommandToOtherTabs("query_status", null);
+    }
+  }
+
+  /** Send command to specific target tab type. */
+  _send(command, payload, target = "all") {
+    if (typeof sendCommandToOtherTabs !== "function") {
+      this.log("⚠️ sendCommandToOtherTabs not available (UserScript not loaded?)");
+      return;
+    }
+    sendCommandToOtherTabs(command, payload, target);
+  }
+
+  // ── YouTube helpers ──────────────────────────────────────
+
+  _isYoutube(url) {
+    return YOUTUBE_RE.test(url);
   }
 
   /**
-   * Render control panel content (queue management UI)
+   * Route song to the correct player tab.
+   * - YouTube: pause Yandex, open/reuse YouTube player tab
+   * - Yandex:  pause YouTube (if active), send to Yandex tab
    */
+  _playSong(url) {
+    if (this._isYoutube(url)) {
+      // Pause Yandex before handing off to YouTube
+      this._send("pause", null, "yandex");
+
+      if (!this._ytPlayerActive) {
+        if (typeof openYoutubePlayer === "function") {
+          openYoutubePlayer(url);
+          this.log(`📺 Opening new YouTube player tab: ${url}`);
+        } else {
+          this.log("⚠️ openYoutubePlayer not available (UserScript not loaded?)");
+        }
+      } else {
+        this._send("song", url, "youtube");
+      }
+    } else {
+      // Yandex URL — pause YouTube if it was playing
+      if (this._ytPlayerActive) {
+        this._send("pause", null, "youtube");
+        this._ytPlayerActive = false;
+      }
+      this._send("song", url, "yandex");
+    }
+  }
+
+  // ── Watchdog ─────────────────────────────────────────────
+
+  _startWatchdog(tabType) {
+    this._stopWatchdog();
+    this._watchdogTimer = setInterval(() => {
+      if (!this.currentlyPlaying || this.currentlyPlaying === this._emptyUrl) {
+        this._stopWatchdog();
+        return;
+      }
+      this._pongReceived = false;
+      this._send("ping", null, tabType);
+      setTimeout(() => {
+        if (!this._pongReceived) {
+          this.log(`⚠️ Watchdog: no pong from ${tabType} — assuming dead, advancing queue`);
+          this.currentlyPlaying = null;
+          this._ytPlayerActive = false;
+          this._stopWatchdog();
+          this._playNext();
+        }
+      }, 5000);
+    }, 60000);
+    this.log(`🐕 Watchdog started for ${tabType}`);
+  }
+
+  _stopWatchdog() {
+    if (this._watchdogTimer) {
+      clearInterval(this._watchdogTimer);
+      this._watchdogTimer = null;
+    }
+  }
+
+  // ── Queue logic ──────────────────────────────────────────
+
+  _playNext() {
+    this._stopWatchdog();
+    if (this.queue.size() > 0) {
+      const url = this.queue.shift();
+      this.log(`▶️ Playing queued song (${this.queue.size()} remaining)`);
+      this.currentlyPlaying = url;
+      this._playSong(url);
+      if (!this._isYoutube(url)) {
+        // Yandex fires music_start which triggers watchdog indirectly via status
+        // Start watchdog now so we detect tab death
+        this._startWatchdog("yandex");
+      }
+      // YouTube watchdog is started in youtube_ready listener
+    } else {
+      this.log("▶️ Queue empty, returning to My Vibes");
+      this.currentlyPlaying = this._emptyUrl;
+      // Pause YouTube tab but keep _ytPlayerActive — tab is still open, reuse it next time
+      if (this._ytPlayerActive) this._send("pause", null, "youtube");
+      this._send("song", this._emptyUrl, "yandex");
+    }
+  }
+
+  /** Play immediately if idle/My Vibes, otherwise enqueue. */
+  smartAdd(url) {
+    const idle = this.currentlyPlaying === null || this.currentlyPlaying === this._emptyUrl;
+    if (idle) {
+      this.log(`▶️ Idle, playing immediately: ${url}`);
+      this.currentlyPlaying = url;
+      this._playSong(url);
+      return { queued: false, position: null };
+    }
+    this.queue.push(url);
+    const position = this.queue.size() - 1;
+    this.log(`➕ Queued at position ${position + 1}: ${url}`);
+    this._broadcastNowPlaying();
+    return { queued: true, position };
+  }
+
+  skip() {
+    this.log("⏭️ Skipping current track");
+    this._stopWatchdog();
+    if (this.queue.size() === 0) {
+      // No queue — advance Yandex playlist or return to My Vibes
+      if (this._ytPlayerActive) {
+        this._send("pause", null, "youtube");
+        this._ytPlayerActive = false;
+      }
+      this._send("next", null, "yandex");
+      return;
+    }
+    this.currentlyPlaying = null;
+    this.needVoteSkip = this._voteSkipThreshold;
+    this._playNext();
+  }
+
+  voteSkip() {
+    const onMyVibes = this.currentlyPlaying === this._emptyUrl || !this.currentlyPlaying;
+    if (onMyVibes) {
+      if (this.queue.size() === 0) {
+        this._send("next", null, "yandex");
+        return { votesRemaining: 0, skipped: true, error: null };
+      }
+      return { votesRemaining: this.needVoteSkip, skipped: false, error: "Nothing to skip" };
+    }
+
+    this.needVoteSkip--;
+    if (this.needVoteSkip < 1) {
+      this.skip();
+      return { votesRemaining: 0, skipped: true, error: null };
+    }
+    this.log(`🗳️ Skip vote cast. ${this.needVoteSkip} more needed`);
+    return { votesRemaining: this.needVoteSkip, skipped: false, error: null };
+  }
+
+  clear() {
+    this.queue.clear();
+    this.log("🗑️ Queue cleared");
+    this._broadcastNowPlaying();
+  }
+
+  getStatus() {
+    return {
+      currentlyPlaying: this.currentlyPlaying,
+      currentSongName: `${this.nowPlaying.title} by ${this.nowPlaying.artist}`,
+      queueLength: this.queue?.size() ?? 0,
+      queuedSongs: this.queue?.all() ?? [],
+      votesNeeded: this.needVoteSkip,
+      ytPlayerActive: this._ytPlayerActive,
+    };
+  }
+
+  // ── OBS broadcast ────────────────────────────────────────
+
+  _connectObs() {
+    const [proto, port] = location.protocol === "https:" ? ["wss:", 8443] : ["ws:", 8442];
+    const url = `${proto}//${location.hostname}:${port}/obs`;
+    const ws = new WebSocket(url);
+    ws.onopen = () => this.log("📡 OBS broadcast connected");
+    ws.onmessage = ({ data }) => {
+      try {
+        const msg = JSON.parse(data);
+        if (msg.request === "now_playing") this._broadcastNowPlaying();
+      } catch {}
+    };
+    ws.onclose = () => {
+      this._obsWs = null;
+      if (this.connected) setTimeout(() => this._connectObs(), 3000);
+    };
+    ws.onerror = () => ws.close();
+    this._obsWs = ws;
+  }
+
+  _broadcastNowPlaying() {
+    if (!this._obsWs || this._obsWs.readyState !== WebSocket.OPEN) return;
+    this._obsWs.send(JSON.stringify({
+      now_playing: {
+        artist: this.nowPlaying.artist,
+        title: this.nowPlaying.title,
+        queue_size: this.queue?.size() ?? 0,
+      },
+    }));
+  }
+
+  // ── Shared util ──────────────────────────────────────────
+
+  /** Parse "title\nauthor" or "title by author" into {title, artist}. */
+  _parseSongName(name) {
+    if (name.includes("\n")) {
+      const [title, artist = ""] = name.split("\n");
+      return { title: title.trim(), artist: artist.trim() };
+    }
+    const byIdx = name.lastIndexOf(" by ");
+    if (byIdx > 0) {
+      return { title: name.slice(0, byIdx).trim(), artist: name.slice(byIdx + 4).trim() };
+    }
+    return { title: name.trim(), artist: "" };
+  }
+
+  // ── Control panel ────────────────────────────────────────
+
+  hasControlPanel() { return true; }
+
   renderControlPanel() {
     const container = document.createElement("div");
 
-    // Queue Status Section
-    const statusSection = this._createSection("Queue Status");
     const statusDisplay = document.createElement("div");
     statusDisplay.className = "status-display";
     statusDisplay.id = "musicQueueStatus";
     this._updateStatusDisplay(statusDisplay);
-    statusSection.appendChild(statusDisplay);
 
     const refreshBtn = document.createElement("button");
-    refreshBtn.textContent = "🔄 Refresh Status";
+    refreshBtn.textContent = "🔄 Refresh";
     refreshBtn.className = "action-button";
-    refreshBtn.style.width = "100%";
-    refreshBtn.style.marginTop = "10px";
+    refreshBtn.style.cssText = "width:100%;margin-top:10px";
     refreshBtn.addEventListener("click", () => {
+      this._send("query_status", null);
       this._updateStatusDisplay(statusDisplay);
-      this.log("🔄 Queue status refreshed");
     });
-    statusSection.appendChild(refreshBtn);
+
+    const statusSection = this._createSection("Queue Status");
+    statusSection.append(statusDisplay, refreshBtn);
     container.appendChild(statusSection);
 
-    // Queued Songs Section
-    const queueSection = this._createSection("Queued Songs");
     const queueList = document.createElement("div");
     queueList.className = "queued-songs-list";
     queueList.id = "queuedSongsList";
     this._updateQueueList(queueList);
+
+    const queueSection = this._createSection("Queued Songs");
     queueSection.appendChild(queueList);
     container.appendChild(queueSection);
 
-    // Add Song Section
-    const addSection = this._createSection("Add Song to Queue");
     const urlInput = document.createElement("input");
     urlInput.type = "text";
     urlInput.className = "song-url-input";
     urlInput.placeholder = "https://music.yandex.ru/album/12345/track/67890";
-    addSection.appendChild(urlInput);
 
     const addBtn = document.createElement("button");
     addBtn.textContent = "➕ Add to Queue";
@@ -127,451 +436,95 @@ export class MusicQueueModule extends BaseModule {
     addBtn.style.width = "100%";
     addBtn.addEventListener("click", () => {
       const url = urlInput.value.trim();
-      if (!url) {
-        this.log(`⚠️ Please enter a URL`);
-        return;
-      }
-
+      if (!url) return;
       const result = this.smartAdd(url);
-      if (result.queued) {
-        this.log(`✅ Song queued at position ${result.position + 1}`);
-      } else {
-        this.log(`▶️ Song playing immediately`);
-      }
+      this.log(result.queued ? `✅ Queued at position ${result.position + 1}` : "▶️ Playing immediately");
       urlInput.value = "";
       this._updateQueueList(queueList);
       this._updateStatusDisplay(statusDisplay);
     });
-    addSection.appendChild(addBtn);
+
+    const addSection = this._createSection("Add Song");
+    addSection.append(urlInput, addBtn);
     container.appendChild(addSection);
 
-    // Queue Controls Section
-    const controlsSection = this._createSection("Queue Controls");
     const buttonGrid = document.createElement("div");
     buttonGrid.className = "button-grid";
+    buttonGrid.append(
+      this._createControlButton("⏭️ Skip", () => {
+        this.skip();
+        this._updateQueueList(queueList);
+        this._updateStatusDisplay(statusDisplay);
+      }),
+      this._createControlButton("🗳️ Vote Skip", () => {
+        const r = this.voteSkip();
+        if (r.error) this.log(`❌ ${r.error}`);
+        else if (r.skipped) this.log("⏭️ Skipped");
+        else this.log(`🗳️ ${r.votesRemaining} votes remaining`);
+        this._updateStatusDisplay(statusDisplay);
+      }),
+      this._createControlButton("🗑️ Clear Queue", () => {
+        this.clear();
+        this._updateQueueList(queueList);
+        this._updateStatusDisplay(statusDisplay);
+      }),
+    );
 
-    const skipBtn = this._createControlButton("⏭️ Skip Song", () => {
-      this.skip();
-      this.log("⏭️ Song skipped");
-      this._updateQueueList(queueList);
-      this._updateStatusDisplay(statusDisplay);
-    });
-
-    const voteSkipBtn = this._createControlButton("🗳️ Vote Skip", () => {
-      const result = this.voteSkip();
-      if (result.skipped) {
-        this.log("⏭️ Skip threshold reached, song skipped");
-      } else if (result.error) {
-        this.log(`❌ ${result.error}`);
-      } else {
-        this.log(`🗳️ Vote cast, ${result.votesRemaining} more needed`);
-      }
-      this._updateStatusDisplay(statusDisplay);
-    });
-
-    const clearBtn = this._createControlButton("🗑️ Clear Queue", () => {
-      this.clear();
-      this.log("🗑️ Queue cleared");
-      this._updateQueueList(queueList);
-      this._updateStatusDisplay(statusDisplay);
-    });
-
-    buttonGrid.appendChild(skipBtn);
-    buttonGrid.appendChild(voteSkipBtn);
-    buttonGrid.appendChild(clearBtn);
+    const controlsSection = this._createSection("Controls");
     controlsSection.appendChild(buttonGrid);
     container.appendChild(controlsSection);
 
     return container;
   }
 
-  /**
-   * Helper: Create section container
-   */
+  _refreshStatusDisplay() {
+    const el = document.getElementById("musicQueueStatus");
+    if (el) this._updateStatusDisplay(el);
+    const ql = document.getElementById("queuedSongsList");
+    if (ql) this._updateQueueList(ql);
+  }
+
   _createSection(title) {
     const section = document.createElement("div");
     section.className = "queue-section";
-
-    const heading = document.createElement("h3");
-    heading.textContent = title;
-    section.appendChild(heading);
-
+    const h = document.createElement("h3");
+    h.textContent = title;
+    section.appendChild(h);
     return section;
   }
 
-  /**
-   * Helper: Create control button
-   */
   _createControlButton(text, onClick) {
-    const button = document.createElement("button");
-    button.textContent = text;
-    button.className = "action-button";
-    button.addEventListener("click", onClick);
-    return button;
+    const btn = document.createElement("button");
+    btn.textContent = text;
+    btn.className = "action-button";
+    btn.addEventListener("click", onClick);
+    return btn;
   }
 
-  /**
-   * Helper: Update status display
-   */
-  _updateStatusDisplay(element) {
-    const status = this.getStatus();
-    element.innerHTML = `
-      <div class="status-item">
-        <strong>Currently Playing:</strong>
-        <span>${status.currentlyPlaying || "Nothing"}</span>
-      </div>
-      <div class="status-item">
-        <strong>Song Name:</strong>
-        <span>${status.currentSongName}</span>
-      </div>
-      <div class="status-item">
-        <strong>Queue Length:</strong>
-        <span>${status.queueLength}</span>
-      </div>
-      <div class="status-item">
-        <strong>Votes Needed:</strong>
-        <span>${status.votesNeeded}</span>
-      </div>
+  _updateStatusDisplay(el) {
+    const s = this.getStatus();
+    const ytBadge = s.ytPlayerActive ? ' <span style="color:#f00">▶ YT</span>' : "";
+    el.innerHTML = `
+      <div class="status-item"><strong>Playing:</strong><span>${s.currentlyPlaying || "Nothing"}${ytBadge}</span></div>
+      <div class="status-item"><strong>Song:</strong><span>${s.currentSongName}</span></div>
+      <div class="status-item"><strong>Queue:</strong><span>${s.queueLength}</span></div>
+      <div class="status-item"><strong>Votes needed:</strong><span>${s.votesNeeded}</span></div>
     `;
   }
 
-  /**
-   * Helper: Update queue list
-   */
-  _updateQueueList(element) {
-    const songs = this.queue?.all() || [];
-
-    if (songs.length === 0) {
-      element.innerHTML = '<p class="empty-state">No songs in queue</p>';
-    } else {
-      element.innerHTML = songs
-        .map((url, idx) => {
-          return `<div class="queued-song-item">${idx + 1}. ${url}</div>`;
-        })
-        .join("");
-    }
+  _updateQueueList(el) {
+    const songs = this.queue?.all() ?? [];
+    el.innerHTML = songs.length
+      ? songs.map((url, i) => `<div class="queued-song-item">${i + 1}. ${url}</div>`).join("")
+      : '<p class="empty-state">No songs in queue</p>';
   }
 
-  /**
-   * Connect (setup queue and listeners)
-   */
-  async doConnect() {
-    this.log("🎵 Initializing Music Queue...");
+  // ── Context ──────────────────────────────────────────────
 
-    // Initialize persistent queue
-    const persistenceKey = this.getConfigValue("persistence_key", "toplay");
-    this.queue = new PersistentDeck(persistenceKey);
-
-    // Set vote skip threshold
-    const threshold = parseInt(this.getConfigValue("vote_skip_threshold", "3"));
-    this.needVoteSkip = threshold;
-
-    // Set initial song name
-    this.currentSongName = this.getConfigValue(
-      "initial_song_name",
-      "Silence by silencer",
-    );
-
-    // Setup cross-tab listeners
-    this._setupListeners();
-
-    // Start playing fallback if queue empty
-    if (this.queue.size() === 0) {
-      this.skip();
-    }
-
-    this.log("✅ Music Queue initialized");
-  }
-
-  /**
-   * Disconnect (cleanup)
-   */
-  async doDisconnect() {
-    this.log("🔌 Disconnecting Music Queue...");
-
-    // Flush queue to localStorage
-    if (this.queue) {
-      this.queue.flush();
-    }
-
-    this.log("✅ Music Queue disconnected");
-  }
-
-  /**
-   * Setup cross-tab communication listeners
-   */
-  _setupListeners() {
-    // Check if UserScript functions are available
-    if (typeof registerReplyListener !== "function") {
-      this.log(
-        "⚠️ registerReplyListener not available (UserScript not loaded?)",
-      );
-      return;
-    }
-
-    // Listen for song completion
-    registerReplyListener("music_done", (url) => {
-      this.log(`🎵 Track finished: ${url}`);
-      this._onTrackComplete();
-    });
-
-    // Listen for song start (track info broadcast)
-    registerReplyListener("music_start", (name) => {
-      const formatted = name.replace(/\n/, " by ");
-      this.currentSongName = formatted;
-      this.log(`🎵 Now playing: ${formatted}`);
-
-      // Update control panel status display if it exists
-      const statusDisplay = document.getElementById("musicQueueStatus");
-      if (statusDisplay) {
-        this._updateStatusDisplay(statusDisplay);
-      }
-
-      // Inject into LLM chat history so the AI knows what's playing
-      const chatModule = this.moduleManager?.get("twitch-chat");
-      if (chatModule?._addToChatHistory) {
-        chatModule._addToChatHistory("[music]", `Now playing: ${formatted}`);
-      }
-
-      if (this.onSongStartCallback) {
-        this.onSongStartCallback(formatted);
-      }
-    });
-
-    // Dummy listener for song command (required by UserScript)
-    registerReplyListener("song", (url) => {});
-
-    // Request current status from music player on init
-    if (typeof sendCommandToOtherTabs === "function") {
-      // Listen for status reply
-      registerReplyListener("status_reply", (data) => {
-        if (data && data.trackInfo) {
-          const formatted = data.trackInfo.replace(/\n/, " by ");
-          this.currentSongName = formatted;
-          this.log(`🎵 Current song synced: ${formatted}`);
-
-          // Update control panel status display if it exists
-          const statusDisplay = document.getElementById("musicQueueStatus");
-          if (statusDisplay) {
-            this._updateStatusDisplay(statusDisplay);
-          }
-        }
-      });
-
-      // Send query
-      sendCommandToOtherTabs("query_status", null);
-      this.log("📡 Querying music player for current song...");
-    }
-  }
-
-  /**
-   * Handle track completion
-   */
-  _onTrackComplete() {
-    this.currentlyPlaying = null;
-    this.needVoteSkip = parseInt(
-      this.getConfigValue("vote_skip_threshold", "3"),
-    );
-    this._playNext();
-  }
-
-  /**
-   * Play next song from queue (or fallback if empty)
-   */
-  _playNext() {
-    let nextUrl;
-
-    if (this.queue.size() > 0) {
-      nextUrl = this.queue.shift();
-      this.log(`▶️ Playing next from queue (${this.queue.size()} remaining)`);
-    } else {
-      nextUrl = this.getConfigValue("empty_url", "https://music.yandex.ru/");
-      this.log(`▶️ Queue empty, playing fallback`);
-    }
-
-    this.currentlyPlaying = nextUrl;
-    this._sendPlayCommand(nextUrl);
-  }
-
-  /**
-   * Send play command to UserScript
-   */
-  _sendPlayCommand(url) {
-    // Check if UserScript function is available
-    if (typeof sendCommandToOtherTabs !== "function") {
-      this.log(
-        "⚠️ sendCommandToOtherTabs not available (UserScript not loaded?)",
-      );
-      return;
-    }
-
-    this.log(`📡 Sending play command to music tab: ${url}`);
-    sendCommandToOtherTabs("song", url);
-    this.log(`✅ Play command sent`);
-  }
-
-  /**
-   * Send next command to UserScript (skip to next track in Yandex Music)
-   */
-  _sendNextCommand() {
-    // Check if UserScript function is available
-    if (typeof sendCommandToOtherTabs !== "function") {
-      this.log(
-        "⚠️ sendCommandToOtherTabs not available (UserScript not loaded?)",
-      );
-      return;
-    }
-
-    this.log(`📡 Sending next command to music tab`);
-    sendCommandToOtherTabs("next", null);
-    this.log(`✅ Next command sent`);
-  }
-
-  /**
-   * Add song to queue (doesn't auto-play if something is already playing)
-   */
-  add(url) {
-    this.queue.push(url);
-    const position = this.queue.size() - 1;
-
-    this.log(`➕ Added to queue at position ${position}: ${url}`);
-
-    // Only start playing if nothing is currently playing
-    if (!this.currentlyPlaying) {
-      this._playNext();
-    }
-
-    return position;
-  }
-
-  /**
-   * Smart add: if queue is empty, play immediately. Otherwise, queue it.
-   */
-  smartAdd(url) {
-    const queueIsEmpty = this.queue.size() === 0;
-
-    if (queueIsEmpty) {
-      // Queue is empty - play requested song immediately
-      this.log(`▶️ Queue empty, playing requested song immediately: ${url}`);
-      this.currentlyPlaying = url;
-      this._sendPlayCommand(url);
-      return { queued: false, position: null };
-    } else {
-      // Queue has songs - add to queue
-      this.queue.push(url);
-      const position = this.queue.size() - 1;
-
-      this.log(`➕ Added to queue at position ${position}: ${url}`);
-
-      return { queued: true, position: position };
-    }
-  }
-
-  /**
-   * Skip current song immediately
-   */
-  skip() {
-    this.log(`⏭️ Skipping current track`);
-
-    // If queue is empty, send "next" to Yandex Music
-    if (this.queue.size() === 0) {
-      this.log(`⏭️ Queue empty, sending next command to Yandex Music`);
-      this._sendNextCommand();
-      return;
-    }
-
-    // Otherwise skip from queue
-    this.currentlyPlaying = null;
-    this.needVoteSkip = parseInt(
-      this.getConfigValue("vote_skip_threshold", "3"),
-    );
-    this._playNext();
-  }
-
-  /**
-   * Vote to skip current song
-   */
-  voteSkip() {
-    const emptyUrl = this.getConfigValue(
-      "empty_url",
-      "https://music.yandex.ru/",
-    );
-
-    // If queue is empty and playing fallback, send "next" to Yandex Music
-    if (this.currentlyPlaying === emptyUrl || !this.currentlyPlaying) {
-      if (this.queue.size() === 0) {
-        this.log(`⏭️ Queue empty, sending next command to Yandex Music`);
-        this._sendNextCommand();
-        return {
-          votesRemaining: 0,
-          skipped: true,
-          error: null,
-        };
-      } else {
-        this.log(`❌ Cannot skip when nothing is playing`);
-        return {
-          votesRemaining: this.needVoteSkip,
-          skipped: false,
-          error: "Nothing to skip",
-        };
-      }
-    }
-
-    this.needVoteSkip--;
-
-    if (this.needVoteSkip < 1) {
-      this.skip();
-      return { votesRemaining: 0, skipped: true };
-    }
-
-    this.log(`🗳️ Skip vote cast. Votes remaining: ${this.needVoteSkip}`);
-    return { votesRemaining: this.needVoteSkip, skipped: false };
-  }
-
-  /**
-   * Clear entire queue (stops at current track)
-   */
-  clear() {
-    this.queue.clear();
-    this.log(`🗑️ Queue cleared`);
-  }
-
-  /**
-   * Get queue status and info
-   */
-  getStatus() {
-    return {
-      currentlyPlaying: this.currentlyPlaying,
-      currentSongName: this.currentSongName,
-      queueLength: this.queue?.size() || 0,
-      queuedSongs: this.queue?.all() || [],
-      votesNeeded: this.needVoteSkip,
-    };
-  }
-
-  /**
-   * Get current song name
-   */
-  getCurrentSong() {
-    return this.currentSongName;
-  }
-
-  /**
-   * Set song start callback
-   */
-  setOnSongStart(callback) {
-    this.onSongStartCallback = callback;
-  }
-
-  /**
-   * Provide context for actions
-   * Returns module reference - actions access methods directly
-   */
   getContextContribution() {
     return {
       musicQueue: this,
-      // Legacy flat helpers
-      currentSong: this.currentSongName,
+      currentSong: `${this.nowPlaying.title} by ${this.nowPlaying.artist}`,
     };
   }
 }

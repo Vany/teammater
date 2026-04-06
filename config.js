@@ -43,6 +43,7 @@ export const LLM_ACTIONS = {
 
 export const VOICE_ACTIONS = {
   "^рюкзак$": minaret_use(8),
+  "^сундук$": minaret_use(7),
   "^babakh|бабах$": apply_effect("dead_blow"),
   "^сцена очки$|glasses$": obs_scene("Glasses", "G"),
   "^сцена экран$|game$": obs_scene("Game", "Screen"),
@@ -233,7 +234,7 @@ export function getDefaultRewards() {
     music: {
       title: "🎵 Music Request",
       cost: 150,
-      prompt: "Request a music (Yandex Music URL)",
+      prompt: "Yandex Music or YouTube track URL",
       background_color: "#FF6B6B",
       is_enabled: true,
       is_user_input_required: true,

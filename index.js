@@ -270,13 +270,6 @@ async function connectModules(token, username) {
       log(`⚠️ Music Queue connection failed: ${err.message}`);
     });
 
-    // Setup song start callback
-    musicModule.setOnSongStart((name) => {
-      const chatModule = moduleManager.get("twitch-chat");
-      if (chatModule?.isConnected()) {
-        chatModule.sendAction(`📀 ${name}`);
-      }
-    });
   }
 
   // Connect LLM (if enabled)

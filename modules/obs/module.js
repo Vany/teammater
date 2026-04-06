@@ -313,29 +313,18 @@ export class OBSModule extends BaseModule {
   async _handleHello(data) {
     this.log("📺 Received Hello, sending Identify...");
 
-    if (data.authentication) {
-      // Need to authenticate
-      const { challenge, salt } = data.authentication;
-      const auth = await this._generateAuth(this.authPassword, salt, challenge);
+    // Subscribe only to Outputs events (StreamStateChanged, RecordStateChanged).
+    // Omitting eventSubscriptions defaults to ALL events, including CurrentProgramSceneChanged,
+    // which triggers a strlen(NULL) crash in obs-websocket 5.7.2 during scene switches.
+    // Outputs bitmask = 1<<6 = 64 per obs-websocket EventSubscription enum.
+    const eventSubscriptions = 64;
 
-      const identifyMsg = {
-        op: 1,
-        d: {
-          rpcVersion: 1,
-          authentication: auth,
-        },
-      };
-      this.ws.send(JSON.stringify(identifyMsg));
-    } else {
-      // No auth required
-      const identifyMsg = {
-        op: 1,
-        d: {
-          rpcVersion: 1,
-        },
-      };
-      this.ws.send(JSON.stringify(identifyMsg));
+    const d = { rpcVersion: 1, eventSubscriptions };
+    if (data.authentication) {
+      const { challenge, salt } = data.authentication;
+      d.authentication = await this._generateAuth(this.authPassword, salt, challenge);
     }
+    this.ws.send(JSON.stringify({ op: 1, d }));
   }
 
   /**

@@ -4,439 +4,170 @@
 
 Production HTTPS/WSS server for Teammater project. Replaces Caddy with optimized Rust implementation.
 
-**Purpose:** Serve static web application files and proxy WebSocket connections to Android STT backend.
-
-## Requirements
-
-### Functional Requirements
-
-**FR-1: HTTPS Server**
-- Listen on `localhost:8443`
-- Serve TLS 1.3 connections
-- Auto-generate self-signed certificate if missing
-- Certificate valid for `localhost` and `127.0.0.1`
-
-**FR-2: Static File Serving**
-- Serve files from project root directory
-- Support all web assets: HTML, CSS, JS, images, audio
-- Automatic MIME type detection
-- Directory index support
-
-**FR-3: WebSocket Reverse Proxy**
-- Accept WebSocket connections on `/echowire` endpoint
-- Proxy to backend: `ws://192.168.15.225:8080`
-- Bidirectional message forwarding (client ↔ backend)
-- Support all WebSocket message types: text, binary, ping, pong, close
-- Maintain connection state and handle disconnections gracefully
-
-**FR-4: Certificate Management**
-- Store certificates in `server/certs/` directory
-- Generate on first run if missing
-- Use existing certificates if present
-- Log certificate status on startup
-
-### Non-Functional Requirements
-
-**NFR-1: Performance**
-- Startup time: < 20ms
-- Memory usage: < 10MB idle
-- Request latency: < 1ms for static files
-- Support concurrent WebSocket connections
-
-**NFR-2: Reliability**
-- Graceful error handling
-- Structured logging for debugging
-- No crashes on backend connection failures
-- Clean connection cleanup
-
-**NFR-3: Security**
-- TLS 1.3 encryption
-- Self-signed certificates for localhost
-- No exposed admin interfaces
-- Minimal attack surface
-
-**NFR-4: Maintainability**
-- Clear code structure
-- Comprehensive documentation
-- Type-safe Rust implementation
-- Minimal dependencies
+**Purpose:** Serve static web application files, proxy WebSocket connections to the EchoWire STT backend, broadcast OBS overlay data, and relay BLE heart rate monitor data.
 
 ## Architecture
 
-### Components
+All internal services launch independently at startup. Each service manages its own lifecycle — retrying on failure without affecting other services. HTTP endpoints return `503 Service Unavailable` when a dependent service is not ready.
 
 ```
 ┌─────────────────────────────────────────────────┐
-│  Client (Browser)                               │
-└───────────────┬─────────────────────────────────┘
-                │ TLS (HTTPS/WSS)
-                │ localhost:8443
-                ↓
-┌─────────────────────────────────────────────────┐
-│  Axum Server                                    │
-│  ┌───────────────────────────────────────────┐  │
-│  │  Router                                   │  │
-│  │  ├─ GET /* → ServeDir                    │  │
-│  │  └─ GET /echowire → WebSocket Handler    │  │
-│  └───────────────────────────────────────────┘  │
-│                                                  │
-│  ┌───────────────────────────────────────────┐  │
-│  │  TLS Layer (RustlsConfig)                │  │
-│  │  - server/certs/cert.pem                 │  │
-│  │  - server/certs/key.pem                  │  │
-│  └───────────────────────────────────────────┘  │
-└───────────────┬─────────────────────────────────┘
-                │ Plain WebSocket
-                │ ws://192.168.15.225:8080
-                ↓
-┌─────────────────────────────────────────────────┐
-│  Android STT Backend (Echowire)                 │
-└─────────────────────────────────────────────────┘
+│  Axum Server (HTTPS :8443, HTTP :8442)          │
+│  ├─ GET /*              → ServeDir              │
+│  ├─ GET /echowire       → WS proxy (mDNS)       │
+│  ├─ GET /obs            → WS broadcast bus      │
+│  ├─ GET /api/health     → 200 OK                │
+│  └─ ANY /api/import/health-app → log + 200      │
+└──────────────┬──────────────────────────────────┘
+               │ internal channels
+   ┌───────────┴────────────┐
+   │                        │
+┌──▼──────────────┐  ┌──────▼────────────────┐
+│  mDNS discovery │  │  BLE heart rate        │
+│  _echowire._tcp │  │  device: HeartCast     │
+│  → watch channel│  │  → obs broadcast chan  │
+└─────────────────┘  └───────────────────────┘
 ```
 
-### Data Flow
+## Services
 
-**Static File Request:**
-1. Client sends HTTPS GET request
-2. Axum router matches path to ServeDir
-3. File read from filesystem
-4. MIME type detected
-5. Response sent with TLS encryption
+### HTTPS / HTTP Server
+- HTTPS on `0.0.0.0:8443` (TLS 1.3, HTTP/1.1 forced for WebSocket compat)
+- HTTP on `0.0.0.0:8442` (plain, for local tooling)
+- Static files served from project root (`.`)
+- Auto-generates self-signed cert in `server/certs/` on first run
 
-**WebSocket Proxy:**
-1. Client sends WSS upgrade request to `/echowire`
-2. Axum upgrades connection to WebSocket
-3. Server connects to backend via plain WebSocket
-4. Bidirectional message forwarding begins:
-   - Client message → Server → Backend
-   - Backend message → Server → Client
-5. Connection maintained until either side closes
-6. Cleanup on disconnect
+### mDNS Discovery
+- Browses for `_echowire._tcp.local.` continuously
+- On resolve: stores `EchoWireService { name, host, port, addresses }` in shared state
+- On remove: clears stored service
+- Notifies active `/echowire` proxy connections via `watch::Sender<u64>` (generation counter)
+- Retries after 5s on daemon/browse failure; loops forever
 
-### Technology Stack
+### EchoWire WebSocket Proxy (`/echowire`)
+- Returns `503` immediately if no EchoWire service is discovered yet
+- Subscribes to generation watch **before** reading backend URL — no race between URL capture and change detection
+- Rejects upgrade if generation changed while the WS handshake was in flight
+- Drops connection when backend address changes (generation watch fires)
+- Bidirectional forwarding: text, binary, ping, pong; close terminates session
 
-**Core:**
-- `tokio` 1.42+ - Async runtime with full features
-- `axum` 0.7+ - HTTP/WebSocket framework
-- `axum-server` 0.7+ - TLS server implementation
+### OBS Broadcast Bus (`/obs`)
+- Broadcast WebSocket: every message is forwarded to all connected clients except sender
+- `sender_id == u64::MAX` = system/BLE message, delivered to all clients
+- Channel capacity: 8 messages (lagged receivers drop silently)
 
-**WebSocket:**
-- `tokio-tungstenite` 0.24+ - WebSocket client for backend proxy
-- `futures-util` 0.3+ - Stream utilities for message forwarding
+### BLE Heart Rate Monitor
+- Device: `HeartCast` (name match via `contains`)
+- Service: Heart Rate `0x180D` / Characteristic: `0x2A37`
+- Manager and adapter initialized once — Manager must stay alive (owns CoreBluetooth event loop)
+- Init retries with 5s delay if adapter unavailable (e.g., Bluetooth off at startup)
 
-**Static Files:**
-- `tower-http` 0.6+ - Middleware for file serving
-- `tower` 0.5+ - Service layer
+**Scan loop** (`scan_until_found`):
+- Never returns an error — all transient failures retried internally
+- Subscribes to adapter events before `start_scan` to avoid missing early advertisements
+- 5s scan windows; warns and retries on timeout or stream error
 
-**TLS:**
-- `rustls` 0.23+ - TLS implementation
-- `rustls-pemfile` 2.2+ - Certificate parsing
-- `rcgen` 0.13+ - Certificate generation
+**Session loop** (`run_ble`):
+- Subscribes to adapter events before `peripheral.notifications()` to avoid missing `DeviceDisconnected`
+- Three exit conditions, all handled:
+  1. `DeviceDisconnected` event
+  2. Notification stream ends (`None`)
+  3. Watchdog: no HR packet for 10s → assumes silent device loss
+- `peripheral.disconnect()` capped at 2s timeout (CoreBluetooth event loop may already be dead)
+- After exit: 5s delay, then new scan cycle
 
-**Utilities:**
-- `tracing` 0.1+ - Structured logging
-- `tracing-subscriber` 0.3+ - Log formatting
-- `anyhow` 1.0+ - Error handling
+**Logging:** only on zero ↔ non-zero transitions (suppresses per-second noise)
 
-## Endpoints
-
-### GET /*
-**Purpose:** Serve static files  
-**Handler:** `tower_http::services::ServeDir`  
-**Root:** Project directory (`.`)  
-**Examples:**
-- `/` → `index.html`
-- `/index.js` → `index.js`
-- `/modules/llm/module.js` → `modules/llm/module.js`
-- `/mp3/boo.mp3` → `mp3/boo.mp3`
-
-### POST /api/import/health-app (any method)
-**Purpose:** Log incoming requests for health/sync data import
-**Handler:** `health_app_handler`
-**Response:** `200 OK`
-**Logs:** method, URI, all headers, request body
-
-### GET /obs (WebSocket)
-**Purpose:** Broadcast bus — bidirectional JSON relay between all connected clients.
-Messages are forwarded to all clients except the sender.
-BLE heart rate data is injected server-side as an out-of-band system message.
-
-**Out-of-band messages pushed by server (sender_id = u64::MAX, received by all clients):**
+**Published message format:**
 ```json
 {"heartrate": 72}
 ```
 
-## OBS Overlay (`obs.html`)
+## Endpoints
 
-Browser Source overlay served at `https://localhost:8443/obs.html`.
-
-### Heart Rate Widget
-- Connects to `/obs` WebSocket, auto-reconnects every 3s
-- Hidden until first reading arrives (fade-in)
-- **🩵 emoji** pulses continuously at the correct BPM rate (`animationDuration = 60/bpm s`)
-- **Number** rendered in Orbitron 700 font, no label (BPM is implied)
-- **Sparkline** — last 30 samples, fixed step, newest anchored to right edge
-- **Color zones** applied to line, fill gradient, dot, and number glow:
-  - `#44dd88` green  — ≤ 100 bpm
-  - `#ffcc00` yellow — 100–125 bpm
-  - `#ff4444` red    — ≥ 125 bpm
-- **Stale state** — no data for 5 s: widget dims (grayscale + brightness 0.45), emoji animation pauses; restores instantly on next reading
-
-### GET /echowire (WebSocket)
-**Purpose:** Proxy to Android STT backend
-**Protocol:** WebSocket (WSS client-side, WS backend-side)  
-**Backend:** `ws://192.168.15.225:8080`  
-**Handler:** Custom bidirectional proxy  
-**Message Types:**
-- Text - UTF-8 JSON messages
-- Binary - Raw binary data
-- Ping/Pong - Keep-alive
-- Close - Graceful shutdown
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/*` | Static file serving from project root |
+| GET | `/echowire` | WebSocket proxy to EchoWire STT backend |
+| GET | `/obs` | WebSocket broadcast bus (OBS overlay, BLE data) |
+| ANY | `/api/health` | `200 OK` health check |
+| ANY | `/api/import/health-app` | Logs method, URI, headers, body → `200 OK` |
 
 ## Configuration
 
-### Compile-Time Configuration
-Located in `src/main.rs`:
+All configuration is compile-time in `src/main.rs` and `src/ble.rs`.
 
-```rust
-// Server address
-let addr = SocketAddr::from(([127, 0, 0, 1], 8443));
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `LISTEN_ADDR` | `0.0.0.0:8443` | HTTPS bind address |
+| `HTTP_ADDR` | `0.0.0.0:8442` | HTTP bind address |
+| `CERT_PATH` | `server/certs/cert.pem` | TLS certificate |
+| `KEY_PATH` | `server/certs/key.pem` | TLS private key |
+| `MDNS_RETRY_DELAY` | 5s | mDNS daemon restart delay |
+| `OBS_BROADCAST_CAPACITY` | 8 | Broadcast channel buffer |
+| `SERVICE_TYPE` | `_echowire._tcp.local.` | mDNS service type |
+| `DEVICE_NAME` | `HeartCast` | BLE device name substring |
+| `RECONNECT_DELAY` | 5s | BLE scan/reconnect delay |
+| `SCAN_WINDOW` | 5s | BLE scan burst duration |
+| `HR_WATCHDOG` | 10s | Silence timeout before reconnect |
 
-// Backend WebSocket URL
-let state = Arc::new(AppState {
-    echowire_url: "ws://192.168.15.225:8080".to_string(),
-});
-
-// Certificate paths
-let cert_path = PathBuf::from("server/certs/cert.pem");
-let key_path = PathBuf::from("server/certs/key.pem");
-```
-
-**To modify:** Edit source and rebuild with `cargo build --release`
-
-### Runtime Configuration
-Via environment variables:
-
-```bash
-# Logging level
-RUST_LOG=info          # info, debug, trace
-RUST_LOG=debug         # More detailed logs
-RUST_LOG=teammater_server=debug  # Module-specific
-
-# Tokio runtime
-TOKIO_WORKER_THREADS=8  # Number of worker threads
-```
+Runtime: `RUST_LOG=info` (default), `RUST_LOG=debug` for verbose output.
 
 ## File Structure
 
 ```
 server/
-├── Cargo.toml              # Dependencies and metadata
-├── Cargo.lock              # Locked dependency versions
-├── .gitignore              # Ignore target/ and certs/*.pem
-├── README.md               # Usage documentation
-├── SPEC.md                 # This file
-├── IMPLEMENTATION.md       # Technical details
+├── Cargo.toml
+├── Cargo.lock
+├── SPEC.md             # This file
 ├── src/
-│   ├── main.rs            # Server, routing, WebSocket proxy
-│   └── tls.rs             # Certificate generation and loading
-├── certs/                 # Auto-generated
-│   ├── cert.pem          # Self-signed certificate
-│   └── key.pem           # Private key (not in git)
-└── target/                # Build artifacts (not in git)
-    └── release/
-        └── teammater-server  # Binary (~8MB)
+│   ├── main.rs        # Server, routing, mDNS, OBS broadcast, echowire proxy
+│   ├── ble.rs         # BLE heart rate monitor
+│   └── tls.rs         # Certificate generation and loading
+└── certs/             # Auto-generated (not in git)
+    ├── cert.pem
+    └── key.pem
 ```
 
-## Build & Deployment
+## Build & Run
 
-### Development Build
 ```bash
-cd server
-cargo build
-./target/debug/teammater-server
+# From project root
+cd server && cargo build --release
+cd .. && ./server/target/release/teammater-server
 ```
 
-### Production Build
-```bash
-cd server
-cargo build --release
-./target/release/teammater-server
+Server must run from project root to serve static files correctly.
+
+## Logging Reference
+
 ```
-
-### Optimized Build
-```bash
-cd server
-RUSTFLAGS="-C target-cpu=native" cargo build --release
+INFO  🚀 HTTPS listening on https://0.0.0.0:8443
+INFO  🌐 HTTP  listening on http://0.0.0.0:8442
+INFO  💓 BLE adapter ready
+INFO  💓 Scanning for 'HeartCast' (5s window)...
+INFO  💓 Found: VI [HeartCast-iPhon]
+INFO  💓 Connected to HeartCast
+INFO  💓 Heart Rate: 82 bpm          ← logged on 0↔non-0 transition only
+WARN  💓 No HR data for 10s, assuming device gone
+WARN  💓 BLE session ended, reconnecting...
+WARN  💓 start_scan failed: ..., retrying...
+INFO  ✅ EchoWire: ... at host:port
+WARN  ⚠️  EchoWire removed: ...
+WARN  🔄 Backend changed, dropping connection
 ```
-
-### Run from Project Root
-```bash
-# Server expects to be run from project root to serve files
-cd /path/to/teammater
-./server/target/release/teammater-server
-```
-
-## Logging
-
-### Log Levels
-- `ERROR` - Critical failures
-- `WARN` - Recoverable issues (backend disconnect, client errors)
-- `INFO` - Server lifecycle, connections, requests
-- `DEBUG` - Detailed message flow, state changes
-
-### Log Examples
-```
-INFO  🚀 Server listening on https://127.0.0.1:8443
-INFO  📁 Serving static files from current directory
-INFO  🔌 WebSocket proxy: wss://127.0.0.1:8443/echowire -> ws://192.168.15.225:8080
-INFO  📥 Client connected to /echowire
-INFO  ✅ Connected to backend: ws://192.168.15.225:8080
-WARN  ⚠️ Backend read error: connection closed
-INFO  🔌 WebSocket proxy session ended
-```
-
-## Error Handling
-
-### Certificate Errors
-- Missing certs → Auto-generate
-- Invalid certs → Log error and exit
-- Permission errors → Log details
-
-### Connection Errors
-- Backend unreachable → Log error, close client connection
-- Client disconnect → Log info, close backend connection
-- Network errors → Log warning, cleanup connections
-
-### File Serving Errors
-- File not found → 404 response
-- Permission denied → 403 response
-- Directory listing → Index or 404
-
-## Security Considerations
-
-### TLS Configuration
-- Protocol: TLS 1.3 only
-- Self-signed certificate (localhost development)
-- No client certificate validation
-- Private key permissions: Owner read-only recommended
-
-### WebSocket Proxy
-- No authentication on `/echowire` endpoint
-- Backend connection uses plain WebSocket (local network)
-- No message validation or filtering
-- Trusts both client and backend
-
-### File Serving
-- Serves from project root (all files accessible)
-- No directory traversal protection (relies on tower-http)
-- No authentication or authorization
-- Suitable for localhost development only
-
-**Production Deployment:**
-- Replace self-signed cert with CA-signed certificate
-- Add authentication middleware
-- Restrict file serving scope
-- Use encrypted backend connection (WSS)
-- Add rate limiting
-
-## Performance Characteristics
-
-### Resource Usage
-- Binary size: ~8MB (release)
-- Startup time: ~10ms
-- Idle memory: ~5MB
-- Active memory: ~10MB (depends on concurrent connections)
-
-### Benchmarks (localhost)
-- Static file serving: ~100k req/s
-- WebSocket latency: ~0.1ms (proxy overhead)
-- Concurrent connections: Limited by system resources
-
-### Comparison to Caddy
-
-| Metric | Caddy | Rust Server | Ratio |
-|--------|-------|-------------|-------|
-| Binary size | ~50MB | ~8MB | 6.25x |
-| Memory (idle) | ~50MB | ~5MB | 10x |
-| Startup time | ~200ms | ~10ms | 20x |
-| Static req/s | ~80k | ~100k | 1.25x |
-
-## Future Enhancements
-
-### Planned Features
-- [ ] TOML/YAML configuration file
-- [ ] Hot reload on config change
-- [ ] Multiple WebSocket proxy routes
-- [ ] Metrics endpoint (Prometheus)
-- [ ] Health check endpoint
-
-### Potential Improvements
-- [ ] Let's Encrypt ACME support
-- [ ] HTTP/2 and HTTP/3
-- [ ] Compression middleware (gzip/brotli)
-- [ ] Request/response logging
-- [ ] Rate limiting per IP
-- [ ] WebSocket authentication
-- [ ] Backend connection pooling
-
-## Testing
-
-### Manual Testing
-```bash
-# Start server
-./server/target/release/teammater-server
-
-# Test HTTPS
-curl -k https://localhost:8443/
-
-# Test WebSocket (requires backend running)
-wscat -c wss://localhost:8443/echowire
-```
-
-### Integration Testing
-- Verify static files served correctly
-- Check WebSocket upgrade succeeds
-- Confirm bidirectional message flow
-- Test connection cleanup on disconnect
-- Validate TLS certificate acceptance
-
-## Maintenance
-
-### Updating Dependencies
-```bash
-cd server
-cargo update
-cargo build --release
-```
-
-### Checking for Security Advisories
-```bash
-cargo install cargo-audit
-cargo audit
-```
-
-### Code Formatting
-```bash
-cargo fmt
-```
-
-### Linting
-```bash
-cargo clippy -- -D warnings
-```
-
-## License
-
-Same as parent project (Teammater).
 
 ## Version History
 
+### v0.2.0 (2026-03-26)
+- BLE: resilient init — retries adapter init forever instead of exiting
+- BLE: Manager kept alive for CoreBluetooth event loop lifetime
+- BLE: watchdog timer (10s) detects silent device loss
+- BLE: `scan_until_found` absorbs transient errors internally, never propagates
+- BLE: `peripheral.disconnect()` capped at 2s timeout
+- BLE: HR logging suppressed to zero↔non-zero transitions only
+- EchoWire proxy: generation watch subscribed before URL read, eliminating race condition
+- EchoWire proxy: early rejection if generation changed during WS upgrade
+
 ### v0.1.0 (2026-01-29)
-- Initial implementation
-- HTTPS server on localhost:8443
-- Static file serving from project root
-- WebSocket reverse proxy for /echowire
-- Auto-generated self-signed certificates
-- Structured logging with tracing
-- Production-ready performance
+- Initial implementation: HTTPS server, static files, WebSocket proxy, mDNS discovery, BLE heart rate, OBS broadcast bus
