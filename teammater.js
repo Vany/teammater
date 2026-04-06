@@ -400,15 +400,11 @@
   }
 
   if (isYoutube) {
-    // Persist YouTube player role across navigations within the same tab
     const flag = GM_getValue("yt_next_is_player");
-    log(`YouTube tab — yt_next_is_player=${flag} sessionStorage.yt_player=${sessionStorage.getItem("yt_player")}`);
+    log(`YouTube tab — yt_next_is_player=${flag}`);
     if (flag) {
-      sessionStorage.setItem("yt_player", "1");
       GM_deleteValue("yt_next_is_player");
       log("designated as PLAYER (flag)");
-    }
-    if (sessionStorage.getItem("yt_player")) {
       initYoutube();
       return;
     }
