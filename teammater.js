@@ -197,8 +197,8 @@
                           ?? document.querySelector('div[class^="Meta_metaContainer"]');
             const coverImg = playerBar?.querySelector('img[class*="_cover_"]');
             const cover    = coverImg?.src?.replace(/\/\d+x\d+$/, "/200x200") ?? null;
-            const titleEl   = meta?.querySelector('[class*="Meta_title"]');
-            const versionEl = meta?.querySelector('[class*="Meta_version"]');
+            const titleEl   = meta?.querySelector('[class*="Meta_title__"]');
+            const versionEl = meta?.querySelector('[class*="Meta_version__"]');
             const artistEl  = meta?.querySelector('[class*="Meta_artists"]') ?? meta?.querySelectorAll('[class*="Meta_text"]')?.[1];
             // Fallback: full innerText split by newline (old behaviour)
             const rawText  = meta?.innerText ?? "";
@@ -271,12 +271,57 @@
       });
     }
 
+    const MUSIC_RE = new RegExp(
+      [
+        // General
+        'music','song','audio','official','official video','official audio','official lyric',
+        'lyric video','music video','video','track','single','album',
+        'lyrics','live','performance','concert','recording','studio','hit','tune',
+        // Featuring
+        'feat','feat.','ft.','ft ','featuring',
+        // Production
+        'remix','cover','instrumental','karaoke','acapella','mashup','edit','version',
+        'extended','demo','radio edit','dj mix','remaster','remastered',
+        'acoustic','unplugged','visualizer','audio only',
+        // Genres
+        'pop','rock','rap','hip hop','jazz','blues','classical','electronic','edm',
+        'trance','techno','metal','folk','country','reggae','soul','rnb','r&b','dance',
+        'punk','indie','alternative','trap','lo-fi','house','disco','swing','gospel',
+        'opera','latin','k-pop','j-pop','ambient','grunge','ska',
+        // Release types
+        'showcase','compilation','ost','soundtrack','theme','intro','outro','score',
+        'suite','symphony','ballad','anthem','single release','ep','lp','mixtape',
+        'premiere','debut','release','new release','original',
+        // Industry
+        'band','artist','singer','producer','group','vevo','official channel','record label',
+        'playlist','mv',
+      ]
+      .map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .join('|'),
+      'i'
+    );
+
+    function looksLikeMusic(p) {
+      const title = p.videoDetails?.title ?? "";
+      const desc  = p.videoDetails?.shortDescription
+                 ?? p.microformat?.playerMicroformatRenderer?.description?.simpleText
+                 ?? "";
+      const tags  = (p.videoDetails?.keywords ?? []).join(" ");
+      const text  = `${title} ${desc} ${tags}`;
+      const matches = text.match(new RegExp(MUSIC_RE.source, 'gi')) ?? [];
+      const unique  = new Set(matches.map(m => m.toLowerCase()));
+      return unique.size >= 2;
+    }
+
     function validate(p) {
       const details  = p.videoDetails;
       const category = p.microformat?.playerMicroformatRenderer?.category ?? "";
       const views    = parseInt(details?.viewCount ?? "0");
       const duration = parseInt(details?.lengthSeconds ?? "0");
-      if (category !== "Music") return `category "${category}" ≠ "Music"`;
+      if (category !== "Music") {
+        if (!looksLikeMusic(p)) return `category "${category}" ≠ Music, no music keywords`;
+        log(`category "${category}" ≠ Music but keywords match — treating as music`);
+      }
       if (views < 1000)         return `only ${views} views`;
       if (duration < 120)       return `too short (${duration}s, min 120)`;
       if (duration > 480)       return `too long (${duration}s, max 480)`;

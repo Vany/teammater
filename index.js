@@ -25,6 +25,7 @@ import {
   getDefaultRewards,
   TWITCH_CLIENT_ID_KEY,
   TWITCH_SCOPES,
+  VOICE_ACTIONS,
 } from "./config.js";
 
 // Import utilities
@@ -88,6 +89,9 @@ async function initialize() {
 
   // Setup UI event listeners
   setupUIListeners();
+
+  // Voice actions menu next to TEST button
+  setupVoiceActionsMenu();
 
   log("∞ Teammater initialized (modular)");
 }
@@ -590,6 +594,47 @@ async function handleRedemption(redemption) {
 // ============================
 // UI LISTENERS
 // ============================
+
+function setupVoiceActionsMenu() {
+  const testBtn = document.querySelector(".test-button");
+  if (!testBtn) return;
+
+  // Button
+  const menuBtn = document.createElement("button");
+  menuBtn.className = "test-button";
+  menuBtn.textContent = "🎤";
+  menuBtn.title = "Voice Actions";
+  testBtn.after(menuBtn);
+
+  // Dropdown
+  const menu = document.createElement("div");
+  menu.style.cssText = "display:none;position:absolute;background:#222;border:1px solid #444;border-radius:6px;z-index:1000;min-width:160px;box-shadow:0 4px 12px #0008";
+
+  for (const [pattern, action] of Object.entries(VOICE_ACTIONS)) {
+    const label = pattern.replace(/[\^$]/g, "").split("|")[0];
+    const item = document.createElement("div");
+    item.textContent = label;
+    item.style.cssText = "padding:8px 12px;cursor:pointer;color:#fff;font-size:13px";
+    item.onmouseenter = () => item.style.background = "#444";
+    item.onmouseleave = () => item.style.background = "";
+    item.onclick = () => {
+      menu.style.display = "none";
+      const context = moduleManager.buildContext();
+      action(context, "manual", label);
+    };
+    menu.appendChild(item);
+  }
+  document.body.appendChild(menu);
+
+  menuBtn.onclick = (e) => {
+    e.stopPropagation();
+    const r = menuBtn.getBoundingClientRect();
+    menu.style.left = r.left + "px";
+    menu.style.top = (r.bottom + 4) + "px";
+    menu.style.display = menu.style.display === "none" ? "block" : "none";
+  };
+  document.addEventListener("click", () => menu.style.display = "none");
+}
 
 function setupUIListeners() {
   window.mp3 = mp3;

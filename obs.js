@@ -103,8 +103,12 @@
     const [proto, port] = location.protocol === 'https:' ? ['wss:', 8443] : ['ws:', 8442];
     const WS_URL = `${proto}//${location.hostname}:${port}/obs`;
 
+    let ws = null;
+    let reconnectTimer = null;
+
     function connect() {
-        const ws = new WebSocket(WS_URL);
+        if (document.hidden) return;
+        ws = new WebSocket(WS_URL);
         ws.onopen = () => ws.send(JSON.stringify({ request: 'now_playing' }));
         ws.onmessage = ({ data }) => {
             try {
@@ -113,9 +117,31 @@
                 if (msg.now_playing) onNowPlaying(msg.now_playing);
             } catch {}
         };
-        ws.onclose = () => setTimeout(connect, 3000);
+        ws.onclose = () => {
+            ws = null;
+            if (!document.hidden) reconnectTimer = setTimeout(connect, 3000);
+        };
         ws.onerror = () => ws.close();
     }
+
+    function freeze() {
+        clearTimeout(reconnectTimer);
+        ws?.close();
+        document.body.classList.add('obs-hidden');
+    }
+
+    function unfreeze() {
+        document.body.classList.remove('obs-hidden');
+        connect();
+    }
+
+    // OBS browser source visibility API (more reliable than visibilitychange in CEF)
+    if (window.obsstudio) {
+        window.obsstudio.onVisibilityChange = (visible) => visible ? unfreeze() : freeze();
+    }
+
+    // Fallback for non-OBS environments (regular browser preview)
+    document.addEventListener('visibilitychange', () => document.hidden ? freeze() : unfreeze());
 
     connect();
 })();

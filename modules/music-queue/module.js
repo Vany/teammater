@@ -200,7 +200,8 @@ export class MusicQueueModule extends BaseModule {
   _playSong(url) {
     if (this._isYoutube(url)) {
       bridge.send("pause", null, "yandex");
-      bridge.openYoutube(url);
+      // Delay opening YouTube to let the pause propagate through GM_setValue → Yandex listener
+      setTimeout(() => bridge.openYoutube(url), 400);
       this.log(`📺 Opening YouTube player: ${url}`);
     } else {
       if (this._ytPlayerActive) {
