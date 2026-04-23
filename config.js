@@ -30,7 +30,7 @@ import {
 export const CHAT_ACTIONS = [
   [ban(), /viewers/i, /nezhna.+\.com/i], // Ban spam with "viewers" + nezhna*.com
   [mute(30), /zhopa/i, /spam/i], // Timeout for profanity spam
-  [voice(), /^!voice\s+(.+)/i], // TTS command: !voice <text>
+  [voice(), /^!voice\s$/i], // TTS command: !voice <text>
 ];
 
 // will became MCP TOOLS

@@ -9,7 +9,7 @@
 import { BaseModule } from "../base-module.js";
 import { PersistentDeck } from "../../utils.js";
 
-const YOUTUBE_RE = /youtube\.com\/watch/;
+const YOUTUBE_RE = /youtube\.com\/watch|youtu\.be\//;
 
 // ── MusicBridge interface ────────────────────────────────────
 // Wraps all access to UserScript globals exposed on unsafeWindow.
@@ -147,6 +147,8 @@ export class MusicQueueModule extends BaseModule {
     });
 
     bridge.listen("youtube_ready", (info) => {
+      // Re-send pause in case the first one was lost during Yandex page reload
+      bridge.send("pause", null, "yandex");
       this.nowPlaying      = { title: this._stripArtistFromTitle(info.title ?? "Unknown", info.author ?? ""), artist: info.author ?? "", cover: info.cover ?? null, coverFallback: info.coverFallback ?? null };
       this._ytPlayerActive = true;
       this.log(`▶️ YouTube ready: ${this.nowPlaying.title} by ${this.nowPlaying.artist}`);

@@ -178,7 +178,7 @@ export function apply_effect(effectName) {
  * @returns {Function} - closure(context, user, message) => boolean
  */
 const YANDEX_RE = /^https:\/\/music\.yandex\.(ru|com)\/(album\/\d+\/)?track\/\d+/;
-const YOUTUBE_RE = /^https:\/\/(www\.)?youtube\.com\/watch\?.*v=[\w-]+/;
+const YOUTUBE_RE = /^https:\/\/((www\.)?youtube\.com\/watch\?.*v=|youtu\.be\/)[\w-]+/;
 
 export function music() {
   return (context, user, message) => {

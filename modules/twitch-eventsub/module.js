@@ -53,6 +53,23 @@ export class TwitchEventSubModule extends BaseModule {
           step: 1000,
         },
       },
+      auto_shoutout: {
+        enabled: {
+          type: "checkbox",
+          label: "Auto Shoutout on Raid",
+          default: true,
+          stored_as: "auto_shoutout_enabled",
+        },
+        min_raiders: {
+          type: "number",
+          label: "Minimum Raiders for Auto Shoutout",
+          default: 5,
+          min: 1,
+          max: 10000,
+          step: 1,
+          stored_as: "auto_shoutout_min_raiders",
+        },
+      },
     };
   }
 
@@ -293,18 +310,22 @@ export class TwitchEventSubModule extends BaseModule {
       this.log(`✅ EventSub session: ${this.sessionId}`);
       this.updateStatus(true);
 
-      // Subscribe to redemptions
+      // Subscribe to events
       await this._subscribeToRedemptions();
+      await this._subscribeToRaids();
     }
 
     if (type === "notification") {
-      const redemption = msg.payload.event;
-      this.log(
-        `🎯 Redemption: ${redemption.reward.title} by ${redemption.user_name}`,
-      );
+      const subscriptionType = msg.payload.subscription.type;
+      const event = msg.payload.event;
 
-      // Notify redemption handlers
-      this._notifyRedemptionHandlers(redemption);
+      if (subscriptionType === "channel.channel_points_custom_reward_redemption.add") {
+        this.log(`🎯 Redemption: ${event.reward.title} by ${event.user_name}`);
+        this._notifyRedemptionHandlers(event);
+      } else if (subscriptionType === "channel.raid") {
+        this.log(`🚨 Raid from ${event.from_broadcaster_user_login} with ${event.viewers} viewers`);
+        this._handleRaid(event);
+      }
     }
   }
 
@@ -328,6 +349,51 @@ export class TwitchEventSubModule extends BaseModule {
       this.log(`❌ Subscription failed: ${error.message}`);
       throw error;
     }
+  }
+
+  /**
+   * Subscribe to incoming raid events
+   */
+  async _subscribeToRaids() {
+    try {
+      await request("https://api.twitch.tv/helix/eventsub/subscriptions", {
+        method: "POST",
+        body: JSON.stringify({
+          type: "channel.raid",
+          version: "1",
+          condition: { to_broadcaster_user_id: this.currentUserId },
+          transport: { method: "websocket", session_id: this.sessionId },
+        }),
+      });
+
+      this.log("✅ Subscribed to raid events");
+    } catch (error) {
+      this.log(`❌ Raid subscription failed: ${error.message}`);
+    }
+  }
+
+  /**
+   * Handle incoming raid — auto shoutout if configured
+   * @param {object} event - channel.raid event payload
+   */
+  _handleRaid(event) {
+    const enabled = this.getConfigValue("enabled", true);
+    const minRaiders = parseInt(this.getConfigValue("min_raiders", "5"), 10);
+
+    if (!enabled) return;
+    if (event.viewers < minRaiders) {
+      this.log(`ℹ️ Raid from ${event.from_broadcaster_user_login} has ${event.viewers} viewers, below threshold ${minRaiders} — skipping shoutout`);
+      return;
+    }
+
+    const chatModule = this.moduleManager?.get("twitch-chat");
+    if (!chatModule?.isConnected()) {
+      this.log(`❌ Auto shoutout: chat not connected`);
+      return;
+    }
+
+    chatModule.send(`/shoutout ${event.from_broadcaster_user_login}`);
+    this.log(`📣 Auto shoutout sent for ${event.from_broadcaster_user_login} (${event.viewers} raiders)`);
   }
 
   /**

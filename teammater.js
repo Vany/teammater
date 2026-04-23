@@ -6,6 +6,7 @@
 // @author       ME
 // @match        https://music.yandex.ru/**
 // @match        https://www.youtube.com/**
+// @match        https://youtu.be/**
 // @match        https://localhost:8443/**
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=yandex.ru
 // @grant        GM_addValueChangeListener
@@ -38,7 +39,7 @@
 
   const isMaster  = !!unsafeWindow.i_am_a_master;
   const isYandex  = location.hostname.includes("music.yandex.");
-  const isYoutube = location.hostname.includes("youtube.com");
+  const isYoutube = location.hostname.includes("youtube.com") || location.hostname === "youtu.be";
 
   log(`init — isMaster=${isMaster} isYandex=${isYandex} isYoutube=${isYoutube} url=${location.href}`);
 
@@ -77,7 +78,13 @@
     try {
       const u     = new URL(url);
       const clean = new URL("https://www.youtube.com/watch");
-      if (u.searchParams.has("v")) clean.searchParams.set("v", u.searchParams.get("v"));
+      // youtu.be/VIDEO_ID → extract id from pathname
+      if (u.hostname === "youtu.be") {
+        const v = u.pathname.slice(1); // strip leading /
+        if (v) clean.searchParams.set("v", v);
+      } else {
+        if (u.searchParams.has("v")) clean.searchParams.set("v", u.searchParams.get("v"));
+      }
       if (u.searchParams.has("t")) clean.searchParams.set("t", u.searchParams.get("t"));
       return clean.toString();
     } catch { return url; }
@@ -129,18 +136,18 @@
     // Audio element captured on first play; pausing with interval beats React's state machine
     let audioEl       = null;
     let pauseInterval = null;
-    let pausePending  = false;
+    let shouldBePaused = false; // persistent intent — survives track changes in My Vibes
 
     function onAudioReady(audio) {
       audioEl = audio;
-      log(`audio captured, pausePending=${pausePending}`);
-      if (pausePending) pause();
+      log(`audio captured, shouldBePaused=${shouldBePaused}`);
+      if (shouldBePaused) pause();
     }
 
     function pause() {
+      shouldBePaused = true;
       clearInterval(pauseInterval);
-      if (!audioEl) { warn("pause: no audio yet — pending"); pausePending = true; return; }
-      pausePending = false;
+      if (!audioEl) { warn("pause: no audio yet — pending"); return; }
       log(`pause audio (paused=${audioEl.paused} muted=${audioEl.muted})`);
       audioEl.muted = true;
       audioEl.pause();
@@ -152,7 +159,7 @@
     }
 
     function resume() {
-      pausePending = false;
+      shouldBePaused = false;
       clearInterval(pauseInterval);
       pauseInterval = null;
       if (!audioEl) { warn("resume: no audio"); return; }
@@ -185,6 +192,11 @@
       log("hooking HTMLMediaElement.prototype.play");
       const origPlay = HTMLMediaElement.prototype.play;
       HTMLMediaElement.prototype.play = function (...args) {
+        if (shouldBePaused) {
+          log("play() blocked — shouldBePaused");
+          this.muted = true;
+          return Promise.reject(new DOMException("play blocked by MusicBridge", "AbortError"));
+        }
         if (!this._bridgeHooked) {
           this._bridgeHooked = true;
           log("attaching play/ended listeners");

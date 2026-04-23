@@ -17,10 +17,10 @@ help:
 	@echo "Note: Requires Caddy web server to be installed"
 
 serve:
-	@echo "🚀 Starting Teammater web server..."
-	@caddy start --config Caddyfile --pidfile .caddy.pid
-	@echo "✅ Server running at https://localhost:8443"
-	@echo "📝 PID file: .caddy.pid"
+	cargo run --release --manifest-path=server/Cargo.toml
+
+
+
 
 stop:
 	@echo "🛑 Stopping Teammater web server..."
