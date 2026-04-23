@@ -313,6 +313,7 @@ export class TwitchEventSubModule extends BaseModule {
       // Subscribe to events
       await this._subscribeToRedemptions();
       await this._subscribeToRaids();
+      await this._subscribeToStreamOnline();
     }
 
     if (type === "notification") {
@@ -325,6 +326,9 @@ export class TwitchEventSubModule extends BaseModule {
       } else if (subscriptionType === "channel.raid") {
         this.log(`🚨 Raid from ${event.from_broadcaster_user_login} with ${event.viewers} viewers`);
         this._handleRaid(event);
+      } else if (subscriptionType === "stream.online") {
+        this.log(`🟢 Stream online: ${event.broadcaster_user_login}`);
+        document.dispatchEvent(new CustomEvent("stream:online", { detail: event }));
       }
     }
   }
@@ -369,6 +373,27 @@ export class TwitchEventSubModule extends BaseModule {
       this.log("✅ Subscribed to raid events");
     } catch (error) {
       this.log(`❌ Raid subscription failed: ${error.message}`);
+    }
+  }
+
+  /**
+   * Subscribe to stream.online events
+   */
+  async _subscribeToStreamOnline() {
+    try {
+      await request("https://api.twitch.tv/helix/eventsub/subscriptions", {
+        method: "POST",
+        body: JSON.stringify({
+          type: "stream.online",
+          version: "1",
+          condition: { broadcaster_user_id: this.currentUserId },
+          transport: { method: "websocket", session_id: this.sessionId },
+        }),
+      });
+
+      this.log("✅ Subscribed to stream.online events");
+    } catch (error) {
+      this.log(`❌ stream.online subscription failed: ${error.message}`);
     }
   }
 

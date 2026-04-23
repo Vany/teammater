@@ -80,6 +80,39 @@
                     }
                 }
 
+                // ── Announce timer ────────────────────────────────────────
+                // Started on stream:online. Cancelled by sending announce.
+                // On expire: play startup.mp3 + red border.
+                const ANNOUNCE_TIMER_MS = 10 * 60 * 1000;
+                let announceTimer = null;
+                const startupAudio = new Audio("mp3/startup.mp3");
+
+                function clearAnnounceTimer(input) {
+                    if (!announceTimer) return;
+                    clearTimeout(announceTimer);
+                    announceTimer = null;
+                    input.style.borderColor = "";
+                    console.log("[announce-timer] cancelled");
+                }
+
+                function startAnnounceTimer(input) {
+                    clearAnnounceTimer(input);
+                    console.log("[announce-timer] started (10 min)");
+                    announceTimer = setTimeout(() => {
+                        announceTimer = null;
+                        input.style.borderColor = "red";
+                        startupAudio.currentTime = 0;
+                        startupAudio.play().catch(() => {});
+                        console.log("[announce-timer] expired — border red, playing startup.mp3");
+                    }, ANNOUNCE_TIMER_MS);
+                }
+
+                document.addEventListener("stream:online", () => {
+                    const input = document.getElementById("announce-input");
+                    if (input) startAnnounceTimer(input);
+                });
+                // ─────────────────────────────────────────────────────────
+
                 document.addEventListener("DOMContentLoaded", () => {
                     const input = document.getElementById("announce-input");
                     if (!input) return;
@@ -113,6 +146,7 @@
                             pushHistory(value);
                             historyIndex = null;
                             draft = "";
+                            clearAnnounceTimer(input);
                             eval(localStorage.getItem("ANNOUNCE"));
                             console.log(await ANNOUNCE(value));
                         } else {
