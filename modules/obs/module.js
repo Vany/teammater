@@ -484,6 +484,24 @@ export class OBSModule extends BaseModule {
   }
 
   /**
+   * Wait until OBS is connected, polling every 300ms.
+   * Used after SetCurrentProgramScene, which crashes obs-websocket 5.7.2.
+   * Resolves immediately if already connected (no crash / fixed version).
+   */
+  _waitForReconnect(timeoutMs = 12000) {
+    return new Promise((resolve, reject) => {
+      if (this.connected) { resolve(); return; }
+      const start = Date.now();
+      const poll = () => {
+        if (this.connected) { resolve(); return; }
+        if (Date.now() - start > timeoutMs) { reject(new Error("Timeout waiting for OBS reconnect")); return; }
+        setTimeout(poll, 300);
+      };
+      poll();
+    });
+  }
+
+  /**
    * Refresh a Display Capture source by toggling its Display setting.
    * Uses GetInputPropertiesListPropertyItems to enumerate valid display values —
    * never sets an invalid value, which would crash OBS.

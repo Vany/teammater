@@ -176,14 +176,12 @@
     }
 
     function status() {
-      const meta = document.querySelector(
-        'div[class^="PlayerBarDesktopWithBackgroundProgressBar"] div[class^="Meta_metaContainer"]'
-      );
+      const trackEl = document.querySelector('div[class*="VibePlayerbarMeta_trackNameText"]:not([aria-hidden="true"])');
       return {
         playing:     audioEl ? !audioEl.paused : false,
         currentTime: audioEl?.currentTime ?? 0,
         duration:    audioEl?.duration ?? 0,
-        trackInfo:   meta?.innerText ?? "Unknown",
+        trackInfo:   trackEl?.textContent?.trim() ?? "Unknown",
         url:         location.href,
       };
     }
@@ -202,21 +200,17 @@
           log("attaching play/ended listeners");
           onAudioReady(this);
           this.addEventListener("play", () => {
-            const playerBar = document.querySelector(
-              'div[class^="PlayerBarDesktopWithBackgroundProgressBar"], div[class^="PlayerBarMobile"]'
-            );
-            const meta     = playerBar?.querySelector('div[class^="Meta_metaContainer"]')
-                          ?? document.querySelector('div[class^="Meta_metaContainer"]');
-            const coverImg = playerBar?.querySelector('img[class*="_cover_"]');
-            const cover    = coverImg?.src?.replace(/\/\d+x\d+$/, "/200x200") ?? null;
-            const titleEl   = meta?.querySelector('[class*="Meta_title__"]');
-            const versionEl = meta?.querySelector('[class*="Meta_version__"]');
-            const artistEl  = meta?.querySelector('[class*="Meta_artists"]') ?? meta?.querySelectorAll('[class*="Meta_text"]')?.[1];
-            // Fallback: full innerText split by newline (old behaviour)
-            const rawText  = meta?.innerText ?? "";
-            const name     = titleEl
-              ? (titleEl.textContent.trim() + (versionEl ? "\n" + versionEl.textContent.trim() : "") + "\n" + (artistEl?.textContent.trim() ?? ""))
+            // New Yandex v4 format: "Artist  —  Title" (double-space em-dash double-space)
+            const trackEl  = document.querySelector('div[class*="VibePlayerbarMeta_trackNameText"]:not([aria-hidden="true"])');
+            const rawText  = trackEl?.textContent?.trim() ?? "";
+            const sep      = "  —  ";
+            const sepIdx   = rawText.indexOf(sep);
+            // Reformat to "Title\nArtist" expected by module _parseSongName
+            const name     = sepIdx > -1
+              ? rawText.slice(sepIdx + sep.length).trim() + "\n" + rawText.slice(0, sepIdx).trim()
               : rawText;
+            const coverImg = document.querySelector('img[class*="AlbumCover_cover__"]');
+            const cover    = coverImg?.src?.replace(/\/\d+x\d+$/, "/200x200") ?? null;
             log(`music_start: "${name}" cover=${cover}`);
             sendToMaster("music_start", { name, cover });
           });
@@ -232,13 +226,20 @@
     function autoPlay() {
       const trackRe = /^https:\/\/music\.yandex\.(ru|com)\/album\/\d+\/track\/\d+/;
       if (trackRe.test(location.href)) {
-        log("track URL — clicking play in 4s");
+        log("track URL — clicking play in 4s if needed");
         hookAudio();
-        setTimeout(() => safeClick('header[class^="TrackModal_header_"] button[aria-label="Playback"]'), 4000);
+        setTimeout(() => {
+          // Scoped to page header to avoid hitting the player bar button.
+          // aria-label="Playback" only when paused; "Pause" when already playing — skip click in that case.
+          // TrackModalControls = track-specific header (not the album header, not the player bar)
+          const btn = document.querySelector('div[class*="TrackModalControls_controlsContainer"] button[aria-label="Playback"]');
+          if (btn) { log("clicking track Playback"); btn.click(); }
+          else { log("track already playing — no click needed"); }
+        }, 4000);
       } else if (location.href === "https://music.yandex.ru/") {
-        log("My Vibes URL — clicking My Vibe in 4s");
+        log("My Vibes URL — clicking play in 4s");
         hookAudio();
-        setTimeout(() => safeClick('button[aria-label="Play My Vibe"]'), 4000);
+        setTimeout(() => safeClick('button[class*="AlbumCover_playButton"]'), 4000);
       } else {
         log(`no autoplay for ${location.href}, hooking audio only`);
         hookAudio();

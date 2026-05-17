@@ -553,11 +553,17 @@ export function obs_scene(scene, source) {
       return;
     }
     obs._sendRequest("SetCurrentProgramScene", { sceneName: scene });
-    if (log) log(`👓 Scene → "${scene}", refreshing source "${source}"`);
+    if (log) log(`👓 Scene → "${scene}", waiting for OBS (crash workaround)...`);
     try {
+      // SetCurrentProgramScene crashes obs-websocket 5.7.2 via strlen(NULL) in
+      // CurrentProgramSceneChanged broadcast. Scene switch completes before crash,
+      // so we wait for auto-reconnect, then refresh the source.
+      await new Promise(r => setTimeout(r, 500)); // let close event fire
+      await obs._waitForReconnect(12000);
       await obs.refreshSource(source);
+      if (log) log(`✅ Source "${source}" refreshed`);
     } catch (err) {
-      if (log) log(`❌ refreshSource failed: ${err.message}`);
+      if (log) log(`❌ obs_scene failed: ${err.message}`);
     }
   };
 }
