@@ -69,9 +69,13 @@ async function initialize() {
   // Initialize stored elements
   initializeStoredElements();
 
-  // Create module manager
+  // Create module manager with log forwarding to OBS bus for mobile
   moduleManager = new ModuleManager();
-  moduleManager.setLogger(systemLog);
+  moduleManager.setLogger((msg) => {
+    systemLog(msg);
+    const obsModule = moduleManager.get('obs');
+    if (obsModule?.isConnected()) obsModule.forwardLog(msg);
+  });
 
   // Create action registry
   actionRegistry = new ActionRegistry();

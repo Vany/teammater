@@ -16,12 +16,36 @@ The bot connects to a Twitch channel (default: authenticated user's own channel,
 
 ## Architecture
 
+### Pages
+
+The application serves multiple HTML pages from the Rust server at `https://localhost:8443`:
+
+| Page | URL | Purpose |
+|------|-----|---------|
+| `index.html` | `/` | Main control panel — streamer's desktop browser |
+| `mobile.html` | `/mobile` | Mobile remote control — any device on local network |
+| `obs.html` | `/obs.html` | OBS Browser Source overlay (heart rate widget) |
+| `neco.html` | `/neco.html` | BRB countdown timer overlay |
+
+The main page shows a QR code in the right panel pointing to `https://<LAN-IP>:8443/mobile` so any device on the same network can connect instantly.
+
+### OBS Integration Architecture
+
+OBS Studio is connected **server-side only**. The Rust server maintains the OBS WebSocket connection (`ws://localhost:4455`) and re-broadcasts all state/events to connected browsers and mobile devices via the `/obs` WebSocket bus.
+
+```
+OBS Studio ←→ Rust Server ←→ /obs bus ←→ index.html (browser)
+                                        ←→ mobile.html (mobile devices, N connections)
+```
+
+The browser OBS module (`modules/obs/module.js`) becomes a thin client: it subscribes to the server's `/obs` bus instead of connecting to OBS directly. Commands (scene switch, record start/stop/pause) travel the same path in reverse: client → `/obs` bus → server → OBS.
+
 ### Modular Architecture
 
 The application uses a clean modular architecture with **8 independent modules**:
 
 **Core System Files:**
-- `index.html` - Main UI with modules container and global controls
+- `index.html` - Main UI with modules container, global controls, QR code panel
 - `index.js` - Application entry point, authentication, module orchestration
 - `config.js` - Centralized configuration: presets, rewards, chat actions, API settings
 - `actions.js` - Reusable action closures for rewards and chat commands
@@ -62,8 +86,11 @@ The application uses a clean modular architecture with **8 independent modules**
    - Native Yandex Music "next" button integration when queue empty
    - Control modal with queue display and management buttons
    - Syncs current song name from music player
-   - Commands: song, pause, resume, next, query_status
-   - Callback system: onSongStart for integration
+   - Commands: song, pause, resume, next, prev, query_status
+   - Broadcasts `now_playing` to `/obs` bus (title, artist, version, cover, queue_size, **paused**)
+   - Handles remote control commands from bus: `music_pause`, `music_resume`, `music_skip`, `music_prev`
+   - `pauseMusic()` / `resumeMusic()` / `prevSong()` public methods
+   - `_musicPaused` flag tracked and broadcast; reset on track change
 
 4. **Minecraft Module** (`modules/minecraft/module.js`)
    - WebSocket integration with Minecraft server (Minaret plugin)
@@ -72,14 +99,15 @@ The application uses a clean modular architecture with **8 independent modules**
    - Context contribution: sendMessageMinaret, sendCommandMinaret
 
 5. **OBS Module** (`modules/obs/module.js`)
-   - WebSocket integration with OBS Studio (obs-websocket plugin v5.x)
-   - Connection status with custom indicators
-   - Streaming status with dropped frames monitoring
+   - **Thin client** — connects to server `/obs` bus, not OBS directly
+   - Sends `obs_config` (url + password) to server on WS open — server owns the OBS connection
+   - Config fields: `obs_url` (default `ws://localhost:4455`), `obs_password`
+   - Receives `obs_state`, `obs_scene`, `obs_streaming`, `obs_recording` from bus
+   - Streaming status with dropped frames monitoring and alerts (10s cooldown)
    - Recording status with pause indicator
-   - Frame drop alerts with cooldown (10s)
-   - Auto-reconnection with configurable delay
-   - Poll-based status updates (configurable interval)
-   - Control API: start/stop/toggle stream/record
+   - `forwardLog(text)` — sends log lines to bus for mobile relay
+   - `pushViewerCount(count)` — sends viewer count to bus
+   - Control API: switch scene, start/stop/pause/resume record
 
 6. **Twitch Chat Module** (`modules/twitch-chat/module.js`)
    - IRC WebSocket connection to Twitch chat
@@ -203,8 +231,9 @@ The application uses a clean modular architecture with **8 independent modules**
 - [x] Skip from queue when songs queued, or native skip when queue empty
 - [x] Current song name synchronization
 - [x] Master/client architecture for cross-tab communication
-- [x] Commands: song, pause, resume, next, query_status
+- [x] Commands: song, pause, resume, next, **prev**, query_status
 - [x] Smart queueing: play immediately if empty, queue otherwise
+- [x] Artist extracted from VibePage `SeparatedArtists_root_variant_breakWord[title]` (v4 redesign)
 
 **LLM (Ollama):**
 - [x] HTTP connection to localhost:11434
@@ -218,17 +247,18 @@ The application uses a clean modular architecture with **8 independent modules**
 - [x] Two-stage LLM workflow: decision → action execution
 
 **OBS Studio (obs-websocket):**
-- [x] WebSocket connection to ws://localhost:4455
+- [x] WebSocket connection to ws://localhost:4455 — **owned by Rust server, not browser**
 - [x] OBS WebSocket 5.x protocol support
-- [x] Authentication with SHA-256 hash
-- [x] Streaming status monitoring
-- [x] Recording status with pause detection
+- [x] Authentication with SHA-256 hash — URL + password pushed from browser on `/obs` connect
+- [x] Streaming status monitoring (active, duration, dropped frames, bitrate)
+- [x] Recording status with pause detection and cumulative time tracking
 - [x] Dropped frames tracking and alerts
-- [x] Custom UI indicators: connection, streaming, recording
-- [x] Auto-reconnection with configurable delay
+- [x] Scene list maintenance and current scene tracking
+- [x] Auto-reconnection with configurable delay; reconnects when config changes
 - [x] Poll-based status updates (2s default)
-- [x] Frame drop alerts with 10s cooldown
-- [x] Control API: start/stop/toggle/pause operations
+- [x] Control API: switch scene, start/stop/pause/resume record
+- [x] State broadcast to all `/obs` bus clients on change
+- [x] Browser OBS module refactored to thin client (subscribes to `/obs` bus, sends `obs_config`)
 
 ### Moderator Rights Enforcement
 - [x] Automatic detection when connected to non-default channel (via `?channel=name`)
@@ -444,17 +474,178 @@ Protocol specification for Echowire STT service communication:
 - Timing metadata: session start/duration, speech start/duration
 - Error code filtering: NO_MATCH (code 7) suppressed
 
+## Mobile Page (`mobile.html`)
+
+### Overview
+
+A remote control page served at `/mobile`, accessible to any device on the local network. Multiple devices can connect simultaneously. Layout assumes **landscape orientation**.
+
+### Layout
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  LEFT PANEL (scrollable log feed)  │  RIGHT PANEL (controls)│
+│                                    │                         │
+│  [12:34:01] [LLM] connected        │  🎬 Gaming Scene    ▼  │
+│  [12:34:02] [OBS] streaming        │                         │
+│  [12:34:05] chat: user123 hello    │  🩵 72  │ ♪ Song · Ver │
+│  ...                               │         │   Artist      │
+│                                    │  ⏮  ⏸/▶  ⏭             │
+│                                    │                         │
+│                                    │  ── STREAMING ──────── │
+│                                    │  🔴 LIVE  1:23:45       │
+│                                    │  42 viewers             │
+│                                    │  ↓3f  6000 kbps         │
+│                                    │                         │
+│                                    │  [■STOP] 0:45:12 [⏸PAUSE]│
+└────────────────────────────────────┴─────────────────────────┘
+```
+
+### Log Panel (left)
+
+- Receives `log` messages from `/obs` bus in real time
+- Displays last 200 lines, auto-scrolls to bottom
+- Monospace font, small text, full width
+- Server sends the last 5 log lines immediately on WebSocket connect (ring buffer backlog)
+
+### Controls Panel (right)
+
+#### Scene Section
+- Shows current active scene name, large and prominent
+- Clicking the scene name opens the **Scene Picker modal**
+
+**Scene Picker Modal:**
+- Full-screen overlay, dark background
+- Scene list pre-loaded from server (no round-trip on open — server maintains live list)
+- Each scene is a large tap target (min 48px height)
+- Current scene highlighted
+- Sends `cmd_switch_scene` command on tap, closes modal immediately (optimistic)
+- Dismiss by tapping outside or pressing back
+
+#### Streaming Section (visible only when streaming)
+- Live duration counter (`HH:MM:SS`), updates every second in the client
+- Viewer count (updated when main page pushes new value)
+- Signal quality: dropped frames count + current bitrate in kbps
+  - Color coding: green ≤ 0.5% dropped, yellow ≤ 2%, red > 2%
+
+#### Heart Rate + Song Row
+- **Heart rate widget** (hidden until first `heartrate` bus message):
+  - Animated 🩵 pulse at actual BPM rate
+  - Color zones: ≤100 green, 101–125 yellow, ≥126 red (number + glow)
+- **Song section** (hidden until first `now_playing` bus message):
+  - Track title (+ version if present, joined with `·`)
+  - Artist name below title
+  - Both truncated with ellipsis
+
+#### Music Controls
+Three buttons always visible: **⏮ Prev** / **⏸▶ Play-Pause** / **⏭ Skip**
+- Sends `music_prev`, `music_pause`/`music_resume`, `music_skip` to bus
+- Play/Pause state synced from `now_playing.paused`; toggles optimistically on tap
+- Handled by Music Queue module on the main page
+
+#### Recording Section (always visible)
+Single row: **[●REC / ■STOP]** + **timer** + **[⏸PAUSE / ▶RESUME]**
+- Start/Stop toggle button (left): red when idle, gray when recording
+- **Cumulative recording time** in center — total time across all segments, extrapolated 1s between server polls
+- **Pause/Resume button** (right): orange when recording, green when paused, grayed when stopped
+- All three elements share one `68px` tall row — large enough to tap reliably
+
+### Connection
+
+Mobile page connects to `wss://<host>/obs` via WebSocket. On connect the server sends:
+1. Last 5 log lines as individual `log` messages
+2. A full `obs_state` snapshot
+
+Page auto-reconnects with 3s delay. Connection status shown as a small dot in corner.
+
+**Screen Wake Lock:** acquires `navigator.wakeLock.request('screen')` when connected, releases on disconnect. Re-acquires on `visibilitychange` (browser releases the lock when tab hides). Silent no-op if API unsupported.
+
+---
+
+## `/obs` Bus Message Protocol
+
+All messages are JSON. Two directions: **server→clients** (broadcasts from server or main page) and **client→server** (commands from any client).
+
+### Server → Clients (broadcast, `sender_id = u64::MAX`)
+
+```jsonc
+// Full state snapshot — sent on client connect and after any significant change
+{"type": "obs_state",
+ "connected": true,
+ "scene": "Gaming",
+ "scenes": ["Starting", "Gaming", "BRB"],
+ "streaming": {"active": true, "duration_s": 3661, "dropped_frames": 2, "total_frames": 440000, "bitrate_kbps": 6000},
+ "recording": {"active": true, "paused": false, "cumulative_ms": 2712000}}
+
+// Scene changed
+{"type": "obs_scene", "scene": "BRB", "scenes": ["Starting", "Gaming", "BRB"]}
+
+// Streaming status update (every 2s while streaming, once on stop)
+{"type": "obs_streaming", "active": false}
+{"type": "obs_streaming", "active": true, "duration_s": 120, "dropped_frames": 0, "total_frames": 14400, "bitrate_kbps": 5980}
+
+// Recording status update
+{"type": "obs_recording", "active": true, "paused": false, "cumulative_ms": 45000}
+
+// Log line from main page (server relays, also buffered as ring buffer of 5)
+{"type": "log", "text": "[LLM] Connected", "ts": 1234567890123}
+
+// Viewer count from main page
+{"type": "viewer_count", "count": 42}
+```
+
+### Client → Server (intercepted by server, NOT relayed to other clients)
+
+```jsonc
+// OBS connection config — browser OBS module sends this on WS open
+{"type": "obs_config", "url": "ws://localhost:4455", "password": "secret"}
+
+// Switch OBS scene
+{"type": "cmd_switch_scene", "scene": "BRB"}
+
+// Recording controls
+{"type": "cmd_start_record"}
+{"type": "cmd_stop_record"}
+{"type": "cmd_pause_record"}
+{"type": "cmd_resume_record"}
+```
+
+### Client → Server (relayed to all other clients, sender_id normal)
+
+```jsonc
+// Main page pushes viewer count (relayed to mobiles)
+{"type": "viewer_count", "count": 42}
+
+// Main page forwards its log output (relayed to mobiles, buffered in ring)
+{"type": "log", "text": "[OBS] dropped frame", "ts": 1234567890123}
+
+// Music Queue module broadcasts now-playing (relayed to mobiles)
+{"type": "now_playing", "title": "Oblivion", "artist": "Grimes, HANA",
+ "version": "", "cover": "https://...", "queue_size": 2, "paused": false}
+
+// Mobile → Main page: music remote controls (relayed to main page's music-queue _obsWs)
+{"type": "music_pause"}
+{"type": "music_resume"}
+{"type": "music_skip"}
+{"type": "music_prev"}
+```
+
+Server distinguishes commands (type prefix `cmd_` or `obs_config`) from relay messages. OBS commands are executed against OBS and not relayed; `obs_config` updates the OBS connection config. All other messages relay to other clients normally.
+
+---
+
 ## Environment & Requirements
 
 ### Technical Requirements
 - Web-based client-side application
-- Served via Caddy on localhost:8443 with TLS
+- Served via Rust server on localhost:8443 with TLS (self-signed, SAN includes localhost + LAN IP)
 - WebSocket connections:
   - Twitch IRC (wss://irc-ws.chat.twitch.tv:443)
   - Twitch EventSub (wss://eventsub.wss.twitch.tv/ws)
   - Minecraft/Minaret (ws://localhost:8765)
   - Echowire (wss://localhost:8443/echowire)
-  - OBS Studio (ws://localhost:4455)
+  - OBS Studio (ws://localhost:4455) — **server-side only**
+  - `/obs` bus (wss://localhost:8443/obs) — browser and mobile clients
 - HTTP connections:
   - Ollama LLM server (http://localhost:11434)
   - Twitch Helix API (https://api.twitch.tv/helix)

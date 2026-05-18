@@ -200,15 +200,23 @@
           log("attaching play/ended listeners");
           onAudioReady(this);
           this.addEventListener("play", () => {
-            // New Yandex v4 format: "Artist  —  Title" (double-space em-dash double-space)
+            // Playerbar: "Artist  —  Title" (double-space em-dash double-space)
             const trackEl  = document.querySelector('div[class*="VibePlayerbarMeta_trackNameText"]:not([aria-hidden="true"])');
             const rawText  = trackEl?.textContent?.trim() ?? "";
             const sep      = "  —  ";
             const sepIdx   = rawText.indexOf(sep);
-            // Reformat to "Title\nArtist" expected by module _parseSongName
-            const name     = sepIdx > -1
-              ? rawText.slice(sepIdx + sep.length).trim() + "\n" + rawText.slice(0, sepIdx).trim()
-              : rawText;
+            // VibePage artist element carries the full artist string as title attr (e.g. "Grimes, HANA")
+            const vibeArtistEl = document.querySelector('[class*="SeparatedArtists_root_variant_breakWord"]');
+            const vibeArtist   = vibeArtistEl?.getAttribute('title')?.trim() ?? null;
+            // Build "Title\nArtist" expected by module _parseSongName
+            let name;
+            if (sepIdx > -1) {
+              const title  = rawText.slice(sepIdx + sep.length).trim();
+              const artist = vibeArtist ?? rawText.slice(0, sepIdx).trim();
+              name = title + "\n" + artist;
+            } else {
+              name = vibeArtist ? rawText + "\n" + vibeArtist : rawText;
+            }
             const coverImg = document.querySelector('img[class*="AlbumCover_cover__"]');
             const cover    = coverImg?.src?.replace(/\/\d+x\d+$/, "/200x200") ?? null;
             log(`music_start: "${name}" cover=${cover}`);
@@ -252,6 +260,7 @@
         case "pause":        pause(); break;
         case "resume":       resume(); break;
         case "next":         safeClick('button[aria-label="Next song"]'); break;
+        case "prev":         safeClick('button[aria-label="Previous song"]'); break;
         case "query_status": sendToMaster("status_reply", status()); break;
         case "ping":         sendToMaster("pong", { type: "yandex" }); break;
         default:             warn(`unknown command: ${command}`);

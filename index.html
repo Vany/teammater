@@ -4,6 +4,7 @@
         <meta charset="UTF-8" />
         <title>Teammater</title>
         <link rel="stylesheet" href="index.css" />
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" crossorigin="anonymous"></script>
     </head>
     <body>
         <div class="main-content">
@@ -16,6 +17,12 @@
 
             <!-- Module Container (new modular system) -->
             <div id="modules-container" class="modules-container"></div>
+
+            <!-- Mobile remote QR code -->
+            <div id="mobile-panel" style="padding:8px 4px;border-top:1px solid #333;margin-bottom:6px;">
+                <div id="mobile-qr" style="display:inline-block;vertical-align:middle;margin-right:8px;"></div>
+                <div id="mobile-url" style="font-size:10px;color:#888;word-break:break-all;display:inline-block;vertical-align:middle;max-width:160px;"></div>
+            </div>
 
             <a href="/neco.html?t=100" target="_blank">1M</a>
             <a href="/neco.html?t=300" target="_blank">5M</a>
@@ -156,6 +163,26 @@
                     });
                 });
             })();
+        </script>
+        <script>
+            // Populate mobile QR code after page loads
+            fetch('/api/info')
+                .then(r => r.json())
+                .then(({ lan_ip, port }) => {
+                    if (!lan_ip) return;
+                    const url = `https://${lan_ip}:${port}/mobile`;
+                    document.getElementById('mobile-url').textContent = url;
+                    if (typeof QRCode !== 'undefined') {
+                        new QRCode(document.getElementById('mobile-qr'), {
+                            text: url,
+                            width: 80,
+                            height: 80,
+                            colorDark: '#ffffff',
+                            colorLight: '#1a1a1a',
+                        });
+                    }
+                })
+                .catch(() => {});
         </script>
         <script type="module" src="index.js"></script>
     </body>

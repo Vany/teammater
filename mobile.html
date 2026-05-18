@@ -1,0 +1,688 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Teammater</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+    html, body {
+      background: #0d0d0d;
+      color: #eee;
+      font-family: system-ui, -apple-system, sans-serif;
+      height: 100%;
+      overflow: hidden;
+      user-select: none;
+    }
+
+    #conn-dot {
+      position: fixed;
+      top: 8px; right: 8px;
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: #555;
+      z-index: 200;
+      transition: background 0.3s;
+    }
+
+    #layout {
+      display: flex;
+      height: 100vh;
+    }
+
+    /* ── Log panel ── */
+    #log-panel {
+      width: 35%;
+      background: #111;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid #222;
+    }
+    #log-header {
+      padding: 6px 8px;
+      font-size: 10px;
+      color: #555;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      border-bottom: 1px solid #1e1e1e;
+      flex-shrink: 0;
+    }
+    #log-output {
+      flex: 1;
+      overflow-y: auto;
+      padding: 4px 6px;
+      font-family: monospace;
+      font-size: 10px;
+      color: #888;
+    }
+    .log-line { padding: 1px 0; word-break: break-all; line-height: 1.4; }
+
+    /* ── Controls panel ── */
+    #controls-panel {
+      flex: 1;
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      overflow-y: auto;
+    }
+
+    .section-label {
+      font-size: 10px;
+      color: #666;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 5px;
+    }
+
+    /* ── Scene section ── */
+    #scene-section {
+      background: #1a2030;
+      border: 1px solid #2a3550;
+      border-radius: 8px;
+      padding: 10px 14px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 50px;
+      flex-shrink: 0;
+    }
+    #scene-section:active { background: #222a3a; }
+    #scene-name {
+      font-size: 17px;
+      font-weight: 600;
+      color: #cce;
+    }
+    #scene-arrow { color: #557; font-size: 18px; }
+
+    /* ── Streaming section ── */
+    #streaming-section {
+      background: #0a1a0f;
+      border: 1px solid #1a3020;
+      border-radius: 8px;
+      padding: 10px 14px;
+      flex-shrink: 0;
+    }
+    #stream-live-row {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      margin-bottom: 4px;
+    }
+    #stream-live-badge {
+      background: #cc2222;
+      color: white;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 3px;
+      letter-spacing: 1px;
+    }
+    #stream-time {
+      font-size: 24px;
+      font-weight: 700;
+      color: #44dd88;
+      font-variant-numeric: tabular-nums;
+    }
+    #viewer-count { color: #888; font-size: 13px; }
+    #stream-quality { font-size: 12px; margin-top: 3px; color: #aaa; }
+
+    /* ── Heart rate + Song row ── */
+    #meta-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+    #heartrate-section {
+      background: #0d1520;
+      border: 1px solid #1a2840;
+      border-radius: 8px;
+      padding: 7px 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+    #heart-icon {
+      font-size: 18px;
+      display: inline-block;
+    }
+    @keyframes heartbeat {
+      0%, 100% { transform: scale(1); }
+      40%       { transform: scale(1.3); }
+    }
+    #heart-icon.beating {
+      animation: heartbeat var(--hb-dur, 0.8s) ease-in-out infinite;
+    }
+    #heart-bpm {
+      font-size: 20px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      min-width: 36px;
+    }
+    #song-section {
+      flex: 1;
+      background: #0d150d;
+      border: 1px solid #1a2a1a;
+      border-radius: 8px;
+      padding: 5px 10px 4px;
+      overflow: hidden;
+    }
+    #song-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: #aaeebb;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    #song-artist {
+      font-size: 11px;
+      color: #668866;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* ── Music controls ── */
+    #music-controls {
+      display: flex;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+    #music-controls button {
+      flex: 1;
+      min-height: 52px;
+      border: none;
+      border-radius: 8px;
+      font-size: 20px;
+      cursor: pointer;
+      background: #1a1a2a;
+      color: #ccc;
+      transition: opacity 0.15s;
+    }
+    #music-controls button:active { opacity: 0.7; }
+    #btn-music-playpause { flex: 1.4; background: #1a2a1a; font-size: 24px; }
+
+    /* ── Recording section ── */
+    #recording-section {
+      background: #130a0a;
+      border: 1px solid #2a1515;
+      border-radius: 8px;
+      padding: 8px 10px;
+      flex-shrink: 0;
+    }
+    /* Single row: [●REC/■STOP] [timer] [⏸PAUSE/▶RESUME] */
+    #rec-row {
+      display: flex;
+      align-items: stretch;
+      gap: 8px;
+      min-height: 68px;
+    }
+    #btn-rec-toggle {
+      flex: 0 0 72px;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    #btn-rec-toggle:active { opacity: 0.8; }
+    #btn-rec-toggle.state-idle { background: #aa1111; color: white; }
+    #btn-rec-toggle.state-active { background: #333; color: #ccc; }
+    #rec-time {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      color: #dd4444;
+    }
+    #btn-pause-rec {
+      flex: 0 0 110px;
+      border: none;
+      border-radius: 6px;
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    #btn-pause-rec:active { opacity: 0.8; }
+    #btn-pause-rec:disabled { opacity: 0.25; cursor: default; }
+    #btn-pause-rec.state-pause  { background: #cc7700; color: white; }
+    #btn-pause-rec.state-resume { background: #1a8833; color: white; }
+    #btn-pause-rec.state-off    { background: #222; color: #555; }
+
+    /* ── Scene picker modal ── */
+    #scene-modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.92);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+    #scene-modal.open { display: flex; }
+    #scene-list-wrap {
+      width: min(380px, 88vw);
+      max-height: 80vh;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+      padding: 16px;
+      background: #141414;
+      border-radius: 12px;
+      border: 1px solid #2a2a2a;
+    }
+    #scene-modal-title {
+      font-size: 12px;
+      color: #666;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 4px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #222;
+    }
+    .scene-btn {
+      width: 100%;
+      min-height: 52px;
+      background: #1c1c2a;
+      border: 1px solid #2a2a3a;
+      border-radius: 8px;
+      color: #dde;
+      font-size: 15px;
+      font-weight: 500;
+      cursor: pointer;
+      text-align: left;
+      padding: 0 14px;
+      display: flex;
+      align-items: center;
+    }
+    .scene-btn:active { background: #252540; }
+    .scene-btn.current {
+      border-color: #4466cc;
+      background: #151525;
+      color: #88aaff;
+    }
+    #scene-dismiss {
+      width: 100%;
+      padding: 10px;
+      background: transparent;
+      border: 1px solid #333;
+      border-radius: 8px;
+      color: #666;
+      font-size: 13px;
+      cursor: pointer;
+      margin-top: 4px;
+    }
+  </style>
+</head>
+<body>
+
+<div id="conn-dot" title="Disconnected"></div>
+
+<div id="layout">
+
+  <!-- Left: log feed -->
+  <div id="log-panel">
+    <div id="log-header">Log</div>
+    <div id="log-output"></div>
+  </div>
+
+  <!-- Right: OBS controls -->
+  <div id="controls-panel">
+
+    <!-- Scene -->
+    <div id="scene-section" onclick="openScenePicker()">
+      <span id="scene-name">—</span>
+      <span id="scene-arrow">▾</span>
+    </div>
+
+    <!-- Streaming (hidden when not live) -->
+    <div id="streaming-section" style="display:none">
+      <div class="section-label">Streaming</div>
+      <div id="stream-live-row">
+        <span id="stream-live-badge">LIVE</span>
+        <span id="stream-time">0:00:00</span>
+      </div>
+      <div id="viewer-count"></div>
+      <div id="stream-quality"></div>
+    </div>
+
+    <!-- Heart rate + Song name -->
+    <div id="meta-row">
+      <div id="heartrate-section" style="display:none">
+        <span id="heart-icon">🩵</span>
+        <span id="heart-bpm">--</span>
+      </div>
+      <div id="song-section" style="display:none">
+        <div id="song-title">—</div>
+        <div id="song-artist"></div>
+      </div>
+    </div>
+
+    <!-- Music controls -->
+    <div id="music-controls">
+      <button onclick="sendCmd('music_prev')" title="Previous">⏮</button>
+      <button id="btn-music-playpause" onclick="toggleMusicPause()" title="Play / Pause">▶</button>
+      <button onclick="sendCmd('music_skip')" title="Skip">⏭</button>
+    </div>
+
+    <!-- Recording (always shown) -->
+    <div id="recording-section">
+      <div id="rec-row">
+        <button id="btn-rec-toggle" class="state-idle" onclick="toggleRec()">● REC</button>
+        <span id="rec-time">0:00:00</span>
+        <button id="btn-pause-rec" class="state-off" disabled onclick="togglePause()">⏸ PAUSE</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Scene picker modal -->
+<div id="scene-modal" onclick="onModalBackdrop(event)">
+  <div id="scene-list-wrap">
+    <div id="scene-modal-title">Select Scene</div>
+    <div id="scene-list"></div>
+    <button id="scene-dismiss" onclick="closeScenePicker()">Cancel</button>
+  </div>
+</div>
+
+<script>
+// ─── State ───────────────────────────────────────────────────────────────────
+let ws = null;
+let obsState = { connected: false, scene: '', scenes: [], streaming: null, recording: null };
+let viewerCount = null;
+let musicPaused = false;
+let streamBaseMs = 0, streamBaseTime = 0;
+let recBaseMs = 0, recBaseTime = 0;
+let reconnectTimer = null;
+
+// ─── WebSocket ────────────────────────────────────────────────────────────────
+function connect() {
+  clearTimeout(reconnectTimer);
+  ws = new WebSocket(`wss://${location.host}/obs`);
+
+  ws.onopen = () => setDot(true);
+
+  ws.onmessage = ({ data }) => {
+    try { handleMsg(JSON.parse(data)); } catch {}
+  };
+
+  ws.onclose = () => {
+    setDot(false);
+    reconnectTimer = setTimeout(connect, 3000);
+  };
+
+  ws.onerror = () => {};
+}
+
+function sendCmd(type, extra = {}) {
+  if (ws?.readyState === WebSocket.OPEN)
+    ws.send(JSON.stringify({ type, ...extra }));
+}
+
+// ─── Message routing ──────────────────────────────────────────────────────────
+function handleMsg(msg) {
+  switch (msg.type) {
+    case 'obs_state':
+      obsState = { connected: msg.connected, scene: msg.scene ?? '', scenes: msg.scenes ?? [],
+                   streaming: msg.streaming, recording: msg.recording };
+      renderAll();
+      break;
+    case 'obs_scene':
+      obsState.scene = msg.scene ?? '';
+      obsState.scenes = msg.scenes ?? [];
+      renderScene();
+      renderSceneList();
+      break;
+    case 'obs_streaming':
+      obsState.streaming = msg.streaming ?? null;
+      renderStreaming();
+      break;
+    case 'obs_recording':
+      obsState.recording = msg.recording ?? null;
+      renderRecording();
+      break;
+    case 'log':
+      appendLog(msg.text);
+      break;
+    case 'viewer_count':
+      viewerCount = msg.count;
+      document.getElementById('viewer-count').textContent =
+        viewerCount != null ? `${viewerCount} viewers` : '';
+      break;
+    case 'heartrate':
+      renderHeartrate(msg.heartrate);
+      break;
+    case 'now_playing':
+      renderSong(msg);
+      break;
+  }
+}
+
+// ─── Render ───────────────────────────────────────────────────────────────────
+function renderAll() {
+  renderScene();
+  renderStreaming();
+  renderRecording();
+}
+
+function renderScene() {
+  document.getElementById('scene-name').textContent = obsState.scene || '—';
+}
+
+function renderStreaming() {
+  const info = obsState.streaming;
+  const section = document.getElementById('streaming-section');
+  if (!info || !info.active) {
+    section.style.display = 'none';
+    return;
+  }
+  section.style.display = '';
+  streamBaseMs = parseTimecode(info.timecode);
+  streamBaseTime = Date.now();
+  renderStreamQuality(info);
+}
+
+function renderStreamQuality(info) {
+  const drop = info.total_frames > 0 ? info.dropped_frames / info.total_frames * 100 : 0;
+  const color = drop <= 0.5 ? '#44dd88' : drop <= 2 ? '#ffcc00' : '#ff4444';
+  document.getElementById('stream-quality').innerHTML =
+    `<span style="color:${color}">↓${info.dropped_frames}f</span> &nbsp;${info.bitrate_kbps} kbps`;
+}
+
+function renderRecording() {
+  const info = obsState.recording;
+  const togBtn  = document.getElementById('btn-rec-toggle');
+  const pauseBtn = document.getElementById('btn-pause-rec');
+  const recTime  = document.getElementById('rec-time');
+
+  if (!info || !info.active) {
+    togBtn.className = 'state-idle';
+    togBtn.textContent = '● REC';
+    pauseBtn.disabled = true;
+    pauseBtn.className = 'state-off';
+    pauseBtn.textContent = '⏸ PAUSE';
+    recTime.textContent = '0:00:00';
+    return;
+  }
+
+  togBtn.className = 'state-active';
+  togBtn.textContent = '■ STOP';
+  pauseBtn.disabled = false;
+
+  recBaseMs = parseTimecode(info.timecode);
+  recBaseTime = Date.now();
+
+  if (info.paused) {
+    pauseBtn.className = 'state-resume';
+    pauseBtn.textContent = '▶ RESUME';
+  } else {
+    pauseBtn.className = 'state-pause';
+    pauseBtn.textContent = '⏸ PAUSE';
+  }
+}
+
+function renderHeartrate(bpm) {
+  const section = document.getElementById('heartrate-section');
+  const icon    = document.getElementById('heart-icon');
+  const num     = document.getElementById('heart-bpm');
+  if (!bpm) { section.style.display = 'none'; return; }
+  section.style.display = '';
+  num.textContent = bpm;
+  const dur = (60 / bpm).toFixed(2) + 's';
+  icon.style.setProperty('--hb-dur', dur);
+  icon.classList.add('beating');
+  const color = bpm <= 100 ? '#44dd88' : bpm <= 125 ? '#ffcc00' : '#ff4444';
+  num.style.color = color;
+  icon.style.filter = `drop-shadow(0 0 4px ${color})`;
+}
+
+function renderSong(msg) {
+  const section = document.getElementById('song-section');
+  const title   = document.getElementById('song-title');
+  const artist  = document.getElementById('song-artist');
+  const t = [msg.title, msg.version].filter(Boolean).join(' · ');
+  if (!t && !msg.artist) { section.style.display = 'none'; return; }
+  section.style.display = '';
+  title.textContent  = t || '—';
+  artist.textContent = msg.artist || '';
+  musicPaused = msg.paused ?? false;
+  document.getElementById('btn-music-playpause').textContent = musicPaused ? '▶' : '⏸';
+}
+
+function toggleMusicPause() {
+  sendCmd(musicPaused ? 'music_resume' : 'music_pause');
+  // Optimistic local toggle while waiting for server echo
+  musicPaused = !musicPaused;
+  document.getElementById('btn-music-playpause').textContent = musicPaused ? '▶' : '⏸';
+}
+
+// ─── Live timers ──────────────────────────────────────────────────────────────
+setInterval(() => {
+  const s = obsState.streaming;
+  if (s?.active) {
+    const ms = streamBaseMs + (Date.now() - streamBaseTime);
+    document.getElementById('stream-time').textContent = fmtDuration(ms);
+  }
+  const r = obsState.recording;
+  if (r?.active) {
+    const ms = r.paused ? recBaseMs : recBaseMs + (Date.now() - recBaseTime);
+    document.getElementById('rec-time').textContent = fmtDuration(ms);
+  }
+}, 1000);
+
+// ─── Record controls ──────────────────────────────────────────────────────────
+function toggleRec() {
+  const r = obsState.recording;
+  sendCmd(r?.active ? 'cmd_stop_record' : 'cmd_start_record');
+}
+
+function togglePause() {
+  const r = obsState.recording;
+  if (!r?.active) return;
+  sendCmd(r.paused ? 'cmd_resume_record' : 'cmd_pause_record');
+}
+
+// ─── Scene picker ─────────────────────────────────────────────────────────────
+function openScenePicker() {
+  renderSceneList();
+  document.getElementById('scene-modal').classList.add('open');
+}
+
+function closeScenePicker() {
+  document.getElementById('scene-modal').classList.remove('open');
+}
+
+function onModalBackdrop(e) {
+  if (e.target === e.currentTarget) closeScenePicker();
+}
+
+function renderSceneList() {
+  const list = document.getElementById('scene-list');
+  list.innerHTML = '';
+  for (const scene of (obsState.scenes || [])) {
+    const btn = document.createElement('button');
+    btn.className = 'scene-btn' + (scene === obsState.scene ? ' current' : '');
+    btn.textContent = scene;
+    btn.onclick = () => {
+      sendCmd('cmd_switch_scene', { scene });
+      closeScenePicker();
+    };
+    list.appendChild(btn);
+  }
+}
+
+// ─── Log ──────────────────────────────────────────────────────────────────────
+const MAX_LINES = 200;
+function appendLog(text) {
+  const output = document.getElementById('log-output');
+  const div = document.createElement('div');
+  div.className = 'log-line';
+  div.textContent = text;
+  output.appendChild(div);
+  if (output.children.length > MAX_LINES) output.removeChild(output.firstChild);
+  output.scrollTop = output.scrollHeight;
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function setDot(ok) {
+  const dot = document.getElementById('conn-dot');
+  dot.style.background = ok ? '#44dd88' : '#cc2222';
+  dot.title = ok ? 'Connected' : 'Disconnected';
+  if (ok) acquireWakeLock(); else releaseWakeLock();
+}
+
+/** Parse OBS timecode "HH:MM:SS.mmm" to milliseconds */
+function parseTimecode(tc) {
+  if (!tc) return 0;
+  const [h, m, rest] = tc.split(':');
+  const [s, ms = '0'] = rest.split('.');
+  return (+h * 3600 + +m * 60 + +s) * 1000 + +ms.padEnd(3, '0').slice(0, 3);
+}
+
+function fmtDuration(ms) {
+  const t = Math.floor(ms / 1000);
+  const h = Math.floor(t / 3600);
+  const m = Math.floor(t % 3600 / 60);
+  const s = t % 60;
+  return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}
+
+// ─── Screen Wake Lock ─────────────────────────────────────────────────────────
+let wakeLock = null;
+
+async function acquireWakeLock() {
+  if (!('wakeLock' in navigator)) return;
+  if (wakeLock) return;
+  try {
+    wakeLock = await navigator.wakeLock.request('screen');
+    wakeLock.addEventListener('release', () => { wakeLock = null; });
+  } catch {}
+}
+
+function releaseWakeLock() {
+  wakeLock?.release();
+  wakeLock = null;
+}
+
+// Re-acquire after browser releases it on tab hide/restore
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && obsState.connected) acquireWakeLock();
+});
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+connect();
+</script>
+</body>
+</html>

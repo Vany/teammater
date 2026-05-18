@@ -53,6 +53,7 @@ export class MusicQueueModule extends BaseModule {
     this.currentlyPlaying = null;   // URL sent to player; emptyUrl = My Vibes
     this.nowPlaying      = { title: "", artist: "", version: "", cover: null };
     this.needVoteSkip    = 3;
+    this._musicPaused    = false;
     this._obsWs          = null;
     this._emptyUrl       = "https://music.yandex.ru/";
     this._voteSkipThreshold = 3;
@@ -192,6 +193,7 @@ export class MusicQueueModule extends BaseModule {
     this.currentlyPlaying = null;
     this._ytPlayerActive  = false;
     this.needVoteSkip     = this._voteSkipThreshold;
+    this._musicPaused     = false;
     this._stopWatchdog();
   }
 
@@ -293,6 +295,26 @@ export class MusicQueueModule extends BaseModule {
     this._playNext();
   }
 
+  pauseMusic() {
+    this._musicPaused = true;
+    bridge.send("pause", null, "yandex");
+    if (this._ytPlayerActive) bridge.send("pause", null, "youtube");
+    this._broadcastNowPlaying();
+    this.log("⏸ Music paused (remote)");
+  }
+
+  resumeMusic() {
+    this._musicPaused = false;
+    bridge.send("resume", null, "yandex");
+    this._broadcastNowPlaying();
+    this.log("▶ Music resumed (remote)");
+  }
+
+  prevSong() {
+    bridge.send("prev", null, "yandex");
+    this.log("⏮ Prev (remote)");
+  }
+
   voteSkip() {
     const onMyVibes = !this.currentlyPlaying || this.currentlyPlaying === this._emptyUrl;
     if (onMyVibes) {
@@ -337,7 +359,13 @@ export class MusicQueueModule extends BaseModule {
     ws.onmessage = ({ data }) => {
       try {
         const msg = JSON.parse(data);
-        if (msg.request === "now_playing") this._broadcastNowPlaying();
+        if (msg.request === "now_playing") { this._broadcastNowPlaying(); return; }
+        switch (msg.type) {
+          case "music_pause":  this.pauseMusic();  break;
+          case "music_resume": this.resumeMusic(); break;
+          case "music_skip":   this.skip();        break;
+          case "music_prev":   this.prevSong();    break;
+        }
       } catch {}
     };
     ws.onclose = () => {
@@ -351,14 +379,14 @@ export class MusicQueueModule extends BaseModule {
   _broadcastNowPlaying() {
     if (!this._obsWs || this._obsWs.readyState !== WebSocket.OPEN) return;
     this._obsWs.send(JSON.stringify({
-      now_playing: {
-        artist:        this.nowPlaying.artist,
-        title:         this.nowPlaying.title,
-        version:       this.nowPlaying.version ?? "",
-        cover:         this.nowPlaying.cover,
-        coverFallback: this.nowPlaying.coverFallback ?? null,
-        queue_size:    this.queue?.size() ?? 0,
-      },
+      type:          "now_playing",
+      artist:        this.nowPlaying.artist,
+      title:         this.nowPlaying.title,
+      version:       this.nowPlaying.version ?? "",
+      cover:         this.nowPlaying.cover,
+      coverFallback: this.nowPlaying.coverFallback ?? null,
+      queue_size:    this.queue?.size() ?? 0,
+      paused:        this._musicPaused,
     }));
   }
 
