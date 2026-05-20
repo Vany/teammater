@@ -1,5 +1,6 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use rcgen::{CertificateParams, DistinguishedName, DnType, KeyPair, SanType};
+use rustls::ServerConfig;
 use std::{
     fs,
     net::{IpAddr, Ipv4Addr, UdpSocket},
@@ -48,6 +49,27 @@ pub fn detect_lan_ip() -> Option<IpAddr> {
     let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
     socket.connect("8.8.8.8:80").ok()?;
     socket.local_addr().ok().map(|a| a.ip())
+}
+
+/// Load TLS config, generating a cert if needed.
+pub fn load_tls_config(cert_path: &Path, key_path: &Path, lan_ip: Option<IpAddr>) -> Result<ServerConfig> {
+    ensure_cert_exists(cert_path, key_path, lan_ip)?;
+
+    let cert_pem = fs::read(cert_path).context("read certificate")?;
+    let key_pem  = fs::read(key_path).context("read private key")?;
+
+    let certs = rustls_pemfile::certs(&mut &cert_pem[..])
+        .collect::<Result<Vec<_>, _>>()
+        .context("parse certificates")?;
+    let key = rustls_pemfile::private_key(&mut &key_pem[..])?
+        .ok_or_else(|| anyhow!("no private key in {}", key_path.display()))?;
+
+    let mut cfg = ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .context("configure TLS")?;
+    cfg.alpn_protocols = vec![b"http/1.1".to_vec()];
+    Ok(cfg)
 }
 
 /// Ensure a valid TLS cert exists for both localhost and the given LAN IP.
