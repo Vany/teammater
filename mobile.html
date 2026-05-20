@@ -57,6 +57,14 @@
       color: #888;
     }
     .log-line { padding: 1px 0; word-break: break-all; line-height: 1.4; }
+    .log-chat {
+      padding: 3px 0;
+      word-break: break-word;
+      line-height: 1.3;
+      font-size: 20px;
+      color: #eee;
+    }
+    .log-chat .chat-user { color: #88bbff; font-weight: 600; }
 
     /* ── Controls panel ── */
     #controls-panel {
@@ -213,6 +221,14 @@
     }
     #music-controls button:active { opacity: 0.7; }
     #btn-music-playpause { width: 42px; font-size: 18px; }
+    #song-cover {
+      width: 42px; height: 42px;
+      border-radius: 5px;
+      object-fit: cover;
+      flex-shrink: 0;
+      display: none;
+    }
+    #song-cover.visible { display: block; }
 
     /* ── Sysinfo section (in meta-row) ── */
     #sysinfo-section {
@@ -408,6 +424,7 @@
         </div>
       </div>
       <div id="song-section" style="display:none">
+        <img id="song-cover" alt="" />
         <div id="song-text">
           <div id="song-title">—</div>
           <div id="song-artist"></div>
@@ -517,6 +534,9 @@ function handleMsg(msg) {
     case 'sysinfo':
       renderSysinfo(msg);
       break;
+    case 'chat_message':
+      appendChatLog(msg.user, msg.text);
+      break;
   }
 }
 
@@ -617,6 +637,7 @@ function renderSong(msg) {
   const section = document.getElementById('song-section');
   const title   = document.getElementById('song-title');
   const artist  = document.getElementById('song-artist');
+  const cover   = document.getElementById('song-cover');
   const t = [msg.title, msg.version].filter(Boolean).join(' · ');
   if (!t && !msg.artist) { section.style.display = 'none'; return; }
   section.style.display = '';
@@ -624,6 +645,13 @@ function renderSong(msg) {
   artist.textContent = msg.artist || '';
   musicPaused = msg.paused ?? false;
   document.getElementById('btn-music-playpause').textContent = musicPaused ? '▶' : '⏸';
+  if (msg.cover) {
+    cover.onerror = msg.coverFallback ? () => { cover.onerror = null; cover.src = msg.coverFallback; } : null;
+    cover.src = msg.cover;
+    cover.classList.add('visible');
+  } else {
+    cover.classList.remove('visible');
+  }
 }
 
 function toggleMusicPause() {
@@ -695,6 +723,20 @@ function appendLog(text) {
   const div = document.createElement('div');
   div.className = 'log-line';
   div.textContent = text;
+  output.appendChild(div);
+  if (output.children.length > MAX_LINES) output.removeChild(output.firstChild);
+  output.scrollTop = output.scrollHeight;
+}
+
+function appendChatLog(user, text) {
+  const output = document.getElementById('log-output');
+  const div = document.createElement('div');
+  div.className = 'log-chat';
+  const name = document.createElement('span');
+  name.className = 'chat-user';
+  name.textContent = user + ': ';
+  div.appendChild(name);
+  div.appendChild(document.createTextNode(text));
   output.appendChild(div);
   if (output.children.length > MAX_LINES) output.removeChild(output.firstChild);
   output.scrollTop = output.scrollHeight;

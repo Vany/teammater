@@ -142,6 +142,7 @@ export class MinecraftModule extends BaseModule {
           chat: "T",
         }),
       );
+      this.log(`📨 Minaret ← ${user}: ${message}`);
       return true;
     } catch (error) {
       this.log(`💥 Send failed: ${error.message}`);

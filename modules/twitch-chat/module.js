@@ -245,6 +245,14 @@ export class TwitchChatModule extends BaseModule {
     // Add to chat history
     this._addToChatHistory(username, message);
 
+    // Broadcast to /obs bus so mobile and other bus clients see chat
+    this.moduleManager?.get("obs")?._sendCmd("chat_message", {
+      user: username,
+      text: message,
+      user_id: tags?.["user-id"] ?? "",
+      msg_id: tags?.id ?? "",
+    });
+
     // Notify message handlers (for chat actions, LLM monitoring, etc.)
     this._notifyMessageHandlers({
       username,

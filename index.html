@@ -20,8 +20,9 @@
 
             <!-- Mobile remote QR code -->
             <div id="mobile-panel" style="padding:8px 4px;border-top:1px solid #333;margin-bottom:6px;">
-                <div id="mobile-qr" style="display:inline-block;vertical-align:middle;margin-right:8px;"></div>
-                <div id="mobile-url" style="font-size:10px;color:#888;word-break:break-all;display:inline-block;vertical-align:middle;max-width:160px;"></div>
+                <a id="mobile-qr-link" href="#" target="_blank" style="display:inline-block;">
+                    <div id="mobile-qr"></div>
+                </a>
             </div>
 
             <a href="/neco.html?t=100" target="_blank">1M</a>
@@ -171,7 +172,7 @@
                 .then(({ lan_ip, port }) => {
                     if (!lan_ip) return;
                     const url = `https://${lan_ip}:${port}/mobile`;
-                    document.getElementById('mobile-url').textContent = url;
+                    document.getElementById('mobile-qr-link').href = url;
                     if (typeof QRCode !== 'undefined') {
                         new QRCode(document.getElementById('mobile-qr'), {
                             text: url,

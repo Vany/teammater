@@ -176,13 +176,19 @@
     }
 
     function status() {
-      const trackEl = document.querySelector('div[class*="VibePlayerbarMeta_trackNameText"]:not([aria-hidden="true"])');
+      const track = readCurrentTrack();
       return {
-        playing:     audioEl ? !audioEl.paused : false,
-        currentTime: audioEl?.currentTime ?? 0,
-        duration:    audioEl?.duration ?? 0,
-        trackInfo:   trackEl?.textContent?.trim() ?? "Unknown",
-        url:         location.href,
+        playing:       audioEl ? !audioEl.paused : false,
+        currentTime:   audioEl?.currentTime ?? 0,
+        duration:      audioEl?.duration ?? 0,
+        trackInfo:     track.title ? `${track.artist} - ${track.title}` : "Unknown",
+        title:         track.title,
+        artist:        track.artist,
+        version:       track.version,
+        cover:         track.cover,
+        coverFallback: track.coverFallback,
+        source:        "yandex",
+        url:           location.href,
       };
     }
 
@@ -241,7 +247,12 @@
         case "resume":       resume(); break;
         case "next":         safeClick('button[aria-label="Next song"]'); break;
         case "prev":         safeClick('button[aria-label="Previous song"]'); break;
-        case "query_status": sendToMaster("status_reply", status()); break;
+        case "query_status": {
+          sendToMaster("status_reply", status());
+          const info = readCurrentTrack();
+          if (info.title) sendToMaster("music_start", info);
+          break;
+        }
         case "ping":         sendToMaster("pong", { type: "yandex" }); break;
         default:             warn(`unknown command: ${command}`);
       }
@@ -462,15 +473,24 @@
     }
 
     function status() {
-      const video = document.querySelector("video");
-      const p     = unsafeWindow.ytInitialPlayerResponse;
+      const video   = document.querySelector("video");
+      const p       = unsafeWindow.ytInitialPlayerResponse;
+      const videoId = p?.videoDetails?.videoId ?? null;
+      const title   = p?.videoDetails?.title ?? "Unknown";
+      const artist  = p?.videoDetails?.author ?? "";
       return {
-        type:        "youtube",
-        playing:     video ? !video.paused : false,
-        currentTime: video?.currentTime ?? 0,
-        duration:    video?.duration ?? 0,
-        trackInfo:   p?.videoDetails?.title ?? "Unknown",
-        url:         location.href,
+        type:          "youtube",
+        playing:       video ? !video.paused : false,
+        currentTime:   video?.currentTime ?? 0,
+        duration:      video?.duration ?? 0,
+        trackInfo:     title,
+        title,
+        artist,
+        version:       "",
+        cover:         videoId ? `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg` : null,
+        coverFallback: videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : null,
+        source:        "youtube",
+        url:           location.href,
       };
     }
 

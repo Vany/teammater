@@ -92,6 +92,8 @@ struct AppState {
     log_ring: Mutex<VecDeque<String>>,
     /// Last sysinfo JSON — sent immediately to new clients
     last_sysinfo: Mutex<Option<String>>,
+    /// Last now_playing JSON — sent immediately to new clients
+    last_now_playing: Mutex<Option<String>>,
     lan_ip: String,
 }
 
@@ -112,6 +114,7 @@ impl AppState {
             obs_config_tx: cfg_tx,
             log_ring: Mutex::new(VecDeque::with_capacity(LOG_RING_SIZE + 1)),
             last_sysinfo: Mutex::new(None),
+            last_now_playing: Mutex::new(None),
             lan_ip,
         };
         (state, cmd_rx, cfg_rx)
@@ -274,6 +277,13 @@ async fn handle_obs_websocket(socket: WebSocket, state: Arc<AppState>, client_id
         }
     }
 
+    let last_now_playing = state.last_now_playing.lock().unwrap().clone();
+    if let Some(np) = last_now_playing {
+        if tx.send(Message::Text(np)).await.is_err() {
+            return;
+        }
+    }
+
     let mut broadcast_rx = state.obs_broadcast.subscribe();
     let obs_cmd_tx = state.obs_cmd_tx.clone();
     let obs_broadcast = state.obs_broadcast.clone();
@@ -348,7 +358,15 @@ async fn route_incoming(
         }
         let _ = obs_broadcast.send(ObsMessage { sender_id: client_id, text });
     } else {
-        // viewer_count, heartrate, etc. — relay to all other clients
+        // Cache now_playing (only when cover is present) so new clients get it on connect
+        if msg_type == "now_playing" {
+            if let Ok(v) = serde_json::from_str::<Value>(&text) {
+                if !v["cover"].is_null() {
+                    *state.last_now_playing.lock().unwrap() = Some(text.clone());
+                }
+            }
+        }
+        // viewer_count, heartrate, now_playing, etc. — relay to all other clients
         let _ = obs_broadcast.send(ObsMessage { sender_id: client_id, text });
     }
 }

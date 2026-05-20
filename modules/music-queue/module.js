@@ -184,7 +184,16 @@ export class MusicQueueModule extends BaseModule {
         this._ytPlayerActive = true;
         this.log("📺 YouTube player tab detected on reconnect");
       }
-      this.nowPlaying = { ...this._parseSongName(data.trackInfo), cover: null, coverFallback: null, source: "", url: "" };
+      const parsed = data.title
+        ? { title: data.title, artist: data.artist ?? "", version: data.version ?? "" }
+        : this._parseSongName(data.trackInfo);
+      this.nowPlaying = {
+        ...parsed,
+        cover:         data.cover         ?? null,
+        coverFallback: data.coverFallback  ?? null,
+        source:        data.source         ?? "",
+        url:           data.url            ?? "",
+      };
       this.log(`🎵 Status synced: ${this.nowPlaying.title}`);
       this._refreshStatusDisplay();
     });
@@ -378,7 +387,7 @@ export class MusicQueueModule extends BaseModule {
     ws.onmessage = ({ data }) => {
       try {
         const msg = JSON.parse(data);
-        if (msg.request === "now_playing") { this._broadcastNowPlaying(); return; }
+        if (msg.request === "now_playing") { if (this.nowPlaying.cover) this._broadcastNowPlaying(); return; }
         switch (msg.type) {
           case "music_pause":  this.pauseMusic();  break;
           case "music_resume": this.resumeMusic(); break;
