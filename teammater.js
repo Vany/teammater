@@ -200,27 +200,7 @@
           log("attaching play/ended listeners");
           onAudioReady(this);
           this.addEventListener("play", () => {
-            // Playerbar: "Artist  —  Title" (double-space em-dash double-space)
-            const trackEl  = document.querySelector('div[class*="VibePlayerbarMeta_trackNameText"]:not([aria-hidden="true"])');
-            const rawText  = trackEl?.textContent?.trim() ?? "";
-            const sep      = "  —  ";
-            const sepIdx   = rawText.indexOf(sep);
-            // VibePage artist element carries the full artist string as title attr (e.g. "Grimes, HANA")
-            const vibeArtistEl = document.querySelector('[class*="SeparatedArtists_root_variant_breakWord"]');
-            const vibeArtist   = vibeArtistEl?.getAttribute('title')?.trim() ?? null;
-            // Build "Title\nArtist" expected by module _parseSongName
-            let name;
-            if (sepIdx > -1) {
-              const title  = rawText.slice(sepIdx + sep.length).trim();
-              const artist = vibeArtist ?? rawText.slice(0, sepIdx).trim();
-              name = title + "\n" + artist;
-            } else {
-              name = vibeArtist ? rawText + "\n" + vibeArtist : rawText;
-            }
-            const coverImg = document.querySelector('img[class*="AlbumCover_cover__"]');
-            const cover    = coverImg?.src?.replace(/\/\d+x\d+$/, "/200x200") ?? null;
-            log(`music_start: "${name}" cover=${cover}`);
-            sendToMaster("music_start", { name, cover });
+            sendCurrentTrackToMaster();
           });
           this.addEventListener("ended", () => {
             log(`music_done: ${location.href}`);
@@ -266,6 +246,57 @@
         default:             warn(`unknown command: ${command}`);
       }
     });
+
+    function readCurrentTrack() {
+      const trackEl  = document.querySelector('div[class*="VibePlayerbarMeta_trackNameText"]:not([aria-hidden="true"])');
+      const rawText  = trackEl?.textContent?.trim() ?? "";
+      const sep      = "  —  ";
+      const sepIdx   = rawText.indexOf(sep);
+      const vibeArtist = document.querySelector('[class*="SeparatedArtists_root_variant_breakWord"]')
+                           ?.getAttribute('title')?.trim() ?? null;
+      let title, artist;
+      if (sepIdx > -1) {
+        title  = rawText.slice(sepIdx + sep.length).trim();
+        artist = vibeArtist ?? rawText.slice(0, sepIdx).trim();
+      } else {
+        title  = rawText;
+        artist = vibeArtist ?? "";
+      }
+      const coverImg = document.querySelector('img[class*="AlbumCover_cover__"]');
+      const cover    = coverImg?.src?.replace(/\/\d+x\d+$/, "/200x200") ?? null;
+      return { title, artist, version: "", cover, coverFallback: null, source: "yandex", url: location.href };
+    }
+
+    function sendCurrentTrackToMaster() {
+      const info = readCurrentTrack();
+      if (!info.title) return;
+      log(`music_start: "${info.title}" by "${info.artist}" cover=${info.cover}`);
+      sendToMaster("music_start", info);
+    }
+
+    // Direct /obs bus connection — handles pause/resume without Tampermonkey on the remote end
+    function connectObsBus() {
+      const ws = new WebSocket("wss://localhost:8443/obs");
+      ws.onopen = () => {
+        // Re-send current track info so master has up-to-date artist on reconnect/reload
+        const info = readCurrentTrack();
+        if (info.title) sendCurrentTrackToMaster();
+      };
+      ws.onmessage = ({ data }) => {
+        try {
+          const msg = JSON.parse(data);
+          switch (msg.type) {
+            case "music_pause":  pause(); break;
+            case "music_resume": resume(); break;
+            case "music_skip":   safeClick('button[aria-label="Next song"]'); break;
+            case "music_prev":   safeClick('button[aria-label="Previous song"]'); break;
+          }
+        } catch {}
+      };
+      ws.onclose = () => setTimeout(connectObsBus, 3000);
+      ws.onerror = () => {};
+    }
+    connectObsBus();
 
     autoPlay();
     log("role: Yandex CLIENT");
@@ -356,14 +387,16 @@
 
       const videoId = p.videoDetails?.videoId ?? "";
       const info = {
-        title:    p.videoDetails?.title  ?? "Unknown",
-        author:   p.videoDetails?.author ?? "",
-        duration: parseInt(p.videoDetails?.lengthSeconds ?? "0"),
+        title:         p.videoDetails?.title  ?? "Unknown",
+        artist:        p.videoDetails?.author ?? "",
+        version:       "",
         cover:         videoId ? `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg` : null,
         coverFallback: videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : null,
-        url:      location.href,
+        source:        "youtube",
+        url:           cleanYoutubeUrl(location.href),
+        duration:      parseInt(p.videoDetails?.lengthSeconds ?? "0"),
       };
-      log(`hooking "${info.title}" by "${info.author}"`);
+      log(`hooking "${info.title}" by "${info.artist}"`);
 
       video.addEventListener("play", () => {
         log(`play → youtube_ready: "${info.title}"`);

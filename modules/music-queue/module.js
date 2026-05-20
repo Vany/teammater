@@ -51,7 +51,7 @@ export class MusicQueueModule extends BaseModule {
     super();
     this.queue           = null;
     this.currentlyPlaying = null;   // URL sent to player; emptyUrl = My Vibes
-    this.nowPlaying      = { title: "", artist: "", version: "", cover: null };
+    this.nowPlaying      = { title: "", artist: "", version: "", cover: null, coverFallback: null, source: "", url: "" };
     this.needVoteSkip    = 3;
     this._musicPaused    = false;
     this._obsWs          = null;
@@ -100,7 +100,7 @@ export class MusicQueueModule extends BaseModule {
     this._emptyUrl          = this.getConfigValue("empty_url", "https://music.yandex.ru/");
     this._voteSkipThreshold = parseInt(this.getConfigValue("vote_skip_threshold", "3"));
     this.needVoteSkip       = this._voteSkipThreshold;
-    this.nowPlaying         = this._parseSongName(this.getConfigValue("initial_song_name", "Silence by silencer"));
+    this.nowPlaying         = { ...this._parseSongName(this.getConfigValue("initial_song_name", "Silence by silencer")), cover: null, coverFallback: null, source: "", url: "" };
     this.queue              = new PersistentDeck(this.getConfigValue("persistence_key", "toplay"));
 
     this._setupListeners();
@@ -138,19 +138,32 @@ export class MusicQueueModule extends BaseModule {
       this._playNext();
     });
 
-    bridge.listen("music_start", (payload) => {
-      const name  = typeof payload === "string" ? payload : (payload?.name ?? "");
-      const cover = typeof payload === "object"  ? (payload?.cover ?? null) : null;
-      this.nowPlaying = { ...this._parseSongName(name), cover, coverFallback: null };
+    bridge.listen("music_start", (info) => {
+      this.nowPlaying = {
+        title:         info.title        ?? "",
+        artist:        info.artist       ?? "",
+        version:       info.version      ?? "",
+        cover:         info.cover        ?? null,
+        coverFallback: info.coverFallback ?? null,
+        source:        info.source       ?? "yandex",
+        url:           info.url          ?? "",
+      };
       this.log(`🎵 Now playing: ${this.nowPlaying.title} by ${this.nowPlaying.artist}`);
       this._broadcastNowPlaying();
       this._refreshStatusDisplay();
     });
 
     bridge.listen("youtube_ready", (info) => {
-      // Re-send pause in case the first one was lost during Yandex page reload
       bridge.send("pause", null, "yandex");
-      this.nowPlaying      = { title: this._stripArtistFromTitle(info.title ?? "Unknown", info.author ?? ""), artist: info.author ?? "", cover: info.cover ?? null, coverFallback: info.coverFallback ?? null };
+      this.nowPlaying = {
+        title:         this._stripArtistFromTitle(info.title ?? "Unknown", info.artist ?? ""),
+        artist:        info.artist        ?? "",
+        version:       info.version       ?? "",
+        cover:         info.cover         ?? null,
+        coverFallback: info.coverFallback  ?? null,
+        source:        "youtube",
+        url:           info.url           ?? "",
+      };
       this._ytPlayerActive = true;
       this.log(`▶️ YouTube ready: ${this.nowPlaying.title} by ${this.nowPlaying.artist}`);
       this._broadcastNowPlaying();
@@ -171,7 +184,7 @@ export class MusicQueueModule extends BaseModule {
         this._ytPlayerActive = true;
         this.log("📺 YouTube player tab detected on reconnect");
       }
-      this.nowPlaying = this._parseSongName(data.trackInfo);
+      this.nowPlaying = { ...this._parseSongName(data.trackInfo), cover: null, coverFallback: null, source: "", url: "" };
       this.log(`🎵 Status synced: ${this.nowPlaying.title}`);
       this._refreshStatusDisplay();
     });
@@ -297,7 +310,8 @@ export class MusicQueueModule extends BaseModule {
 
   pauseMusic() {
     this._musicPaused = true;
-    bridge.send("pause", null, "yandex");
+    // Send via /obs bus — Yandex tab listens directly over WebSocket (no Tampermonkey needed)
+    this._obsSend({ type: "music_pause" });
     if (this._ytPlayerActive) bridge.send("pause", null, "youtube");
     this._broadcastNowPlaying();
     this.log("⏸ Music paused (remote)");
@@ -305,9 +319,14 @@ export class MusicQueueModule extends BaseModule {
 
   resumeMusic() {
     this._musicPaused = false;
-    bridge.send("resume", null, "yandex");
+    this._obsSend({ type: "music_resume" });
     this._broadcastNowPlaying();
     this.log("▶ Music resumed (remote)");
+  }
+
+  _obsSend(obj) {
+    if (this._obsWs?.readyState === WebSocket.OPEN)
+      this._obsWs.send(JSON.stringify(obj));
   }
 
   prevSong() {
@@ -380,11 +399,13 @@ export class MusicQueueModule extends BaseModule {
     if (!this._obsWs || this._obsWs.readyState !== WebSocket.OPEN) return;
     this._obsWs.send(JSON.stringify({
       type:          "now_playing",
-      artist:        this.nowPlaying.artist,
       title:         this.nowPlaying.title,
-      version:       this.nowPlaying.version ?? "",
+      artist:        this.nowPlaying.artist,
+      version:       this.nowPlaying.version      ?? "",
       cover:         this.nowPlaying.cover,
       coverFallback: this.nowPlaying.coverFallback ?? null,
+      source:        this.nowPlaying.source        ?? "",
+      url:           this.nowPlaying.url           ?? "",
       queue_size:    this.queue?.size() ?? 0,
       paused:        this._musicPaused,
     }));
