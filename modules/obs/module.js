@@ -14,6 +14,7 @@
 
 import { BaseModule } from "../base-module.js";
 import { obs_scene } from "../../actions.js";
+import { request } from "../../utils.js";
 
 export class OBSModule extends BaseModule {
   constructor() {
@@ -121,6 +122,7 @@ export class OBSModule extends BaseModule {
         const obsUrl = this.getConfigValue("url", "ws://localhost:4455");
         const obsPassword = this.getConfigValue("password", "");
         this.ws.send(JSON.stringify({ type: "obs_config", url: obsUrl, password: obsPassword }));
+        this._startViewerPoll();
       };
 
       this.ws.onmessage = (event) => {
@@ -152,6 +154,7 @@ export class OBSModule extends BaseModule {
 
   async doDisconnect() {
     this._cleanupReconnect();
+    this._stopViewerPoll();
     if (this.ws) {
       this.ws.close(1000);
       this.ws = null;
@@ -161,6 +164,29 @@ export class OBSModule extends BaseModule {
     this.recordingPaused = false;
     this.updateCustomIndicators();
     this.log("🔌 Disconnected from OBS bus");
+  }
+
+  _startViewerPoll() {
+    this._stopViewerPoll();
+    this._pollViewerCount();
+    this._viewerPollTimer = setInterval(() => this._pollViewerCount(), 60_000);
+  }
+
+  _stopViewerPoll() {
+    clearInterval(this._viewerPollTimer);
+    this._viewerPollTimer = null;
+  }
+
+  async _pollViewerCount() {
+    const userId = this.moduleManager?.get('twitch-eventsub')?.currentUserId;
+    if (!userId) return;
+    try {
+      const data = await request(
+        `https://api.twitch.tv/helix/streams?user_id=${userId}`
+      );
+      const count = data?.data?.[0]?.viewer_count ?? null;
+      if (count !== null) this.pushViewerCount(count);
+    } catch {}
   }
 
   _handleBusMessage(data) {
