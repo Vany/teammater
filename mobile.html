@@ -168,8 +168,17 @@
       background: #0d150d;
       border: 1px solid #1a2a1a;
       border-radius: 8px;
-      padding: 5px 10px 4px;
+      padding: 5px 8px 5px 10px;
       overflow: hidden;
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      gap: 8px;
+    }
+    #song-text {
+      flex: 1;
+      overflow: hidden;
+      min-width: 0;
     }
     #song-title {
       font-size: 13px;
@@ -186,26 +195,50 @@
       overflow: hidden;
       text-overflow: ellipsis;
     }
-
-    /* ── Music controls ── */
     #music-controls {
       display: flex;
-      gap: 6px;
+      gap: 4px;
       flex-shrink: 0;
     }
     #music-controls button {
-      flex: 1;
-      min-height: 52px;
+      width: 36px;
+      height: 36px;
       border: none;
-      border-radius: 8px;
-      font-size: 20px;
+      border-radius: 6px;
+      font-size: 16px;
       cursor: pointer;
-      background: #1a1a2a;
-      color: #ccc;
+      background: #162416;
+      color: #adc;
       transition: opacity 0.15s;
     }
     #music-controls button:active { opacity: 0.7; }
-    #btn-music-playpause { flex: 1.4; background: #1a2a1a; font-size: 24px; }
+    #btn-music-playpause { width: 42px; font-size: 18px; }
+
+    /* ── Sysinfo section (in meta-row) ── */
+    #sysinfo-section {
+      background: #0d1520;
+      border: 1px solid #1a2840;
+      border-radius: 8px;
+      padding: 7px 10px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+    .sys-m-item {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+    }
+    .sys-m-icon { font-size: 13px; }
+    .sys-m-val {
+      font-size: 16px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      min-width: 28px;
+      color: #44dd88;
+    }
+    .sys-m-sep { color: #333; font-size: 14px; }
 
     /* ── Recording section ── */
     #recording-section {
@@ -363,17 +396,28 @@
         <span id="heart-icon">🩵</span>
         <span id="heart-bpm">--</span>
       </div>
-      <div id="song-section" style="display:none">
-        <div id="song-title">—</div>
-        <div id="song-artist"></div>
+      <div id="sysinfo-section" style="display:none">
+        <div class="sys-m-item">
+          <span class="sys-m-icon">🌡</span>
+          <span id="sys-temp-mobile" class="sys-m-val">--°</span>
+        </div>
+        <span class="sys-m-sep">·</span>
+        <div class="sys-m-item">
+          <span class="sys-m-icon">🦠</span>
+          <span id="sys-cpu-mobile" class="sys-m-val">--%</span>
+        </div>
       </div>
-    </div>
-
-    <!-- Music controls -->
-    <div id="music-controls">
-      <button onclick="sendCmd('music_prev')" title="Previous">⏮</button>
-      <button id="btn-music-playpause" onclick="toggleMusicPause()" title="Play / Pause">▶</button>
-      <button onclick="sendCmd('music_skip')" title="Skip">⏭</button>
+      <div id="song-section" style="display:none">
+        <div id="song-text">
+          <div id="song-title">—</div>
+          <div id="song-artist"></div>
+        </div>
+        <div id="music-controls">
+          <button onclick="sendCmd('music_prev')" title="Previous">⏮</button>
+          <button id="btn-music-playpause" onclick="toggleMusicPause()" title="Play / Pause">▶</button>
+          <button onclick="sendCmd('music_skip')" title="Skip">⏭</button>
+        </div>
+      </div>
     </div>
 
     <!-- Recording (always shown) -->
@@ -412,7 +456,10 @@ function connect() {
   clearTimeout(reconnectTimer);
   ws = new WebSocket(`wss://${location.host}/obs`);
 
-  ws.onopen = () => setDot(true);
+  ws.onopen = () => {
+    setDot(true);
+    ws.send(JSON.stringify({ request: 'now_playing' }));
+  };
 
   ws.onmessage = ({ data }) => {
     try { handleMsg(JSON.parse(data)); } catch {}
@@ -466,6 +513,9 @@ function handleMsg(msg) {
       break;
     case 'now_playing':
       renderSong(msg);
+      break;
+    case 'sysinfo':
+      renderSysinfo(msg);
       break;
   }
 }
@@ -530,6 +580,21 @@ function renderRecording() {
   } else {
     pauseBtn.className = 'state-pause';
     pauseBtn.textContent = '⏸ PAUSE';
+  }
+}
+
+function renderSysinfo({ cpu_temp, cpu_usage }) {
+  const section = document.getElementById('sysinfo-section');
+  const tempEl  = document.getElementById('sys-temp-mobile');
+  const cpuEl   = document.getElementById('sys-cpu-mobile');
+  section.style.display = '';
+  if (typeof cpu_temp === 'number') {
+    tempEl.textContent = cpu_temp.toFixed(0) + '°';
+    tempEl.style.color = cpu_temp >= 80 ? '#ff4444' : cpu_temp >= 60 ? '#ffcc00' : '#44dd88';
+  }
+  if (typeof cpu_usage === 'number') {
+    cpuEl.textContent = cpu_usage.toFixed(0) + '%';
+    cpuEl.style.color = cpu_usage >= 80 ? '#ff4444' : cpu_usage >= 50 ? '#ffcc00' : '#44dd88';
   }
 }
 

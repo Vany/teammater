@@ -38,6 +38,7 @@ use tracing::{error, info, info_span, warn, Instrument};
 
 mod ble;
 mod obs;
+mod sysinfo_task;
 mod tls;
 
 // ──────────────────────────────────────────────────────── configuration ──
@@ -89,6 +90,8 @@ struct AppState {
     obs_config_tx: watch::Sender<ObsConfig>,
     /// Ring buffer of the last LOG_RING_SIZE log JSON strings for late joiners
     log_ring: Mutex<VecDeque<String>>,
+    /// Last sysinfo JSON — sent immediately to new clients
+    last_sysinfo: Mutex<Option<String>>,
     lan_ip: String,
 }
 
@@ -108,6 +111,7 @@ impl AppState {
             obs_cmd_tx: cmd_tx,
             obs_config_tx: cfg_tx,
             log_ring: Mutex::new(VecDeque::with_capacity(LOG_RING_SIZE + 1)),
+            last_sysinfo: Mutex::new(None),
             lan_ip,
         };
         (state, cmd_rx, cfg_rx)
@@ -139,6 +143,15 @@ async fn main() -> Result<()> {
     tokio::spawn(mdns_discovery_task(state.clone()).instrument(info_span!("mdns")));
     tokio::spawn(ble::ble_task(obs_broadcast.clone()).instrument(info_span!("ble")));
     tokio::spawn(obs::obs_task(obs_broadcast, obs_cmd_rx, obs_state, obs_cfg_rx).instrument(info_span!("obs")));
+    {
+        let broadcast = state.obs_broadcast.clone();
+        let last = state.last_sysinfo.lock().unwrap(); // ensure field exists, then drop
+        drop(last);
+        let state2 = state.clone();
+        tokio::spawn(async move {
+            sysinfo_task::sysinfo_task(broadcast, &state2.last_sysinfo).await;
+        }.instrument(info_span!("sysinfo")));
+    }
 
     let app = Router::new()
         .route("/echowire", get(websocket_proxy_handler))
@@ -243,7 +256,7 @@ async fn handle_obs_websocket(socket: WebSocket, state: Arc<AppState>, client_id
     let (mut tx, mut rx) = socket.split();
     info!("📺 Client {} connected", client_id);
 
-    // Send log ring buffer then current obs_state snapshot
+    // Send log ring buffer, OBS state snapshot, and last sysinfo to new client
     let backlog: Vec<String> = state.log_ring.lock().unwrap().iter().cloned().collect();
     for line in backlog {
         if tx.send(Message::Text(line)).await.is_err() {
@@ -253,6 +266,12 @@ async fn handle_obs_websocket(socket: WebSocket, state: Arc<AppState>, client_id
     let snapshot = state.obs_state.read().await.to_state_json();
     if tx.send(Message::Text(snapshot)).await.is_err() {
         return;
+    }
+    let last_sysinfo = state.last_sysinfo.lock().unwrap().clone();
+    if let Some(sysinfo) = last_sysinfo {
+        if tx.send(Message::Text(sysinfo)).await.is_err() {
+            return;
+        }
     }
 
     let mut broadcast_rx = state.obs_broadcast.subscribe();

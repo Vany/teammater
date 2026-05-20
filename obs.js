@@ -98,6 +98,82 @@
         npWidget.classList.add('visible');
     }
 
+    // ── Sys Info ──────────────────────────────────────────
+    const sysWidget    = document.getElementById('sys-widget');
+    const sysTempRow   = document.getElementById('sys-temp-row');
+    const sysTempVal   = document.getElementById('sys-temp-value');
+    const sysCpuVal    = document.getElementById('sys-cpu-value');
+    const sysTempLine  = document.getElementById('sys-temp-line');
+    const sysTempFill  = document.getElementById('sys-temp-fill');
+    const sysTempDot   = document.getElementById('sys-temp-dot');
+    const sysGradTemp  = document.getElementById('grad-temp');
+    const sysCpuLine   = document.getElementById('sys-cpu-line');
+    const sysCpuFill   = document.getElementById('sys-cpu-fill');
+    const sysCpuDot    = document.getElementById('sys-cpu-dot');
+    const sysGradCpu   = document.getElementById('grad-cpu');
+
+    const SYS_MAX = 30, SYS_W = 220, SYS_H = 22;
+    const SYS_STEP = SYS_W / (SYS_MAX - 1);
+    const tempHistory = [], cpuHistory = [];
+    const SYS_STALE_MS = 15000;
+    let sysStaleTimer = null;
+
+    function tempColor(c)  { return c >= 80 ? '#ff4444' : c >= 60 ? '#ffcc00' : '#44dd88'; }
+    function cpuColor(pct) { return pct >= 80 ? '#ff4444' : pct >= 50 ? '#ffcc00' : '#44dd88'; }
+
+    function applyMetricColor(valEl, line, fill, gradStop, dot, color) {
+        line.setAttribute('stroke', color);
+        dot.setAttribute('fill', color);
+        gradStop.setAttribute('stop-color', color);
+        valEl.style.textShadow = `0 0 14px ${color}88`;
+    }
+
+    function updateSysChart(history, line, fill, dot) {
+        const n = history.length;
+        if (n < 2) return;
+        const lo = Math.min(...history), hi = Math.max(...history);
+        const span = hi - lo || 1;
+        const startX = SYS_W - (n - 1) * SYS_STEP;
+        const pts = history.map((v, i) => [
+            startX + i * SYS_STEP,
+            SYS_H - ((v - lo) / span) * (SYS_H - 4) - 2,
+        ]);
+        const polyStr = pts.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
+        line.setAttribute('points', polyStr);
+        const [lx, ly] = pts[pts.length - 1];
+        dot.setAttribute('cx', lx.toFixed(1));
+        dot.setAttribute('cy', ly.toFixed(1));
+        fill.setAttribute('points', `${polyStr} ${lx.toFixed(1)},${SYS_H} ${pts[0][0].toFixed(1)},${SYS_H}`);
+    }
+
+    function onSysInfo({ cpu_usage, cpu_temp }) {
+        sysWidget.classList.add('visible');
+        sysWidget.classList.remove('stale');
+        clearTimeout(sysStaleTimer);
+        sysStaleTimer = setTimeout(() => sysWidget.classList.add('stale'), SYS_STALE_MS);
+
+        if (typeof cpu_temp === 'number') {
+            sysTempRow.style.display = '';
+            sysTempVal.textContent = cpu_temp.toFixed(1);
+            const tc = tempColor(cpu_temp);
+            applyMetricColor(sysTempVal, sysTempLine, sysTempFill, sysGradTemp, sysTempDot, tc);
+            tempHistory.push(cpu_temp);
+            if (tempHistory.length > SYS_MAX) tempHistory.shift();
+            updateSysChart(tempHistory, sysTempLine, sysTempFill, sysTempDot);
+        } else {
+            sysTempRow.style.display = 'none';
+        }
+
+        if (typeof cpu_usage === 'number') {
+            sysCpuVal.textContent = cpu_usage.toFixed(1);
+            const cc = cpuColor(cpu_usage);
+            applyMetricColor(sysCpuVal, sysCpuLine, sysCpuFill, sysGradCpu, sysCpuDot, cc);
+            cpuHistory.push(cpu_usage);
+            if (cpuHistory.length > SYS_MAX) cpuHistory.shift();
+            updateSysChart(cpuHistory, sysCpuLine, sysCpuFill, sysCpuDot);
+        }
+    }
+
     // ── WebSocket ─────────────────────────────────────────
     // Match protocol: wss on HTTPS (port 8443), ws on HTTP (port 8442)
     const [proto, port] = location.protocol === 'https:' ? ['wss:', 8443] : ['ws:', 8442];
@@ -114,7 +190,8 @@
             try {
                 const msg = JSON.parse(data);
                 if (typeof msg.heartrate === 'number') onHeartRate(msg.heartrate);
-                if (msg.now_playing) onNowPlaying(msg.now_playing);
+                if (msg.type === 'now_playing') onNowPlaying(msg);
+                if (msg.type === 'sysinfo') onSysInfo(msg);
             } catch {}
         };
         ws.onclose = () => {

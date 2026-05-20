@@ -165,6 +165,49 @@
             color: #555;
             margin-top: 2px;
         }
+
+        /* ── Sys Info widget ── */
+        #sys-widget {
+            display: inline-flex;
+            flex-direction: column;
+            gap: 8px;
+            padding: 12px 16px 10px;
+            background: rgba(0, 0, 0, 0.55);
+            border-radius: 16px;
+            backdrop-filter: blur(6px);
+            margin: 0 16px 16px;
+            opacity: 0;
+            transition: opacity 0.5s, filter 0.8s;
+        }
+        #sys-widget.visible { opacity: 0.9; }
+        #sys-widget.stale { filter: grayscale(1) brightness(0.45); }
+
+        .sys-top {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .sys-icon { font-size: 22px; line-height: 1; }
+        .sys-value {
+            font-family: "Orbitron", monospace;
+            font-size: 30px;
+            font-weight: 700;
+            color: #fff;
+            line-height: 1;
+            min-width: 3ch;
+            transition: text-shadow 0.6s;
+        }
+        .sys-unit {
+            font-family: "Orbitron", monospace;
+            font-size: 14px;
+            color: #aaa;
+        }
+        .sys-chart {
+            width: 220px;
+            height: 22px;
+            display: block;
+            overflow: visible;
+        }
     </style>
 
     <div id="np-widget">
@@ -210,6 +253,45 @@
                 points=""
             />
             <circle id="hr-dot" r="2.5" fill="#44dd88" cx="-10" cy="0" />
+        </svg>
+    </div>
+
+    <div id="sys-widget">
+        <div id="sys-temp-row">
+            <div class="sys-top">
+                <span class="sys-icon">🌡</span>
+                <span id="sys-temp-value" class="sys-value">—</span>
+                <span class="sys-unit">°C</span>
+            </div>
+            <svg class="sys-chart" viewBox="0 0 220 22" preserveAspectRatio="none">
+                <defs>
+                    <linearGradient id="fillGradTemp" x1="0" y1="0" x2="0" y2="1">
+                        <stop id="grad-temp" offset="0%" stop-color="#44dd88" stop-opacity="0.28"/>
+                        <stop offset="100%" stop-color="#44dd88" stop-opacity="0"/>
+                    </linearGradient>
+                </defs>
+                <polygon id="sys-temp-fill" fill="url(#fillGradTemp)" stroke="none" points=""/>
+                <polyline id="sys-temp-line" fill="none" stroke="#44dd88" stroke-width="1.5"
+                          stroke-linejoin="round" stroke-linecap="round" points=""/>
+                <circle id="sys-temp-dot" r="2.5" fill="#44dd88" cx="-10" cy="0"/>
+            </svg>
+        </div>
+        <div class="sys-top">
+            <span class="sys-icon">🦠</span>
+            <span id="sys-cpu-value" class="sys-value">—</span>
+            <span class="sys-unit">%</span>
+        </div>
+        <svg class="sys-chart" viewBox="0 0 220 22" preserveAspectRatio="none">
+            <defs>
+                <linearGradient id="fillGradCpu" x1="0" y1="0" x2="0" y2="1">
+                    <stop id="grad-cpu" offset="0%" stop-color="#44dd88" stop-opacity="0.28"/>
+                    <stop offset="100%" stop-color="#44dd88" stop-opacity="0"/>
+                </linearGradient>
+            </defs>
+            <polygon id="sys-cpu-fill" fill="url(#fillGradCpu)" stroke="none" points=""/>
+            <polyline id="sys-cpu-line" fill="none" stroke="#44dd88" stroke-width="1.5"
+                      stroke-linejoin="round" stroke-linecap="round" points=""/>
+            <circle id="sys-cpu-dot" r="2.5" fill="#44dd88" cx="-10" cy="0"/>
         </svg>
     </div>
 
