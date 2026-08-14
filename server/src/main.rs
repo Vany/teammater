@@ -26,6 +26,83 @@ use tokio::sync::{broadcast, mpsc, watch, RwLock};
 use tower_http::services::{ServeDir, ServeFile};
 use tracing::{error, info, info_span, warn, Instrument};
 
+/// Reject requests for anything under the project root that is not a web asset.
+///
+/// Static serving is rooted at "." for convenience, which also exposes secrets
+/// that live there. Deny by SHAPE rather than by listing filenames, so a new
+/// secret does not silently become public the day it is added:
+///   - any path segment starting with '.'  → dotfiles (.mcp.json, .env, .git)
+///     and, as a free side effect, ".." traversal segments
+///   - anything under /server              → TLS keys in certs/, sources, target/
+///
+/// Runs as a layer over the whole router, but every real route is matched
+/// before the ServeDir fallback and none of them live under those prefixes.
+fn is_sensitive_path(path: &str) -> bool {
+    let hidden = path.split('/').any(|seg| seg.starts_with('.'));
+    let server_dir = path == "/server" || path.starts_with("/server/");
+    hidden || server_dir
+}
+
+async fn deny_sensitive_paths(req: Request, next: axum::middleware::Next) -> Response {
+    let path = req.uri().path();
+    if is_sensitive_path(path) {
+        warn!("🔒 Blocked request for sensitive path: {path}");
+        // 404, not 403: a 403 confirms the file is there.
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    next.run(req).await
+}
+
+#[cfg(test)]
+mod path_guard_tests {
+    use super::is_sensitive_path;
+
+    #[test]
+    fn blocks_the_secrets_that_were_actually_reachable() {
+        // Both of these returned 200 with real content before the guard.
+        assert!(is_sensitive_path("/.mcp.json"));
+        assert!(is_sensitive_path("/server/certs/key.pem"));
+    }
+
+    #[test]
+    fn blocks_dotfiles_and_traversal_anywhere_in_the_path() {
+        assert!(is_sensitive_path("/.env"));
+        assert!(is_sensitive_path("/.git/config"));
+        assert!(is_sensitive_path("/modules/../.mcp.json"));
+        assert!(is_sensitive_path("/mp3/.hidden/x.mp3"));
+    }
+
+    #[test]
+    fn blocks_the_whole_server_subtree() {
+        assert!(is_sensitive_path("/server"));
+        assert!(is_sensitive_path("/server/src/main.rs"));
+        assert!(is_sensitive_path("/server/target/release/teammater-server"));
+    }
+
+    #[test]
+    fn still_serves_the_actual_web_assets() {
+        for ok in [
+            "/",
+            "/index.html",
+            "/obs.html",
+            "/mobile.html",
+            "/index.js",
+            "/modules/llm/module.js",
+            "/mp3/startup.mp3",
+            "/api/health",
+        ] {
+            assert!(!is_sensitive_path(ok), "{ok} must stay reachable");
+        }
+    }
+
+    #[test]
+    fn does_not_block_names_merely_containing_a_dot() {
+        // Only a segment STARTING with '.' is hidden; extensions are fine.
+        assert!(!is_sensitive_path("/teammater.js"));
+        assert!(!is_sensitive_path("/server-status.html"));
+    }
+}
+
 mod ble;
 mod echowire;
 mod obs;
@@ -154,6 +231,12 @@ async fn main() -> Result<()> {
             "/",
             ServeDir::new(".").append_index_html_on_directories(true),
         )
+        // ServeDir::new(".") is the whole project root, and both listeners bind
+        // 0.0.0.0 — so without this, `curl http://<lan-ip>:8442/.mcp.json` and
+        // `.../server/certs/key.pem` returned the MCP bearer token and the TLS
+        // PRIVATE KEY in cleartext to anyone on the network the QR code invites.
+        // Verified by request against the running server, not by inspection.
+        .layer(axum::middleware::from_fn(deny_sensitive_paths))
         .with_state(state);
 
     info!("🚀 HTTPS listening on https://{HTTPS_ADDR}");
