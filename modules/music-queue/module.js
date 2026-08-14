@@ -321,6 +321,12 @@ export class MusicQueueModule extends BaseModule {
     }
     if (this.queue.size() === 0) {
       this._stopWatchdog();
+      // Reset BEFORE handing back to My Vibes. Skipping the last queued track
+      // used to leave currentlyPlaying pointing at the dead song: no
+      // music_done, no music_start and no watchdog would ever fire again, so
+      // smartAdd saw the stale value as "busy" and queued every later request
+      // behind a phantom track until a reload.
+      this._resetTrack();
       bridge.send("next", null, "yandex");
       return;
     }
@@ -340,6 +346,11 @@ export class MusicQueueModule extends BaseModule {
   resumeMusic() {
     this._musicPaused = false;
     bridge.send("resume", null, "yandex");
+    // Mirror pauseMusic: it pauses BOTH players when a YouTube tab is active,
+    // so resuming only Yandex left the current YouTube track paused forever
+    // while Yandex started playing its own track audibly underneath — the
+    // widget said playing, the audio was a different song entirely.
+    if (this._ytPlayerActive) bridge.send("resume", null, "youtube");
     this._obsSend({ type: "music_resume" });
     this._broadcastNowPlaying();
     this.log("▶ Music resumed (remote)");

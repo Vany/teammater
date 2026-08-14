@@ -22,7 +22,12 @@ Server starts at: **https://localhost:8443**
 Replaces Caddy with identical functionality:
 - ✅ HTTPS on port 8443
 - ✅ Static file serving (index.html, modules/, etc.)
-- ✅ WebSocket proxy: `/echowire` → `ws://192.168.15.225:8080`
+- ✅ WebSocket proxy: `/echowire` → the Echowire STT backend, DISCOVERED VIA
+  mDNS (`_echowire._tcp.local.`, see `server/src/echowire.rs`). No IP is
+  hardcoded anywhere; discovery retries every 5s and logs
+  "🔍 Starting mDNS discovery..."
+- ✅ Server-side OBS WebSocket connection + `/obs` broadcast bus
+- ✅ BLE heart rate (`src/ble.rs`) and Zigbee2MQTT climate (`src/zigbee.rs`)
 - ✅ Auto-generated self-signed certificates
 
 ## Migration
@@ -49,10 +54,12 @@ No code changes needed - all endpoints remain the same.
 
 ## Configuration
 
-Edit `server/src/main.rs` to change:
-- **Port**: Line 41 (`8443`)
-- **Backend URL**: Line 29 (`ws://192.168.15.225:8080`)
-- **Cert paths**: Lines 36-37 (`server/certs/`)
+Edit the constants near the top of `server/src/main.rs` — grep for the name
+rather than trusting a line number, they move:
+- **Ports**: `HTTPS_ADDR`, `HTTP_ADDR`
+- **Cert paths**: `CERT_PATH`, `KEY_PATH` (under `server/certs/`)
+- **Echowire backend**: not configurable — discovered over mDNS, see
+  `server/src/echowire.rs`
 
 Rebuild after changes: `cargo build --release`
 
@@ -66,9 +73,10 @@ Replace with real certificates for production use.
 
 ## Documentation
 
-See detailed docs in `server/`:
-- `README.md` - Usage and features
-- `IMPLEMENTATION.md` - Architecture and technical details
+- `server/SPEC.md` — architecture, services and the `/obs` bus protocol
+- `SPEC.md` (repo root) — the whole application
+(`server/README.md` and `server/IMPLEMENTATION.md` were referenced here for a
+long time and have never existed in this tree.)
 
 ## Keeping Caddy
 
@@ -103,7 +111,10 @@ caddy stop
 Self-signed cert will show warning - click "Advanced" → "Proceed to localhost".
 
 **Backend connection fails:**
-Ensure Android STT service (Echowire) is running on `192.168.15.225:8080`.
+The Echowire backend is found over mDNS, not at a fixed address — check the
+server log for "🔍 Starting mDNS discovery..." and whether it resolved. Ensure
+the Android STT service is running and advertising `_echowire._tcp.local.` on
+the same network segment (mDNS does not cross subnets or most guest VLANs).
 
 ## Performance Tuning
 

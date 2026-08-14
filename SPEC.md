@@ -152,6 +152,7 @@ The application uses a clean modular architecture with **8 independent modules**
   - `channel:manage:redemptions`, `channel:read:redemptions` - Channel points
   - `moderator:manage:banned_users`, `moderator:manage:chat_messages` - Moderation actions
   - `user:read:follows` - Fetch following list for friend presence detection
+  - `moderator:manage:shoutouts` - Auto-shoutout on raid and the mobile Shout out button
 
 ### Chat Features
 - [x] Chat command processing via action registry pattern

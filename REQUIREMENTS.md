@@ -98,7 +98,11 @@ give `pinMessageById()` an id to pin — does not exist in the modular codebase.
 - [x] Production rule: Ban users posting "viewers" + "nezhna*.com" spam
 
 ## Technical Requirements
-- OAuth scopes: chat:read, chat:edit, channel:manage:broadcast, moderator:manage:chat_settings, user:manage:whispers, channel:manage:redemptions, channel:read:redemptions, moderator:manage:banned_users, moderator:manage:chat_messages
+- OAuth scopes (authoritative list is TWITCH_SCOPES in config.js): chat:read,
+  chat:edit, channel:manage:broadcast, moderator:manage:chat_settings,
+  user:manage:whispers, channel:manage:redemptions, channel:read:redemptions,
+  moderator:manage:banned_users, moderator:manage:chat_messages,
+  user:read:follows, moderator:manage:shoutouts
 - WebSocket connections: Twitch IRC, local minarert server
 - HTTP connections: Ollama LLM server (localhost:11434)
 - IRC tags capability for message ID capture and user ID extraction

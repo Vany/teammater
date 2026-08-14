@@ -302,6 +302,18 @@ async fn on_response(
     last_bytes: &mut Option<u64>,
 ) -> Result<()> {
     if d["requestStatus"]["result"].as_bool() != Some(true) {
+        // Do not swallow it. A rejected SetCurrentProgramScene (wrong scene
+        // name, e.g. the hardcoded "Glasses" in VOICE_ACTIONS after the scene
+        // was renamed) used to vanish here while the browser had already
+        // logged "📺 Switching scene →" optimistically — the command did
+        // nothing and both logs claimed success.
+        warn!(
+            "🎬 OBS rejected {}: {}",
+            d["requestId"].as_str().unwrap_or("<no requestId>"),
+            d["requestStatus"]["comment"]
+                .as_str()
+                .unwrap_or("no comment")
+        );
         return Ok(());
     }
     let req_id = d["requestId"].as_str().unwrap_or_default();

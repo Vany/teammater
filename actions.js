@@ -83,7 +83,12 @@ export function hate(
       log(
         `⏱️ Throttled: ${user} must wait ${Math.ceil((cooldownMs - timeSinceLastCommand) / 1000)}s`,
       );
-      return;
+      // false, not undefined: ActionRegistry treats `undefined` as success and
+      // PATCHes the redemption to FULFILLED. The Twitch-side cooldown is 30s
+      // while this throttle is 60s, so there is a guaranteed 30s window where
+      // the viewer is charged 300 points for nothing, with no feedback and no
+      // refund path. Returning false cancels the redemption instead.
+      return false;
     }
 
     // Update throttle timestamp
@@ -248,16 +253,20 @@ export function vote_skip(threshold = 3) {
     if (result.skipped) {
       // Skip threshold reached
       log(`⏭️ Skip threshold reached! Song skipped by vote.`);
-      if (ws && CHANNEL) {
+      if (canSendToChat(ws, CHANNEL)) {
         ws.send(`PRIVMSG #${CHANNEL} :/me ⏭️ Song skipped!`);
+      } else {
+        log(`⚠️ Skip announced to nobody — chat socket not open`);
       }
     } else {
       // Vote cast, need more votes
       const votesNeeded = result.votesRemaining;
-      if (ws && CHANNEL) {
+      if (canSendToChat(ws, CHANNEL)) {
         ws.send(
           `PRIVMSG #${CHANNEL} :/me 🗳️ Skip votes needed: ${votesNeeded}`,
         );
+      } else {
+        log(`⚠️ Vote count announced to nobody — chat socket not open`);
       }
       log(`🗳️ Skip vote cast by ${user}. Votes remaining: ${votesNeeded}`);
     }
@@ -273,11 +282,12 @@ export function playing(messageFormat = "🎹 Now playing: {song}") {
   return (context, user, message) => {
     const { currentSong, ws, CHANNEL, log } = context;
 
-    // Guard like vote_skip does: twitch-chat sets this.ws = null while it is
-    // reconnecting, so an unguarded send threw TypeError and canceled the
-    // viewer's redemption whenever a redemption landed mid-reconnect.
-    if (!ws || !CHANNEL) {
-      log(`❌ Cannot report song for ${user}: chat not connected`);
+    // readyState, not truthiness — see canSendToChat(). The earlier version of
+    // this guard assumed twitch-chat nulls this.ws while reconnecting; it does
+    // not, so a CLOSED socket sailed through and ws.send threw InvalidStateError,
+    // canceling the redemption anyway.
+    if (!canSendToChat(ws, CHANNEL)) {
+      log(`❌ Cannot report song for ${user}: chat socket not open`);
       return false;
     }
 
@@ -435,6 +445,23 @@ export function voice(voiceConfig = {}) {
  * @param {string|null} errorPrefix - Error message prefix (null to skip logging)
  * @returns {Promise<boolean>} - Success status
  */
+/**
+ * Is this IRC socket actually able to send right now?
+ *
+ * `ws && CHANNEL` is NOT enough. twitch-chat's onclose does not null this.ws —
+ * only an explicit disconnect does — so during a reconnect backoff the context
+ * carries a CLOSED socket, the truthiness check passes, and ws.send() throws
+ * InvalidStateError. For a reward action that means the redemption is CANCELED
+ * after its side effects already ran (vote_skip has cast the vote by then).
+ *
+ * @param {WebSocket|null} ws
+ * @param {string|null} channel
+ * @returns {boolean}
+ */
+function canSendToChat(ws, channel) {
+  return Boolean(ws) && Boolean(channel) && ws.readyState === WebSocket.OPEN;
+}
+
 async function executeModerationAPI(
   context,
   endpoint,
@@ -475,7 +502,13 @@ async function executeModerationAPI(
  */
 async function resolveUserId(context, user) {
   const { userId, request, log } = context;
-  if (userId) return userId;
+  // Twitch ids are numeric. Echowire injects the owner's speech with
+  // userId "echowire-superuser" and the LLM panel uses "direct-input" —
+  // sentinels, not ids. Passing one straight through made the broadcaster
+  // guard below compare a string to a numeric id (never equal) and then POST
+  // it to /moderation/bans as a user_id, so the streamer quoting scam text
+  // ALOUD still triggered a doomed self-ban attempt. Resolve by name instead.
+  if (userId && /^\d+$/.test(String(userId))) return userId;
   if (!user || user === "unknown") return null;
 
 

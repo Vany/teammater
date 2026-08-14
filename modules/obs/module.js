@@ -111,7 +111,7 @@ export class OBSModule extends BaseModule {
 
   async doConnect() {
     this.shouldReconnect = true;
-    const url = `wss://${location.host}/obs`;
+    const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/obs`;
     this.log(`📺 Connecting to OBS bus at ${url}...`);
 
     try {

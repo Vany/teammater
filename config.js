@@ -44,12 +44,17 @@ export const LLM_ACTIONS = {
   "fireball  help cast fireball for player": fireball(),
 };
 
+// Echowire matches these against the WHOLE final transcription, so every
+// pattern must anchor the whole phrase. `^a|b$` does NOT do that: in JS the ^
+// binds only to the first branch and the $ only to the last, so "^сцена очки$
+// |glasses$" fired on "my new glasses" — an ordinary sentence over an
+// always-on mic silently switched the live OBS scene. Group the alternation.
 export const VOICE_ACTIONS = {
   "^рюкзак$": minaret_use(8),
   "^сундук$": minaret_use(7),
-  "^babakh|бабах$": apply_effect("dead_blow"),
-  "^сцена очки$|glasses$": obs_scene("Glasses", "G"),
-  "^сцена экран$|game$": obs_scene("Game", "Screen"),
+  "^(babakh|бабах)$": apply_effect("dead_blow"),
+  "^(сцена очки|glasses)$": obs_scene("Glasses", "G"),
+  "^(сцена экран|game)$": obs_scene("Game", "Screen"),
 };
 
 // Get nickname from localStorage (default set via stored_default in HTML)

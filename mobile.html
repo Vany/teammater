@@ -594,7 +594,7 @@ let watchingFriends = {};
 // ─── WebSocket ────────────────────────────────────────────────────────────────
 function connect() {
   clearTimeout(reconnectTimer);
-  ws = new WebSocket(`wss://${location.host}/obs`);
+  ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/obs`);
 
   ws.onopen = () => {
     setDot(true);
