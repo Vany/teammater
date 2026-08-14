@@ -220,14 +220,31 @@
     // ── WebSocket ─────────────────────────────────────────
     // Match protocol: wss on HTTPS (port 8443), ws on HTTP (port 8442)
     const [proto, port] = location.protocol === 'https:' ? ['wss:', 8443] : ['ws:', 8442];
-    const WS_URL = `${proto}//${location.hostname}:${port}/obs`;
+    const WS_BASE = `${proto}//${location.hostname}:${port}/obs`;
 
     let ws = null;
     let reconnectTimer = null;
+    // The bus now requires ?token=. This overlay runs inside OBS on localhost,
+    // and /api/info returns bus_token to loopback callers only. Cached so a
+    // reconnect does not refetch. Not shared with bus-token.js because obs.html
+    // loads this as a plain script, not an ES module.
+    let busToken = null;
 
-    function connect() {
+    async function ensureToken() {
+        if (busToken) return busToken;
+        try {
+            const { bus_token } = await (await fetch('/api/info')).json();
+            busToken = bus_token || null;
+        } catch { busToken = null; }
+        if (!busToken) console.error('[obs] No bus token — /obs will refuse the connection');
+        return busToken;
+    }
+
+    async function connect() {
         if (document.hidden) return;
-        ws = new WebSocket(WS_URL);
+        const token = await ensureToken();
+        if (!token) { reconnectTimer = setTimeout(connect, 3000); return; }
+        ws = new WebSocket(`${WS_BASE}?token=${encodeURIComponent(token)}`);
         ws.onopen = () => ws.send(JSON.stringify({ request: 'now_playing' }));
         ws.onmessage = ({ data }) => {
             try {

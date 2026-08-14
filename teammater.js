@@ -286,8 +286,20 @@
     }
 
     // Direct /obs bus connection — handles pause/resume without Tampermonkey on the remote end
-    function connectObsBus() {
-      const ws = new WebSocket("wss://localhost:8443/obs");
+    async function connectObsBus() {
+      // The bus requires a token; this script talks to localhost, and
+      // /api/info hands bus_token to loopback callers only.
+      let token = null;
+      try {
+        const r = await fetch("https://localhost:8443/api/info");
+        token = (await r.json()).bus_token || null;
+      } catch {}
+      if (!token) {
+        log("no /obs bus token — retrying in 3s");
+        setTimeout(connectObsBus, 3000);
+        return;
+      }
+      const ws = new WebSocket(`wss://localhost:8443/obs?token=${encodeURIComponent(token)}`);
       ws.onopen = () => {
         // Re-send current track info so master has up-to-date artist on reconnect/reload
         const info = readCurrentTrack();

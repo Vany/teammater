@@ -592,9 +592,29 @@ let reconnectTimer = null;
 let watchingFriends = {};
 
 // ─── WebSocket ────────────────────────────────────────────────────────────────
+// The /obs bus requires a token. A phone is not loopback, so it cannot ask
+// /api/info for it — the token rides in the QR URL fragment as #token=… and is
+// kept here. A fragment, not a query: it never reaches the server or its logs.
+const BUS_TOKEN_KEY = 'obs_bus_token';
+(function captureTokenFromHash() {
+  const fromHash = new URLSearchParams(location.hash.slice(1)).get('token');
+  if (fromHash) {
+    localStorage.setItem(BUS_TOKEN_KEY, fromHash);
+    history.replaceState(null, '', location.pathname + location.search);
+  }
+})();
+
 function connect() {
   clearTimeout(reconnectTimer);
-  ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/obs`);
+  const token = localStorage.getItem(BUS_TOKEN_KEY);
+  if (!token) {
+    setDot(false);
+    appendLog('❌ No bus token — rescan the QR code on the main page');
+    reconnectTimer = setTimeout(connect, 5000);
+    return;
+  }
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/obs?token=${encodeURIComponent(token)}`);
 
   ws.onopen = () => {
     setDot(true);

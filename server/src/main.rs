@@ -116,6 +116,39 @@ const HTTPS_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED)
 const HTTP_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8442);
 const CERT_PATH: &str = "server/certs/cert.pem";
 const KEY_PATH: &str = "server/certs/key.pem";
+/// Lives beside the TLS material: server/certs/ is gitignored AND blocked by
+/// deny_sensitive_paths, so the token is neither committed nor servable.
+const BUS_TOKEN_PATH: &str = "server/certs/bus_token.txt";
+
+/// Load the /obs bus token, generating one on first run.
+///
+/// Stable across restarts so a phone that scanned the QR code once keeps
+/// working. Derived from the OS RNG via rand, hex-encoded.
+fn load_or_create_bus_token() -> String {
+    if let Ok(existing) = std::fs::read_to_string(BUS_TOKEN_PATH) {
+        let trimmed = existing.trim().to_string();
+        if !trimmed.is_empty() {
+            return trimmed;
+        }
+    }
+
+    use rand::RngCore;
+    let mut bytes = [0u8; 24];
+    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    let token: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+
+    if let Some(dir) = Path::new(BUS_TOKEN_PATH).parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    match std::fs::write(BUS_TOKEN_PATH, &token) {
+        Ok(()) => info!("🔑 Generated new /obs bus token at {BUS_TOKEN_PATH}"),
+        // Non-fatal on purpose: an in-memory token still secures this run, it
+        // just means phones must re-scan after a restart. Failing to start the
+        // whole server over this would be worse.
+        Err(e) => error!("⚠️ Could not persist bus token ({e}) — using in-memory token"),
+    }
+    token
+}
 
 const OBS_BROADCAST_CAPACITY: usize = 16;
 const LOG_RING_SIZE: usize = 5;
@@ -143,6 +176,13 @@ struct AppState {
     last_now_playing: Mutex<Option<String>>,
     last_climate: Mutex<Option<String>>,
     lan_ip: String,
+    /// Shared secret required to open /obs. The bus is not a read-only feed:
+    /// it carries twitch_timeout, twitch_shoutout and cmd_* record/scene
+    /// commands that the main page executes with the streamer's moderator
+    /// token. Both listeners bind 0.0.0.0 and the QR workflow deliberately
+    /// invites household devices onto the network, so an unauthenticated bus
+    /// let any of them ban viewers as the streamer.
+    bus_token: String,
 }
 
 impl AppState {
@@ -168,6 +208,7 @@ impl AppState {
             last_now_playing: Mutex::new(None),
             last_climate: Mutex::new(None),
             lan_ip,
+            bus_token: load_or_create_bus_token(),
         };
         (state, cmd_rx, cfg_rx)
     }
@@ -245,10 +286,18 @@ async fn main() -> Result<()> {
         info!("📱 Mobile URL: https://{}:8443/mobile", lan_ip_str);
     }
 
+    // with_connect_info on BOTH listeners: api_info_handler hands out the bus
+    // token only to loopback callers, which it cannot decide without the peer
+    // address.
     let http_app = app.clone();
     let http_listener = tokio::net::TcpListener::bind(HTTP_ADDR).await?;
     tokio::spawn(async move {
-        if let Err(e) = axum::serve(http_listener, http_app).await {
+        if let Err(e) = axum::serve(
+            http_listener,
+            http_app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        {
             error!("🌐 HTTP server error: {e}");
         }
     });
@@ -257,7 +306,7 @@ async fn main() -> Result<()> {
         HTTPS_ADDR,
         axum_server::tls_rustls::RustlsConfig::from_config(Arc::new(tls_config)),
     )
-    .serve(app.into_make_service())
+    .serve(app.into_make_service_with_connect_info::<SocketAddr>())
     .await?;
 
     Ok(())
@@ -265,8 +314,21 @@ async fn main() -> Result<()> {
 
 // ──────────────────────────────────────────────── API handlers ──
 
-async fn api_info_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    Json(serde_json::json!({ "lan_ip": state.lan_ip, "port": 8443 }))
+/// Public info for any caller; the bus token ONLY for loopback.
+///
+/// Pages served to localhost (index.html, obs.html, and the UserScript talking
+/// to localhost:8443) can therefore fetch the token directly. Remote devices
+/// cannot — the phone gets it from the QR URL fragment instead, which is why
+/// index.html builds that URL with `#token=` appended.
+async fn api_info_handler(
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<SocketAddr>,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let mut body = serde_json::json!({ "lan_ip": state.lan_ip, "port": 8443 });
+    if peer.ip().is_loopback() {
+        body["bus_token"] = serde_json::Value::String(state.bus_token.clone());
+    }
+    Json(body)
 }
 
 async fn health_app_handler(req: Request) -> StatusCode {
@@ -299,8 +361,16 @@ async fn echowire_handler(ws: WebSocketUpgrade, State(state): State<Arc<AppState
 
 async fn obs_websocket_handler(
     ws: WebSocketUpgrade,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
     State(state): State<Arc<AppState>>,
 ) -> Response {
+    // Reject before the upgrade: an authenticated-looking socket that is then
+    // ignored is worse than a refused one.
+    if q.get("token").map(String::as_str) != Some(state.bus_token.as_str()) {
+        warn!("🔒 Rejected /obs connection with missing or wrong token");
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+
     let client_id = state.next_client_id();
     ws.on_upgrade(move |socket| {
         handle_obs_client(socket, state, client_id)

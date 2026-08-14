@@ -635,6 +635,21 @@ The server caches the latest `sysinfo`, `now_playing`, and `climate` and replays
 to every newly-connected client (see `send_welcome`), so a reconnecting overlay shows
 current values immediately rather than waiting for the next slow sensor report.
 
+### Authentication
+
+`/obs` requires `?token=<secret>`; the server refuses the upgrade with 401
+otherwise. The bus is not a read-only feed — it carries `twitch_timeout`,
+`twitch_shoutout` and `cmd_*` record/scene commands that the main page executes
+with the streamer's Twitch moderator token, and both listeners bind 0.0.0.0.
+
+- Token is generated on first run and persisted to `server/certs/bus_token.txt`
+  (gitignored, and blocked from being served by `deny_sensitive_paths`).
+- `GET /api/info` returns `bus_token` **only to loopback callers**, so
+  index.html, obs.html and the UserScript fetch it directly.
+- Remote devices cannot ask. The phone receives it in the QR URL **fragment**
+  (`#token=…`, never sent to the server or its logs) and stores it in
+  localStorage. Re-scan the QR code if the token is regenerated.
+
 ### Client → Server (intercepted by server, NOT relayed to other clients)
 
 ```jsonc

@@ -14,6 +14,7 @@
 
 import { BaseModule } from "../base-module.js";
 import { obs_scene } from "../../actions.js";
+import { getBusToken, busUrl } from "../../bus-token.js";
 import { request } from "../../utils.js";
 
 export class OBSModule extends BaseModule {
@@ -111,8 +112,12 @@ export class OBSModule extends BaseModule {
 
   async doConnect() {
     this.shouldReconnect = true;
-    const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/obs`;
-    this.log(`📺 Connecting to OBS bus at ${url}...`);
+    const token = await getBusToken();
+    if (!token) {
+      throw new Error("No /obs bus token — cannot connect to the OBS bus");
+    }
+    const url = busUrl(token);
+    this.log(`📺 Connecting to OBS bus...`);
 
     try {
       this.ws = new WebSocket(url);

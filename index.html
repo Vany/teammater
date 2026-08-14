@@ -187,9 +187,14 @@
             // Populate mobile QR code after page loads
             fetch('/api/info')
                 .then(r => r.json())
-                .then(({ lan_ip, port }) => {
+                .then(({ lan_ip, port, bus_token }) => {
                     if (!lan_ip) return;
-                    const url = `https://${lan_ip}:${port}/mobile`;
+                    // Token in the FRAGMENT, not the query: fragments are never
+                    // sent to the server, so it stays out of access logs and
+                    // Referer headers. The /obs bus rejects clients without it,
+                    // so the phone must carry it or the remote is dead.
+                    const url = `https://${lan_ip}:${port}/mobile`
+                        + (bus_token ? `#token=${encodeURIComponent(bus_token)}` : '');
                     document.getElementById('mobile-qr-link').href = url;
                     if (typeof QRCode !== 'undefined') {
                         new QRCode(document.getElementById('mobile-qr'), {

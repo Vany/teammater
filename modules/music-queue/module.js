@@ -8,6 +8,7 @@
 
 import { BaseModule } from "../base-module.js";
 import { PersistentDeck } from "../../utils.js";
+import { getBusToken, busUrl } from "../../bus-token.js";
 
 const YOUTUBE_RE = /youtube\.com\/watch|youtu\.be\//;
 
@@ -403,9 +404,13 @@ export class MusicQueueModule extends BaseModule {
 
   // ── OBS broadcast ────────────────────────────────────────
 
-  _connectObs() {
-    const [proto, port] = location.protocol === "https:" ? ["wss:", 8443] : ["ws:", 8442];
-    const ws = new WebSocket(`${proto}//${location.hostname}:${port}/obs`);
+  async _connectObs() {
+    const token = await getBusToken();
+    if (!token) {
+      this.log("❌ No /obs bus token — cannot connect (is the server local?)");
+      return;
+    }
+    const ws = new WebSocket(busUrl(token));
     ws.onopen    = () => this.log("📡 OBS connected");
     ws.onmessage = ({ data }) => {
       try {
