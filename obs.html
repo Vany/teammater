@@ -166,8 +166,9 @@
             margin-top: 2px;
         }
 
-        /* ── Sys Info widget ── */
-        #sys-widget {
+        /* ── Sys Info + Climate widgets (shared box style) ── */
+        #sys-widget,
+        #climate-widget {
             display: inline-flex;
             flex-direction: column;
             gap: 8px;
@@ -179,7 +180,8 @@
             opacity: 0;
             transition: opacity 0.5s, filter 0.8s;
         }
-        #sys-widget.visible { opacity: 0.9; }
+        #sys-widget.visible,
+        #climate-widget.visible { opacity: 0.9; }
         #sys-widget.stale { filter: grayscale(1) brightness(0.45); }
 
         .sys-top {
@@ -292,6 +294,43 @@
             <polyline id="sys-cpu-line" fill="none" stroke="#44dd88" stroke-width="1.5"
                       stroke-linejoin="round" stroke-linecap="round" points=""/>
             <circle id="sys-cpu-dot" r="2.5" fill="#44dd88" cx="-10" cy="0"/>
+        </svg>
+    </div>
+
+    <div id="climate-widget">
+        <div class="sys-top">
+            <span class="sys-icon">🌡</span>
+            <span id="clim-temp-value" class="sys-value">—</span>
+            <span class="sys-unit">°C</span>
+        </div>
+        <svg class="sys-chart" viewBox="0 0 220 22" preserveAspectRatio="none">
+            <defs>
+                <linearGradient id="fillGradClimTemp" x1="0" y1="0" x2="0" y2="1">
+                    <stop id="grad-clim-temp" offset="0%" stop-color="#44dd88" stop-opacity="0.28"/>
+                    <stop offset="100%" stop-color="#44dd88" stop-opacity="0"/>
+                </linearGradient>
+            </defs>
+            <polygon id="clim-temp-fill" fill="url(#fillGradClimTemp)" stroke="none" points=""/>
+            <polyline id="clim-temp-line" fill="none" stroke="#44dd88" stroke-width="1.5"
+                      stroke-linejoin="round" stroke-linecap="round" points=""/>
+            <circle id="clim-temp-dot" r="2.5" fill="#44dd88" cx="-10" cy="0"/>
+        </svg>
+        <div class="sys-top">
+            <span class="sys-icon">💧</span>
+            <span id="clim-hum-value" class="sys-value">—</span>
+            <span class="sys-unit">%</span>
+        </div>
+        <svg class="sys-chart" viewBox="0 0 220 22" preserveAspectRatio="none">
+            <defs>
+                <linearGradient id="fillGradClimHum" x1="0" y1="0" x2="0" y2="1">
+                    <stop id="grad-clim-hum" offset="0%" stop-color="#44dd88" stop-opacity="0.28"/>
+                    <stop offset="100%" stop-color="#44dd88" stop-opacity="0"/>
+                </linearGradient>
+            </defs>
+            <polygon id="clim-hum-fill" fill="url(#fillGradClimHum)" stroke="none" points=""/>
+            <polyline id="clim-hum-line" fill="none" stroke="#44dd88" stroke-width="1.5"
+                      stroke-linejoin="round" stroke-linecap="round" points=""/>
+            <circle id="clim-hum-dot" r="2.5" fill="#44dd88" cx="-10" cy="0"/>
         </svg>
     </div>
 

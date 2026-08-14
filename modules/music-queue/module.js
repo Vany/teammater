@@ -319,7 +319,7 @@ export class MusicQueueModule extends BaseModule {
 
   pauseMusic() {
     this._musicPaused = true;
-    // Send via /obs bus — Yandex tab listens directly over WebSocket (no Tampermonkey needed)
+    bridge.send("pause", null, "yandex");
     this._obsSend({ type: "music_pause" });
     if (this._ytPlayerActive) bridge.send("pause", null, "youtube");
     this._broadcastNowPlaying();
@@ -328,6 +328,7 @@ export class MusicQueueModule extends BaseModule {
 
   resumeMusic() {
     this._musicPaused = false;
+    bridge.send("resume", null, "yandex");
     this._obsSend({ type: "music_resume" });
     this._broadcastNowPlaying();
     this.log("▶ Music resumed (remote)");

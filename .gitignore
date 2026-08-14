@@ -1,0 +1,8 @@
+# Local MCP server config — holds a bearer token. This repo is public.
+.mcp.json
+
+# TLS material and LAN address generated at runtime by server/src/tls.rs.
+# server/.gitignore already covers /certs/*.pem; this covers the whole dir
+# (lan_ip.txt) and the stray server/server/ tree cargo leaves behind.
+server/certs/
+server/server/

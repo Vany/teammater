@@ -183,23 +183,19 @@ export class TwitchStreamModule extends BaseModule {
    */
   async doConnect() {
     if (!this.currentUserId) {
-      // Don't throw error, just log and skip connection
-      // This happens when checkbox is restored from localStorage before auth
-      this.log("⏳ Waiting for user ID...");
-      return;
+      // Fail loud: connect() marks the module green as soon as this returns,
+      // so a silent early return is indistinguishable from working API access.
+      throw new Error(
+        "No Twitch user ID — authenticate before enabling Twitch Stream",
+      );
     }
 
     this.log("📺 Initializing Twitch Stream module...");
 
-    // Test API access by fetching current stream info
-    try {
-      await this.getCurrentStreamInfo();
-      this.log("✅ Stream module initialized");
-      this.updateStatus(true);
-    } catch (error) {
-      this.log(`⚠️ Stream API access limited: ${error.message}`);
-      this.updateStatus(true); // Still mark as connected
-    }
+    // The only thing this module does is call Helix; if the probe call fails
+    // every later call fails too, so a green light here would be a lie.
+    await this.getCurrentStreamInfo();
+    this.log("✅ Stream module initialized");
   }
 
   /**

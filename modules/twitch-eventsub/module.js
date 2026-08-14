@@ -23,6 +23,11 @@ export class TwitchEventSubModule extends BaseModule {
     this.currentUserId = null;
     this.customRewards = {}; // Map of reward_id -> reward_data
     this.redemptionHandlers = []; // Array of handler functions
+
+    // Ready gate: settled from inside ws.onmessage, awaited by doConnect().
+    // See _createReadyGate() for why the connection cannot be judged synchronously.
+    this._readyResolve = null;
+    this._readyReject = null;
   }
 
   /**
@@ -219,14 +224,19 @@ export class TwitchEventSubModule extends BaseModule {
   }
 
   /**
-   * Connect to EventSub
+   * Connect to EventSub.
+   *
+   * Resolves only once the session is live AND every subscription has been
+   * accepted by Twitch. An open socket with no subscriptions receives nothing,
+   * so reporting it as connected hides the only symptom the user would ever see.
    */
   async doConnect() {
     if (!this.currentUserId) {
-      // Don't throw error, just log and skip connection
-      // This happens when checkbox is restored from localStorage before auth
-      this.log("⏳ Waiting for user ID...");
-      return;
+      // Fail loud: connect() marks the module green as soon as this returns,
+      // so a silent early return is indistinguishable from a live connection.
+      throw new Error(
+        "No Twitch user ID — authenticate before enabling EventSub",
+      );
     }
 
     const eventsubUrl = this.getConfigValue(
@@ -234,29 +244,70 @@ export class TwitchEventSubModule extends BaseModule {
       "wss://eventsub.wss.twitch.tv/ws",
     );
 
+    // Re-arm auto-reconnect: _cleanupReconnect() cleared it on the last
+    // disconnect and nothing else ever sets it back, so an uncheck/recheck
+    // cycle would otherwise leave the module unable to recover from a drop.
+    this.shouldReconnect = true;
+
+    // Drop a socket left over from a previous attempt before overwriting the
+    // reference — detach onclose first so its reconnect does not race ours.
+    if (this.ws) {
+      this.ws.onclose = null;
+      this.ws.close();
+    }
+
     this.log(`🎯 Connecting to EventSub at ${eventsubUrl}...`);
 
+    const ready = this._createReadyGate();
     this.ws = new WebSocket(eventsubUrl);
 
     this.ws.onopen = () => {
-      this.log("✅ EventSub connected");
+      this.log("✅ EventSub socket open, waiting for session...");
+    };
+
+    this.ws.onerror = () => {
+      this._failReady(new Error(`EventSub socket error (${eventsubUrl})`));
     };
 
     this.ws.onclose = () => {
       this.log("❌ EventSub disconnected");
       this.updateStatus(false);
       this.sessionId = null;
+      // No-op once the gate has settled; only meaningful if we never got a session.
+      this._failReady(new Error("EventSub socket closed before session ready"));
 
       // Auto-reconnect using shared helper
       this._scheduleReconnect();
     };
 
     this.ws.onmessage = async (event) => {
-      await this._handleEventSubMessage(event.data);
+      // Nothing awaits onmessage, so an error thrown here reaches no caller.
+      // Route it into the ready gate, which doConnect() is awaiting.
+      try {
+        await this._handleEventSubMessage(event.data);
+      } catch (error) {
+        this.log(`💥 EventSub: ${error.message}`);
+        this._failReady(error);
+      }
     };
 
-    // Wait for session_welcome
-    await this._waitForSession();
+    try {
+      await ready;
+    } catch (error) {
+      // Verdict is negative. If the socket is still OPEN the session was fine
+      // and a subscription was refused — a config problem (scope, token) that
+      // a reconnect timer cannot fix, so drop the socket instead of leaving an
+      // open, subscription-less connection behind a red indicator.
+      // If it already closed, onclose has scheduled the retry: that one IS
+      // transient, so leave it alone.
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.shouldReconnect = false;
+        this.ws.onclose = null;
+        this.ws.close();
+        this.ws = null;
+      }
+      throw error;
+    }
   }
 
   /**
@@ -273,29 +324,42 @@ export class TwitchEventSubModule extends BaseModule {
   }
 
   /**
-   * Wait for session_welcome message
+   * Build the promise doConnect() awaits.
+   *
+   * The connection verdict is only known inside ws.onmessage — session_welcome
+   * carries the session id, and only then can subscriptions be created. This
+   * gate carries that verdict back out to doConnect().
+   * @private
    */
-  _waitForSession() {
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        reject(new Error("Session welcome timeout"));
-      }, 10000);
-
-      const originalOnMessage = this.ws.onmessage;
-      this.ws.onmessage = async (event) => {
-        const msg = JSON.parse(event.data);
-        const type = msg.metadata?.message_type;
-
-        if (type === "session_welcome") {
-          clearTimeout(timeout);
-          this.ws.onmessage = originalOnMessage; // Restore handler
-          resolve();
-        }
-
-        // Also call original handler
-        await originalOnMessage(event);
+  _createReadyGate(timeoutMs = 15000) {
+    const gate = new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error("EventSub session/subscription timeout")),
+        timeoutMs,
+      );
+      this._readyResolve = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+      this._readyReject = (error) => {
+        clearTimeout(timer);
+        reject(error);
       };
     });
+
+    // The socket can fail before doConnect() reaches `await ready`; this keeps
+    // that window from producing an unhandled rejection. doConnect() still sees it.
+    gate.catch(() => {});
+    return gate;
+  }
+
+  /**
+   * Reject the ready gate. No-op once it has settled, so late socket errors
+   * on a healthy connection are logged but do not re-open a closed verdict.
+   * @private
+   */
+  _failReady(error) {
+    this._readyReject?.(error);
   }
 
   /**
@@ -308,12 +372,22 @@ export class TwitchEventSubModule extends BaseModule {
     if (type === "session_welcome") {
       this.sessionId = msg.payload.session.id;
       this.log(`✅ EventSub session: ${this.sessionId}`);
-      this.updateStatus(true);
 
-      // Subscribe to events
-      await this._subscribeToRedemptions();
-      await this._subscribeToRaids();
-      await this._subscribeToStreamOnline();
+      // No updateStatus(true) here — connect() sets it after doConnect()
+      // resolves, which happens only if every subscription below succeeded.
+      await this._subscribeAll();
+      this._readyResolve();
+      return;
+    }
+
+    if (type === "revocation") {
+      // Twitch dropped a subscription after it was created (token revoked,
+      // scope removed, version retired). The socket stays open, so without
+      // this the module looks healthy while receiving nothing.
+      const sub = msg.payload.subscription;
+      this.log(`💥 EventSub subscription revoked: ${sub.type} — ${sub.status}`);
+      this.updateStatus(false);
+      return;
     }
 
     if (type === "notification") {
@@ -334,91 +408,94 @@ export class TwitchEventSubModule extends BaseModule {
   }
 
   /**
-   * Subscribe to channel point redemptions
+   * Every subscription this module needs, in creation order.
+   * `condition` is a function of the broadcaster id — raid keys on the
+   * DESTINATION channel, the other two on the broadcaster itself.
+   * @private
    */
-  async _subscribeToRedemptions() {
-    try {
-      await request("https://api.twitch.tv/helix/eventsub/subscriptions", {
-        method: "POST",
-        body: JSON.stringify({
-          type: "channel.channel_points_custom_reward_redemption.add",
-          version: "1",
-          condition: { broadcaster_user_id: this.currentUserId },
-          transport: { method: "websocket", session_id: this.sessionId },
-        }),
-      });
+  static SUBSCRIPTIONS = [
+    {
+      type: "channel.channel_points_custom_reward_redemption.add",
+      version: "1",
+      condition: (id) => ({ broadcaster_user_id: id }),
+      scope: "channel:read:redemptions",
+    },
+    {
+      type: "channel.raid",
+      version: "1",
+      condition: (id) => ({ to_broadcaster_user_id: id }),
+      scope: "none",
+    },
+    {
+      type: "stream.online",
+      version: "1",
+      condition: (id) => ({ broadcaster_user_id: id }),
+      scope: "none",
+    },
+  ];
 
-      this.log("✅ Subscribed to redemption events");
-    } catch (error) {
-      this.log(`❌ Subscription failed: ${error.message}`);
-      throw error;
+  /**
+   * Create every subscription, then report ALL failures together — one bad
+   * scope must not mask the state of the others, and the caller needs the
+   * full picture to know what the module will and will not receive.
+   * @throws {Error} if any subscription was rejected
+   * @private
+   */
+  async _subscribeAll() {
+    const failures = [];
+
+    for (const sub of TwitchEventSubModule.SUBSCRIPTIONS) {
+      try {
+        await request("https://api.twitch.tv/helix/eventsub/subscriptions", {
+          method: "POST",
+          body: JSON.stringify({
+            type: sub.type,
+            version: sub.version,
+            condition: sub.condition(this.currentUserId),
+            transport: { method: "websocket", session_id: this.sessionId },
+          }),
+        });
+
+        this.log(`✅ Subscribed: ${sub.type}`);
+      } catch (error) {
+        // request() puts the Twitch response body in the message — that body
+        // names the missing scope or the reason the subscription was refused.
+        this.log(
+          `❌ Subscribe failed: ${sub.type} (needs scope: ${sub.scope}) — ${error.message}`,
+        );
+        failures.push(`${sub.type}: ${error.message}`);
+      }
+    }
+
+    if (failures.length > 0) {
+      throw new Error(`EventSub subscriptions failed — ${failures.join(" | ")}`);
     }
   }
 
   /**
-   * Subscribe to incoming raid events
-   */
-  async _subscribeToRaids() {
-    try {
-      await request("https://api.twitch.tv/helix/eventsub/subscriptions", {
-        method: "POST",
-        body: JSON.stringify({
-          type: "channel.raid",
-          version: "1",
-          condition: { to_broadcaster_user_id: this.currentUserId },
-          transport: { method: "websocket", session_id: this.sessionId },
-        }),
-      });
-
-      this.log("✅ Subscribed to raid events");
-    } catch (error) {
-      this.log(`❌ Raid subscription failed: ${error.message}`);
-    }
-  }
-
-  /**
-   * Subscribe to stream.online events
-   */
-  async _subscribeToStreamOnline() {
-    try {
-      await request("https://api.twitch.tv/helix/eventsub/subscriptions", {
-        method: "POST",
-        body: JSON.stringify({
-          type: "stream.online",
-          version: "1",
-          condition: { broadcaster_user_id: this.currentUserId },
-          transport: { method: "websocket", session_id: this.sessionId },
-        }),
-      });
-
-      this.log("✅ Subscribed to stream.online events");
-    } catch (error) {
-      this.log(`❌ stream.online subscription failed: ${error.message}`);
-    }
-  }
-
-  /**
-   * Handle incoming raid — auto shoutout if configured
+   * Handle incoming raid — auto shoutout via Helix API if configured.
    * @param {object} event - channel.raid event payload
    */
   _handleRaid(event) {
-    const enabled = this.getConfigValue("enabled", true);
-    const minRaiders = parseInt(this.getConfigValue("min_raiders", "5"), 10);
-
+    const raw = this.getConfigValue("enabled", "true");
+    const enabled = raw === true || raw === "true";
     if (!enabled) return;
+
+    const minRaiders = parseInt(this.getConfigValue("min_raiders", "5"), 10);
     if (event.viewers < minRaiders) {
-      this.log(`ℹ️ Raid from ${event.from_broadcaster_user_login} has ${event.viewers} viewers, below threshold ${minRaiders} — skipping shoutout`);
+      this.log(`ℹ️ Raid from ${event.from_broadcaster_user_login}: ${event.viewers} viewers < threshold ${minRaiders}, skipping shoutout`);
       return;
     }
 
-    const chatModule = this.moduleManager?.get("twitch-chat");
-    if (!chatModule?.isConnected()) {
-      this.log(`❌ Auto shoutout: chat not connected`);
+    const obsModule = this.moduleManager?.get("obs");
+    if (!obsModule) {
+      this.log(`❌ Auto shoutout: obs module not available`);
       return;
     }
 
-    chatModule.send(`/shoutout ${event.from_broadcaster_user_login}`);
-    this.log(`📣 Auto shoutout sent for ${event.from_broadcaster_user_login} (${event.viewers} raiders)`);
+    obsModule._twitchShoutout(event.from_broadcaster_user_login)
+      .then(() => this.log(`📣 Shouted out ${event.from_broadcaster_user_login} (${event.viewers} raiders)`))
+      .catch(e => this.log(`❌ Auto shoutout failed: ${e.message}`));
   }
 
   /**

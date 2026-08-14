@@ -4,13 +4,13 @@
  * IRC WebSocket connection to Twitch chat.
  *
  * Features:
- * - IRC connection with CAP REQ for tags/commands
+ * - IRC connection with CAP REQ for tags/commands/membership
  * - Message parsing (PRIVMSG with tags)
  * - Chat message sending (normal, action, whisper)
  * - Auto-reconnection
  * - Chat history for LLM monitoring
- *
- * Based on startChat() from index.js
+ * - Following list fetch + friend presence detection (JOIN/PART)
+ *   Broadcasts: friend_joined { user }, friends_watching { users[] }
  */
 
 import { BaseModule } from "../base-module.js";
@@ -23,11 +23,15 @@ export class TwitchChatModule extends BaseModule {
     super();
     this.channel = null;
     this.username = null;
+    this.userId = null;
     this.token = null;
     this.userIdCache = {};
     this.chatHistory = this._loadChatHistory();
     this.chatMarkerPosition = this.chatHistory.length; // mark all restored as already seen
     this.messageHandlers = []; // Array of {priority, handler} objects
+    this.followingSet = new Set();    // lowercase logins we follow (friends)
+    this.watchingFriends = new Set(); // friends detected via IRC JOIN (watching stream, bold)
+    this.chattingFriends = new Set(); // friends seen via PRIVMSG only (in chat, normal weight)
   }
 
   /**
@@ -139,18 +143,35 @@ export class TwitchChatModule extends BaseModule {
   }
 
   /**
-   * Set authentication token and user info
-   * Must be called before connect()
-   * Channel is read from config; falls back to own username if not set
-   * If module is enabled, will automatically connect
+   * Add re-login button to config panel after auto-generated fields
    */
-  async setAuth(token, username) {
+  async initialize(container) {
+    await super.initialize(container);
+
+    const btn = document.createElement("button");
+    btn.textContent = "🔑 Re-login with Twitch";
+    btn.title = "Clears stored token and reloads — use after adding new OAuth scopes";
+    btn.style.cssText = "margin-top:10px;padding:6px 12px;background:#9147ff;color:#fff;border:none;border-radius:4px;font-size:12px;cursor:pointer;width:100%";
+    btn.addEventListener("click", () => {
+      localStorage.removeItem("twitch_token");
+      window.location.reload();
+    });
+
+    this.ui.configPanel.appendChild(btn);
+  }
+
+  /**
+   * Set authentication token and user info.
+   * Must be called before connect().
+   * Channel is read from config; falls back to own username if not set.
+   */
+  async setAuth(token, username, userId = null) {
     this.token = token;
     this.username = username;
+    this.userId = userId;
     const configChannel = this.getConfigValue("channel", "").trim();
     this.channel = configChannel || username;
 
-    // If module is enabled, connect now that we have auth
     if (this.enabled && !this.connected) {
       this.log("🔑 Authentication set, connecting...");
       await this.connect();
@@ -162,8 +183,6 @@ export class TwitchChatModule extends BaseModule {
    */
   async doConnect() {
     if (!this.token || !this.username) {
-      // Don't throw error, just log and skip connection
-      // This happens when checkbox is restored from localStorage before auth
       this.log("⏳ Waiting for authentication...");
       return;
     }
@@ -185,28 +204,86 @@ export class TwitchChatModule extends BaseModule {
     this.ws.onclose = () => {
       this.log("❌ WebSocket closed");
       this.updateStatus(false);
-
-      // Auto-reconnect using shared helper
       this._scheduleReconnect();
     };
 
     this.ws.onopen = () => {
-      // Enable IRC tags to get message IDs, user IDs, etc.
-      this.ws.send("CAP REQ :twitch.tv/tags twitch.tv/commands");
+      // membership capability gives us JOIN/PART events for friend detection
+      this.ws.send("CAP REQ :twitch.tv/tags twitch.tv/commands twitch.tv/membership");
       this.ws.send(`PASS oauth:${this.token}`);
       this.ws.send(`NICK ${this.username}`);
       this.ws.send(`JOIN #${this.channel}`);
 
       this.log(`✅ Connected to #${this.channel} as ${this.username}`);
       this.updateStatus(true);
+
+      // Kick off following list fetch asynchronously — don't block IRC
+      this._fetchFollowing().catch((err) =>
+        this.log(`⚠️ Following list fetch failed: ${err.message}`),
+      );
     };
 
     this.ws.onmessage = (event) => {
       this._handleIrcMessage(event.data);
     };
 
-    // Wait for connection
     await this._waitForWebSocket(this.ws);
+  }
+
+  /**
+   * Fetch the list of channels the authenticated user follows (their "friends").
+   * Stores lowercase logins in this.followingSet.
+   * Uses /helix/channels/followed (requires user:read:follows scope).
+   */
+  async _fetchFollowing() {
+    if (!this.token || !this.username) return;
+
+    const clientId = this.getConfigValue("client_id", "");
+    if (!clientId) {
+      this.log("⚠️ No Client ID configured, skipping following list fetch");
+      return;
+    }
+
+    const headers = {
+      Authorization: `Bearer ${this.token}`,
+      "Client-Id": clientId,
+    };
+
+    // Resolve userId if not provided (e.g. reconnect without re-auth)
+    let userId = this.userId;
+    if (!userId) {
+      const res = await fetch(
+        `https://api.twitch.tv/helix/users?login=${encodeURIComponent(this.username)}`,
+        { headers },
+      );
+      const data = await res.json();
+      userId = data.data?.[0]?.id;
+      if (!userId) {
+        this.log("⚠️ Could not resolve own user ID for following list");
+        return;
+      }
+      this.userId = userId;
+    }
+
+    // Paginate through all followed channels
+    this.followingSet = new Set();
+    let cursor = null;
+    let total = 0;
+
+    do {
+      const url =
+        `https://api.twitch.tv/helix/channels/followed?user_id=${userId}&first=100` +
+        (cursor ? `&after=${cursor}` : "");
+      const res = await fetch(url, { headers });
+      const data = await res.json();
+      for (const entry of data.data ?? []) {
+        this.followingSet.add(entry.broadcaster_login.toLowerCase());
+      }
+      cursor = data.pagination?.cursor ?? null;
+      total += data.data?.length ?? 0;
+    } while (cursor);
+
+    this.log(`👥 Loaded ${total} friends (following list)`);
   }
 
   /**
@@ -214,38 +291,49 @@ export class TwitchChatModule extends BaseModule {
    */
   async doDisconnect() {
     this.log("🔌 Disconnecting from Twitch IRC...");
-
-    // Cleanup using shared helper
     this._cleanupReconnect();
+
+    // Clear friend presence and notify mobile
+    this.watchingFriends.clear();
+    this.chattingFriends.clear();
+    this._broadcastFriends(null);
 
     this.log("✅ Disconnected from Twitch IRC");
   }
 
   /**
-   * Handle incoming IRC message
+   * Handle incoming IRC message.
+   * Intercepts membership events (JOIN/PART) before PRIVMSG parsing.
    */
   _handleIrcMessage(data) {
-    // Handle PING
     if (data.startsWith("PING")) {
       this.ws.send("PONG :tmi.twitch.tv");
       return;
     }
 
-    // Parse IRC message
+    if (this._handleMembershipEvent(data)) return;
+
     const parsed = parseIrcMessage(data);
-    if (!parsed) {
-      return; // Not a PRIVMSG or failed to parse
-    }
+    if (!parsed) return;
 
     const { username, message } = parsed;
-
-    // Extract tags (user-id, message-id, etc.)
     const tags = parseIrcTags(data);
 
-    // Add to chat history
     this._addToChatHistory(username, message);
 
-    // Broadcast to /obs bus so mobile and other bus clients see chat
+    // Friend chatting detection: show in widget even if not JOIN-detected
+    const userLower = username.toLowerCase();
+    if (
+      this.followingSet.size > 0 &&
+      this.followingSet.has(userLower) &&
+      !this.watchingFriends.has(userLower) &&
+      !this.chattingFriends.has(userLower)
+    ) {
+      this.chattingFriends.add(userLower);
+      this.log(`👥 Friend chatting: ${userLower}`);
+      this._broadcastFriends(userLower); // flash on first appearance
+    }
+
     this.moduleManager?.get("obs")?._sendCmd("chat_message", {
       user: username,
       text: message,
@@ -253,7 +341,6 @@ export class TwitchChatModule extends BaseModule {
       msg_id: tags?.id ?? "",
     });
 
-    // Notify message handlers (for chat actions, LLM monitoring, etc.)
     this._notifyMessageHandlers({
       username,
       message,
@@ -261,6 +348,87 @@ export class TwitchChatModule extends BaseModule {
       userId: tags?.["user-id"],
       messageId: tags?.id,
       rawData: data,
+    });
+  }
+
+  /**
+   * Parse and handle IRC membership events: JOIN, PART, 353 NAMES.
+   * Returns true if the message was a membership event (and consumed).
+   */
+  _handleMembershipEvent(data) {
+    // Strip tags prefix if present so regex matches cleanly
+    let line = data;
+    if (line.startsWith("@")) {
+      const sp = line.indexOf(" ");
+      if (sp !== -1) line = line.substring(sp + 1);
+    }
+
+    // :user!user@user.tmi.twitch.tv JOIN #channel
+    const joinMatch = line.match(/^:([^!]+)![^\s]+ JOIN #/);
+    if (joinMatch) {
+      const user = joinMatch[1].toLowerCase();
+      if (this.followingSet.size > 0 && this.followingSet.has(user)) {
+        const isNew = !this.watchingFriends.has(user) && !this.chattingFriends.has(user);
+        this.chattingFriends.delete(user); // upgrade: watching supersedes chatting
+        this.watchingFriends.add(user);
+        this.log(`👥 Friend watching: ${user}`);
+        this._broadcastFriends(isNew ? user : null); // flash only on first appearance
+      }
+      return true;
+    }
+
+    // :user!user@user.tmi.twitch.tv PART #channel
+    const partMatch = line.match(/^:([^!]+)![^\s]+ PART #/);
+    if (partMatch) {
+      const user = partMatch[1].toLowerCase();
+      if (this.watchingFriends.has(user)) {
+        this.watchingFriends.delete(user);
+        // Keep in chattingFriends if they chatted — they're still present in chat
+        this.log(`👥 Friend closed stream: ${user}`);
+        this._broadcastFriends(null);
+      }
+      return true;
+    }
+
+    // 353 NAMES: initial presence list (up to 1000, small channels only)
+    // Format: :server 353 nick = #channel :user1 user2 ...
+    const namesMatch = line.match(/ 353 [^\s]+ [=*@] #[^\s]+ :(.+)/);
+    if (namesMatch) {
+      if (this.followingSet.size > 0) {
+        let found = false;
+        for (const raw of namesMatch[1].trim().split(" ")) {
+          const user = raw.replace(/^[+@]/, "").toLowerCase();
+          if (this.followingSet.has(user) && !this.watchingFriends.has(user)) {
+            this.chattingFriends.delete(user);
+            this.watchingFriends.add(user);
+            found = true;
+          }
+        }
+        if (found) {
+          this.log(`👥 Friends already watching: ${[...this.watchingFriends].join(", ")}`);
+          this._broadcastFriends(null);
+        }
+      }
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Broadcast friend presence to mobile via /obs bus.
+   * watching = bold (IRC JOIN), chatting = normal (PRIVMSG only, not JOIN-detected).
+   * @param {string|null} newUser - User appearing for first time (triggers flash), or null
+   */
+  _broadcastFriends(newUser) {
+    const obs = this.moduleManager?.get("obs");
+    if (!obs) return;
+    if (newUser) {
+      obs._sendCmd("friend_appeared", { user: newUser });
+    }
+    obs._sendCmd("friends_present", {
+      watching: [...this.watchingFriends],
+      chatting: [...this.chattingFriends],
     });
   }
 
@@ -276,11 +444,8 @@ export class TwitchChatModule extends BaseModule {
       message: message,
     });
 
-    // Keep buffer at historySize, remove oldest if exceeded
     if (this.chatHistory.length > historySize) {
       this.chatHistory.shift();
-
-      // Adjust marker position
       if (this.chatMarkerPosition > 0) {
         this.chatMarkerPosition--;
       }
@@ -296,7 +461,6 @@ export class TwitchChatModule extends BaseModule {
    */
   registerMessageHandler(handler, priority = 0) {
     this.messageHandlers.push({ priority, handler });
-    // Sort by priority (highest first)
     this.messageHandlers.sort((a, b) => b.priority - a.priority);
   }
 
@@ -363,7 +527,6 @@ export class TwitchChatModule extends BaseModule {
         return false;
       }
 
-      // IRC ACTION format: PRIVMSG #channel :\x01ACTION message\x01
       this.ws.send(`PRIVMSG #${this.channel} :\x01ACTION ${sanitized}\x01`);
       this.log(`📤 Action: * ${sanitized}`);
       return true;
@@ -411,7 +574,6 @@ export class TwitchChatModule extends BaseModule {
       });
       const line = `[${timestamp}] ${entry.username}: ${entry.message}`;
 
-      // Add marker after messages that were already processed
       if (
         index === this.chatMarkerPosition - 1 &&
         this.chatMarkerPosition < this.chatHistory.length
@@ -425,35 +587,13 @@ export class TwitchChatModule extends BaseModule {
     return lines.join("\n");
   }
 
-  /**
-   * Get channel name
-   */
-  getChannel() {
-    return this.channel;
-  }
+  getChannel() { return this.channel; }
+  getUsername() { return this.username; }
+  getWebSocket() { return this.ws; }
 
-  /**
-   * Get username
-   */
-  getUsername() {
-    return this.username;
-  }
-
-  /**
-   * Get WebSocket instance
-   */
-  getWebSocket() {
-    return this.ws;
-  }
-
-  /**
-   * Provide context for actions
-   * Returns module reference - actions access methods directly
-   */
   getContextContribution() {
     return {
       twitchChat: this,
-      // Legacy flat helpers for actions
       ws: this.ws,
       CHANNEL: this.channel,
       send_twitch: (msg) => this.send(msg),

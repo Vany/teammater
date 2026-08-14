@@ -4,7 +4,7 @@
 
 Production HTTPS/WSS server for Teammater project. Replaces Caddy with optimized Rust implementation.
 
-**Purpose:** Serve static web application files, proxy WebSocket connections to the EchoWire STT backend, own the OBS Studio WebSocket connection and broker all OBS state/commands to browser and mobile clients, broadcast OBS overlay data, and relay BLE heart rate monitor data.
+**Purpose:** Serve static web application files, proxy WebSocket connections to the EchoWire STT backend, own the OBS Studio WebSocket connection and broker all OBS state/commands to browser and mobile clients, broadcast OBS overlay data, relay BLE heart rate monitor data, and relay Zigbee2MQTT climate sensor readings.
 
 ## Architecture
 
@@ -31,6 +31,11 @@ All internal services launch independently at startup. Each service manages its 
            ┌────▼──────────────────────────┐  │
            │  BLE heart rate               │  │
            │  device: HeartCast            │  │
+           │  → obs broadcast chan         │  │
+           └───────────────────────────────┘  │
+           ┌───────────────────────────────┐  │
+           │  Zigbee2MQTT climate (T1)     │  │
+           │  ws://c:8081/api              │  │
            │  → obs broadcast chan         │  │
            └───────────────────────────────┘  │
                                      ┌────────▼──────┐
@@ -72,6 +77,7 @@ The `/obs` WebSocket endpoint is the central hub for OBS state, commands, logs, 
 **On client connect**, server immediately sends:
 1. Last 5 log lines from ring buffer as individual `log` messages
 2. Current `obs_state` snapshot (if OBS is connected)
+3. Latest cached `sysinfo`, `now_playing`, and `climate` messages (whichever have been seen) — so a reconnecting overlay shows current values without waiting for the next (possibly slow) report
 
 **Message routing rules:**
 
@@ -168,6 +174,24 @@ On disconnect from OBS: publish `{"type":"obs_state","connected":false}` to broa
 {"heartrate": 72}
 ```
 
+### Zigbee2MQTT Climate Sensor (`src/zigbee.rs`)
+
+Zigbee2MQTT is MQTT-first with no REST API. Its frontend WebSocket bridge is the
+dependency-free path into device state (reuses `tokio-tungstenite`), so the task
+connects there rather than to the MQTT broker.
+
+- Connects to `ws://c:8081/api`; on connect Z2M replays retained device state, so the first reading arrives immediately
+- Watches one device by friendly name: `T1` (Xiaomi WSDCGQ01LM temperature/humidity sensor). Address and device name are hardcoded
+- Frames are `{"topic":"<friendly_name>","payload":{...}}`; task filters `topic == "T1"` and reads `temperature` / `humidity` from the payload
+- Carries the last-known value of each metric, so a report containing only one attribute still broadcasts a complete pair; values rounded to one decimal
+- Broadcasts to the obs channel (`sender_id = u64::MAX`):
+  ```json
+  {"type":"climate","temperature":23.4,"humidity":61.8}
+  ```
+- Answers WS `Ping` with `Pong` to avoid mid-stream drops
+- Reconnects after `Z2M_RECONNECT_DELAY` on close/error; never affects other services — if Z2M is unreachable the task just retries and the overlay's climate widget never appears
+- Latest reading cached in `last_climate` and replayed to new `/obs` clients (T1 reports on change — minutes to ~an hour — so late joiners must not wait)
+
 ## Endpoints
 
 | Method | Path | Description |
@@ -182,7 +206,7 @@ On disconnect from OBS: publish `{"type":"obs_state","connected":false}` to broa
 
 ## Configuration
 
-All configuration is compile-time in `src/main.rs`, `src/ble.rs`, and `src/obs.rs`.
+All configuration is compile-time in `src/main.rs`, `src/ble.rs`, `src/obs.rs`, and `src/zigbee.rs`.
 
 | Constant | Value | Description |
 |----------|-------|-------------|
@@ -201,6 +225,9 @@ All configuration is compile-time in `src/main.rs`, `src/ble.rs`, and `src/obs.r
 | `RECONNECT_DELAY` | 5s | BLE scan/reconnect delay |
 | `SCAN_WINDOW` | 5s | BLE scan burst duration |
 | `HR_WATCHDOG` | 10s | Silence timeout before reconnect |
+| `Z2M_ADDR` | `ws://c:8081/api` | Zigbee2MQTT frontend WS bridge |
+| `Z2M_DEVICE` | `T1` | Watched sensor friendly name |
+| `Z2M_RECONNECT_DELAY` | 5s | Zigbee reconnect delay on failure |
 
 Runtime: `RUST_LOG=info` (default), `RUST_LOG=debug` for verbose output.
 
@@ -212,10 +239,12 @@ server/
 ├── Cargo.lock
 ├── SPEC.md             # This file
 ├── src/
-│   ├── main.rs        # Server, routing, mDNS, obs bus handler, echowire proxy
-│   ├── obs.rs         # OBS WebSocket client, state machine, command dispatch
-│   ├── ble.rs         # BLE heart rate monitor
-│   └── tls.rs         # Certificate generation with LAN IP SAN
+│   ├── main.rs         # Server, routing, mDNS, obs bus handler, echowire proxy
+│   ├── obs.rs          # OBS WebSocket client, state machine, command dispatch
+│   ├── ble.rs          # BLE heart rate monitor
+│   ├── sysinfo_task.rs # Host CPU usage / temperature poller
+│   ├── zigbee.rs       # Zigbee2MQTT climate sensor (T1) via WS bridge
+│   └── tls.rs          # Certificate generation with LAN IP SAN
 └── certs/             # Auto-generated (not in git)
     ├── cert.pem
     └── key.pem
@@ -254,6 +283,11 @@ WARN  🔄 Backend changed, dropping connection
 ```
 
 ## Version History
+
+### v0.4.0 (2026-07-11)
+- Zigbee2MQTT climate source (`src/zigbee.rs`) — server-side task on the Z2M frontend WS bridge (`ws://c:8081/api`), watching sensor `T1`, broadcasting `{"type":"climate",...}` to the `/obs` bus; zero new dependencies (reuses `tokio-tungstenite`)
+- Latest climate cached (`last_climate`) and replayed to new clients in the connect welcome burst
+- OBS overlay: room temperature + humidity widget (`#climate-widget`) with sparklines and comfort color zones; no stale-out (T1 reports infrequently)
 
 ### v0.3.0 (2026-05-18)
 - OBS WebSocket client service (`src/obs.rs`) — server-side OBS owner/broker

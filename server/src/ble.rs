@@ -8,17 +8,24 @@ use uuid::Uuid;
 
 use crate::ObsMessage;
 
+// Real BLE code kept intact — temporarily dormant while fake_hr_task is active.
+#[allow(dead_code)]
 const DEVICE_NAME: &str = "HeartCast";
+#[allow(dead_code)]
 const RECONNECT_DELAY: Duration = Duration::from_secs(5);
+#[allow(dead_code)]
 const SCAN_WINDOW: Duration = Duration::from_secs(5);
 /// If no HR packet arrives for this long, assume device is gone and reconnect.
+#[allow(dead_code)]
 const HR_WATCHDOG: Duration = Duration::from_secs(10);
 
 // BLE Heart Rate Service (0x180D) / Heart Rate Measurement characteristic (0x2A37)
+#[allow(dead_code)]
 fn hr_char_uuid() -> Uuid {
     uuid_from_u16(0x2A37)
 }
 
+#[allow(dead_code)]
 pub async fn ble_task(tx: broadcast::Sender<ObsMessage>) {
     // Manager must stay alive for the duration — it owns the CoreBluetooth event loop.
     // Init once, retry until success; never reinitialize after that.
@@ -44,6 +51,7 @@ pub async fn ble_task(tx: broadcast::Sender<ObsMessage>) {
 
 /// Returns (Manager, Adapter). Manager must be kept alive — dropping it kills
 /// the CoreBluetooth background event loop and silently breaks all BLE operations.
+#[allow(dead_code)]
 async fn init_adapter() -> anyhow::Result<(Manager, btleplug::platform::Adapter)> {
     let manager = Manager::new().await?;
     let adapter = manager
@@ -55,6 +63,7 @@ async fn init_adapter() -> anyhow::Result<(Manager, btleplug::platform::Adapter)
     Ok((manager, adapter))
 }
 
+#[allow(dead_code)]
 async fn run_ble(
     tx: &broadcast::Sender<ObsMessage>,
     adapter: &btleplug::platform::Adapter,
@@ -148,6 +157,7 @@ async fn run_ble(
 /// Scan in SCAN_WINDOW bursts until DEVICE_NAME is found. Never returns an error —
 /// all transient failures (adapter not ready after disconnect, stream errors) are
 /// retried internally with RECONNECT_DELAY.
+#[allow(dead_code)]
 async fn scan_until_found(adapter: &btleplug::platform::Adapter) -> btleplug::platform::Peripheral {
     info!("💓 Scanning for '{DEVICE_NAME}'...");
     loop {
@@ -200,6 +210,7 @@ async fn scan_until_found(adapter: &btleplug::platform::Adapter) -> btleplug::pl
 
 /// Parse BLE Heart Rate Measurement packet (Bluetooth SIG spec).
 /// flags byte bit0: 0 = HR as u8, 1 = HR as u16 LE
+#[allow(dead_code)]
 fn parse_hr(data: &[u8]) -> Option<u16> {
     let flags = *data.first()?;
     if flags & 0x01 == 0 {
@@ -208,5 +219,27 @@ fn parse_hr(data: &[u8]) -> Option<u16> {
         let lo = *data.get(1)? as u16;
         let hi = *data.get(2)? as u16;
         Some(lo | (hi << 8))
+    }
+}
+
+// TEMPORARY: fake heartrate task — real BLE code above is untouched.
+// Distribution: 64% → 79, 25% → 80, 10% → 81, 1% → 82.
+pub async fn fake_hr_task(tx: broadcast::Sender<ObsMessage>) {
+    use rand::{Rng, SeedableRng, rngs::StdRng};
+    let mut rng = StdRng::from_entropy();
+    info!("💓 [FAKE] Heartrate emulator started");
+    loop {
+        let roll: u8 = rng.gen_range(0..100);
+        let bpm: u8 = match roll {
+            0       => 82,
+            1..=10  => 81,
+            11..=35 => 80,
+            _       => 79,
+        };
+        let _ = tx.send(ObsMessage {
+            sender_id: u64::MAX,
+            text: format!("{{\"heartrate\":{}}}", bpm),
+        });
+        tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }

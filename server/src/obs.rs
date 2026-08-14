@@ -21,7 +21,7 @@ pub struct ObsConfig {
     pub password: String,
 }
 
-const OBS_RECONNECT_DELAY: Duration = Duration::from_secs(5);
+const OBS_RECONNECT_DELAY_MAX: u64 = 300;
 const OBS_POLL_INTERVAL: Duration = Duration::from_secs(2);
 /// EventSubscriptions: Scenes (1<<2=4) + Outputs (1<<6=64)
 const OBS_EVENT_SUBS: u32 = 68;
@@ -89,13 +89,13 @@ pub async fn obs_task(
     obs_state: Arc<RwLock<SharedObsState>>,
     mut config_rx: watch::Receiver<ObsConfig>,
 ) {
+    let mut backoff_secs: u64 = 1;
+
     loop {
         // Wait until the browser sends a non-empty URL
-        let config = {
-            let c = config_rx.borrow_and_update().clone();
-            c
-        };
+        let config = config_rx.borrow_and_update().clone();
         if config.url.is_empty() {
+            backoff_secs = 1;
             info!("🎬 Waiting for OBS config from browser...");
             if config_rx.changed().await.is_err() {
                 return;
@@ -103,10 +103,15 @@ pub async fn obs_task(
             continue;
         }
 
-        info!("🎬 OBS connecting to {}...", config.url);
+        info!("🎬 OBS connecting to {} (retry in {backoff_secs}s if fails)...", config.url);
         match run_obs_session(&config, &broadcast_tx, &mut cmd_rx, &obs_state, &mut config_rx).await {
-            Ok(()) => warn!("🎬 OBS session ended"),
-            Err(e) => error!("🎬 OBS error: {e}"),
+            Ok(()) => {
+                warn!("🎬 OBS session ended");
+                backoff_secs = 1;
+            }
+            Err(e) => {
+                error!("🎬 OBS error: {e} — retry in {backoff_secs}s");
+            }
         }
 
         // Publish disconnected state so clients know
@@ -118,7 +123,8 @@ pub async fn obs_task(
             let _ = broadcast_tx.send(ObsMessage { sender_id: u64::MAX, text: json });
         }
 
-        tokio::time::sleep(OBS_RECONNECT_DELAY).await;
+        tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
+        backoff_secs = (backoff_secs * 2).min(OBS_RECONNECT_DELAY_MAX);
     }
 }
 

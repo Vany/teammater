@@ -31,13 +31,14 @@ mod echowire;
 mod obs;
 mod sysinfo_task;
 mod tls;
+mod zigbee;
 
 // ─────────────────────────────────────────────── configuration ──
 
 const HTTPS_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8443);
-const HTTP_ADDR:  SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8442);
-const CERT_PATH:  &str = "server/certs/cert.pem";
-const KEY_PATH:   &str = "server/certs/key.pem";
+const HTTP_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8442);
+const CERT_PATH: &str = "server/certs/cert.pem";
+const KEY_PATH: &str = "server/certs/key.pem";
 
 const OBS_BROADCAST_CAPACITY: usize = 16;
 const LOG_RING_SIZE: usize = 5;
@@ -54,33 +55,41 @@ pub struct ObsMessage {
 // ─────────────────────────────────────────────── shared state ──
 
 struct AppState {
-    echowire:           Arc<echowire::EchoWireState>,
-    obs_broadcast:      broadcast::Sender<ObsMessage>,
+    echowire: Arc<echowire::EchoWireState>,
+    obs_broadcast: broadcast::Sender<ObsMessage>,
     obs_client_counter: AtomicU64,
-    obs_state:          Arc<RwLock<obs::SharedObsState>>,
-    obs_cmd_tx:         mpsc::Sender<obs::ObsCommand>,
-    obs_config_tx:      watch::Sender<ObsConfig>,
-    log_ring:           Mutex<VecDeque<String>>,
-    last_sysinfo:       Mutex<Option<String>>,
-    last_now_playing:   Mutex<Option<String>>,
-    lan_ip:             String,
+    obs_state: Arc<RwLock<obs::SharedObsState>>,
+    obs_cmd_tx: mpsc::Sender<obs::ObsCommand>,
+    obs_config_tx: watch::Sender<ObsConfig>,
+    log_ring: Mutex<VecDeque<String>>,
+    last_sysinfo: Mutex<Option<String>>,
+    last_now_playing: Mutex<Option<String>>,
+    last_climate: Mutex<Option<String>>,
+    lan_ip: String,
 }
 
 impl AppState {
-    fn new(lan_ip: String) -> (Self, mpsc::Receiver<obs::ObsCommand>, watch::Receiver<ObsConfig>) {
+    fn new(
+        lan_ip: String,
+    ) -> (
+        Self,
+        mpsc::Receiver<obs::ObsCommand>,
+        watch::Receiver<ObsConfig>,
+    ) {
         let (obs_tx, _) = broadcast::channel(OBS_BROADCAST_CAPACITY);
         let (cmd_tx, cmd_rx) = mpsc::channel(32);
         let (cfg_tx, cfg_rx) = watch::channel(ObsConfig::default());
         let state = Self {
-            echowire:           echowire::EchoWireState::new(),
-            obs_broadcast:      obs_tx,
+            echowire: echowire::EchoWireState::new(),
+            obs_broadcast: obs_tx,
             obs_client_counter: AtomicU64::new(0),
-            obs_state:          Arc::new(RwLock::new(obs::SharedObsState::default())),
-            obs_cmd_tx:         cmd_tx,
-            obs_config_tx:      cfg_tx,
-            log_ring:           Mutex::new(VecDeque::with_capacity(LOG_RING_SIZE + 1)),
-            last_sysinfo:       Mutex::new(None),
-            last_now_playing:   Mutex::new(None),
+            obs_state: Arc::new(RwLock::new(obs::SharedObsState::default())),
+            obs_cmd_tx: cmd_tx,
+            obs_config_tx: cfg_tx,
+            log_ring: Mutex::new(VecDeque::with_capacity(LOG_RING_SIZE + 1)),
+            last_sysinfo: Mutex::new(None),
+            last_now_playing: Mutex::new(None),
+            last_climate: Mutex::new(None),
             lan_ip,
         };
         (state, cmd_rx, cfg_rx)
@@ -99,7 +108,7 @@ async fn main() -> Result<()> {
         .with_env_filter("info,teammater_server=debug")
         .init();
 
-    let lan_ip     = tls::detect_lan_ip();
+    let lan_ip = tls::detect_lan_ip();
     let lan_ip_str = lan_ip.map(|ip| ip.to_string()).unwrap_or_default();
     let tls_config = tls::load_tls_config(Path::new(CERT_PATH), Path::new(KEY_PATH), lan_ip)?;
 
@@ -107,26 +116,41 @@ async fn main() -> Result<()> {
     let state = Arc::new(state_inner);
 
     tokio::spawn(echowire::mdns_task(state.echowire.clone()).instrument(info_span!("mdns")));
+    // TEMPORARY: fake heartrate — swap back to ble::ble_task when done.
     tokio::spawn(ble::ble_task(state.obs_broadcast.clone()).instrument(info_span!("ble")));
     tokio::spawn(
-        obs::obs_task(state.obs_broadcast.clone(), obs_cmd_rx, state.obs_state.clone(), obs_cfg_rx)
-            .instrument(info_span!("obs")),
+        obs::obs_task(
+            state.obs_broadcast.clone(),
+            obs_cmd_rx,
+            state.obs_state.clone(),
+            obs_cfg_rx,
+        )
+        .instrument(info_span!("obs")),
     );
     tokio::spawn({
         let broadcast = state.obs_broadcast.clone();
-        let state2    = state.clone();
+        let state2 = state.clone();
         async move { sysinfo_task::sysinfo_task(broadcast, &state2.last_sysinfo).await }
             .instrument(info_span!("sysinfo"))
+    });
+    tokio::spawn({
+        let broadcast = state.obs_broadcast.clone();
+        let state2 = state.clone();
+        async move { zigbee::zigbee_task(broadcast, &state2.last_climate).await }
+            .instrument(info_span!("zigbee"))
     });
 
     let app = Router::new()
         .route("/echowire", get(echowire_handler))
-        .route("/obs",      get(obs_websocket_handler))
-        .route("/api/health",              any(|| async { StatusCode::OK }))
-        .route("/api/info",                get(api_info_handler))
-        .route("/api/import/health-app",   any(health_app_handler))
+        .route("/obs", get(obs_websocket_handler))
+        .route("/api/health", any(|| async { StatusCode::OK }))
+        .route("/api/info", get(api_info_handler))
+        .route("/api/import/health-app", any(health_app_handler))
         .route_service("/mobile", ServeFile::new("mobile.html"))
-        .nest_service("/", ServeDir::new(".").append_index_html_on_directories(true))
+        .nest_service(
+            "/",
+            ServeDir::new(".").append_index_html_on_directories(true),
+        )
         .with_state(state);
 
     info!("🚀 HTTPS listening on https://{HTTPS_ADDR}");
@@ -160,16 +184,22 @@ async fn api_info_handler(State(state): State<Arc<AppState>>) -> impl IntoRespon
 }
 
 async fn health_app_handler(req: Request) -> StatusCode {
-    let method  = req.method().clone();
-    let uri     = req.uri().clone();
-    let headers = req.headers().iter()
+    let method = req.method().clone();
+    let uri = req.uri().clone();
+    let headers = req
+        .headers()
+        .iter()
         .map(|(k, v)| format!("{k}: {}", v.to_str().unwrap_or("<binary>")))
         .collect::<Vec<_>>()
         .join(", ");
-    let body = to_bytes(req.into_body(), usize::MAX).await.unwrap_or_default();
+    let body = to_bytes(req.into_body(), usize::MAX)
+        .await
+        .unwrap_or_default();
     let body = String::from_utf8_lossy(&body);
-    info!("🏥 health-app {method} {uri} | headers=[{headers}] | body={}",
-        if body.is_empty() { "<empty>" } else { &body });
+    info!(
+        "🏥 health-app {method} {uri} | headers=[{headers}] | body={}",
+        if body.is_empty() { "<empty>" } else { &body }
+    );
     StatusCode::OK
 }
 
@@ -181,7 +211,10 @@ async fn echowire_handler(ws: WebSocketUpgrade, State(state): State<Arc<AppState
 
 // ──────────────────────────────────────────────── /obs bus WS ──
 
-async fn obs_websocket_handler(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) -> Response {
+async fn obs_websocket_handler(
+    ws: WebSocketUpgrade,
+    State(state): State<Arc<AppState>>,
+) -> Response {
     let client_id = state.next_client_id();
     ws.on_upgrade(move |socket| {
         handle_obs_client(socket, state, client_id)
@@ -196,17 +229,27 @@ type WsSink = futures_util::stream::SplitSink<WebSocket, Message>;
 async fn send_welcome(tx: &mut WsSink, state: &AppState) -> bool {
     let backlog: Vec<String> = state.log_ring.lock().unwrap().iter().cloned().collect();
     for line in backlog {
-        if tx.send(Message::Text(line)).await.is_err() { return false; }
+        if tx.send(Message::Text(line)).await.is_err() {
+            return false;
+        }
     }
     let snapshot = state.obs_state.read().await.to_state_json();
-    if tx.send(Message::Text(snapshot)).await.is_err() { return false; }
+    if tx.send(Message::Text(snapshot)).await.is_err() {
+        return false;
+    }
     // Collect before any await — std::MutexGuard must not cross await points
     let cached: Vec<String> = [
         state.last_sysinfo.lock().unwrap().clone(),
         state.last_now_playing.lock().unwrap().clone(),
-    ].into_iter().flatten().collect();
+        state.last_climate.lock().unwrap().clone(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
     for msg in cached {
-        if tx.send(Message::Text(msg)).await.is_err() { return false; }
+        if tx.send(Message::Text(msg)).await.is_err() {
+            return false;
+        }
     }
     true
 }
@@ -221,9 +264,9 @@ async fn handle_obs_client(socket: WebSocket, state: Arc<AppState>, client_id: u
     }
 
     let mut broadcast_rx = state.obs_broadcast.subscribe();
-    let obs_cmd_tx  = state.obs_cmd_tx.clone();
-    let obs_bcast   = state.obs_broadcast.clone();
-    let state_recv  = state.clone();
+    let obs_cmd_tx = state.obs_cmd_tx.clone();
+    let obs_bcast = state.obs_broadcast.clone();
+    let state_recv = state.clone();
 
     let send_task = async move {
         while let Ok(msg) = broadcast_rx.recv().await {
@@ -235,7 +278,9 @@ async fn handle_obs_client(socket: WebSocket, state: Arc<AppState>, client_id: u
     let recv_task = async move {
         while let Some(Ok(msg)) = rx.next().await {
             match msg {
-                Message::Text(text) => route_incoming(text, client_id, &obs_cmd_tx, &obs_bcast, &state_recv).await,
+                Message::Text(text) => {
+                    route_incoming(text, client_id, &obs_cmd_tx, &obs_bcast, &state_recv).await
+                }
                 Message::Close(_) => break,
                 _ => {}
             }
@@ -256,16 +301,19 @@ async fn route_incoming(
     state: &Arc<AppState>,
 ) {
     let v: Value = match serde_json::from_str(&text) {
-        Ok(v)  => v,
+        Ok(v) => v,
         Err(_) => {
-            let _ = obs_broadcast.send(ObsMessage { sender_id: client_id, text });
+            let _ = obs_broadcast.send(ObsMessage {
+                sender_id: client_id,
+                text,
+            });
             return;
         }
     };
 
     match v["type"].as_str().unwrap_or("") {
         "obs_config" => {
-            let url      = v["url"].as_str().unwrap_or_default().to_string();
+            let url = v["url"].as_str().unwrap_or_default().to_string();
             let password = v["password"].as_str().unwrap_or_default().to_string();
             if !url.is_empty() {
                 info!("🎬 OBS config: {url}");
@@ -280,30 +328,43 @@ async fn route_incoming(
         "log" => {
             {
                 let mut ring = state.log_ring.lock().unwrap();
-                if ring.len() >= LOG_RING_SIZE { ring.pop_front(); }
+                if ring.len() >= LOG_RING_SIZE {
+                    ring.pop_front();
+                }
                 ring.push_back(text.clone());
             }
-            let _ = obs_broadcast.send(ObsMessage { sender_id: client_id, text });
+            let _ = obs_broadcast.send(ObsMessage {
+                sender_id: client_id,
+                text,
+            });
         }
         "now_playing" => {
             // Cache only when cover is present so new clients always get complete data
             if !v["cover"].is_null() {
                 *state.last_now_playing.lock().unwrap() = Some(text.clone());
             }
-            let _ = obs_broadcast.send(ObsMessage { sender_id: client_id, text });
+            let _ = obs_broadcast.send(ObsMessage {
+                sender_id: client_id,
+                text,
+            });
         }
         _ => {
-            let _ = obs_broadcast.send(ObsMessage { sender_id: client_id, text });
+            let _ = obs_broadcast.send(ObsMessage {
+                sender_id: client_id,
+                text,
+            });
         }
     }
 }
 
 fn parse_obs_cmd(msg_type: &str, v: &Value) -> Option<obs::ObsCommand> {
     match msg_type {
-        "cmd_switch_scene"  => Some(obs::ObsCommand::SwitchScene(v["scene"].as_str()?.to_string())),
-        "cmd_start_record"  => Some(obs::ObsCommand::StartRecord),
-        "cmd_stop_record"   => Some(obs::ObsCommand::StopRecord),
-        "cmd_pause_record"  => Some(obs::ObsCommand::PauseRecord),
+        "cmd_switch_scene" => Some(obs::ObsCommand::SwitchScene(
+            v["scene"].as_str()?.to_string(),
+        )),
+        "cmd_start_record" => Some(obs::ObsCommand::StartRecord),
+        "cmd_stop_record" => Some(obs::ObsCommand::StopRecord),
+        "cmd_pause_record" => Some(obs::ObsCommand::PauseRecord),
         "cmd_resume_record" => Some(obs::ObsCommand::ResumeRecord),
         _ => None,
     }

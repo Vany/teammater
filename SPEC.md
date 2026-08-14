@@ -24,7 +24,7 @@ The application serves multiple HTML pages from the Rust server at `https://loca
 |------|-----|---------|
 | `index.html` | `/` | Main control panel — streamer's desktop browser |
 | `mobile.html` | `/mobile` | Mobile remote control — any device on local network |
-| `obs.html` | `/obs.html` | OBS Browser Source overlay (heart rate widget) |
+| `obs.html` | `/obs.html` | OBS Browser Source overlay (heart rate, now-playing, host CPU, room climate widgets) |
 | `neco.html` | `/neco.html` | BRB countdown timer overlay |
 
 The main page shows a QR code in the right panel pointing to `https://<LAN-IP>:8443/mobile` so any device on the same network can connect instantly.
@@ -118,6 +118,8 @@ The application uses a clean modular architecture with **8 independent modules**
    - Configurable: IRC URL, reconnect delay, nickname, username
    - Includes Twitch Client ID configuration
    - Internal methods: _addToChatHistory, _notifyMessageHandlers
+   - **Friend presence detection**: fetches following list on connect (paginated via `/helix/channels/followed`), enables `twitch.tv/membership` IRC capability, detects friend JOIN/PART events, broadcasts to `/obs` bus
+   - Requires `user:read:follows` OAuth scope
 
 7. **Twitch EventSub Module** (`modules/twitch-eventsub/module.js`)
    - WebSocket connection for channel point redemptions
@@ -149,6 +151,7 @@ The application uses a clean modular architecture with **8 independent modules**
   - `user:manage:whispers` - Private messages
   - `channel:manage:redemptions`, `channel:read:redemptions` - Channel points
   - `moderator:manage:banned_users`, `moderator:manage:chat_messages` - Moderation actions
+  - `user:read:follows` - Fetch following list for friend presence detection
 
 ### Chat Features
 - [x] Chat command processing via action registry pattern
@@ -543,6 +546,15 @@ Three buttons always visible: **⏮ Prev** / **⏸▶ Play-Pause** / **⏭ Skip*
 - Play/Pause state synced from `now_playing.paused`; toggles optimistically on tap
 - Handled by Music Queue module on the main page
 
+#### Friends Watching Section (visible when ≥1 friend present)
+- Purple-themed widget, hidden by default
+- Two sources of detection:
+  - **Watching** (IRC `JOIN` via `twitch.tv/membership`): nick shown **bold** — friend has stream open
+  - **Chatting** (PRIVMSG): nick shown normal weight — friend sent a message, no JOIN detected
+- When a friend first appears (either source): their nick flashes with bright purple glow for 10 seconds
+- Friends stay in list until IRC `PART` (watchers) or session end (chatters)
+- **Note**: users in channel before streamer connects may appear via IRC `NAMES` list (small channels, ≤1000 users)
+
 #### Recording Section (always visible)
 Single row: **[●REC / ■STOP]** + **timer** + **[⏸PAUSE / ▶RESUME]**
 - Start/Stop toggle button (left): red when idle, gray when recording
@@ -592,7 +604,19 @@ All messages are JSON. Two directions: **server→clients** (broadcasts from ser
 
 // Viewer count from main page
 {"type": "viewer_count", "count": 42}
+
+// ── Server-originated sensor broadcasts (overlay hides each until its first message) ──
+// Heart rate from BLE monitor
+{"heartrate": 72}
+// Host CPU usage / temperature from sysinfo task (cpu_temp omitted if unavailable)
+{"type": "sysinfo", "cpu_usage": 12.5, "cpu_temp": 47.0}
+// Room climate from Zigbee2MQTT sensor T1 (server zigbee task; temperature °C + humidity %)
+{"type": "climate", "temperature": 23.4, "humidity": 61.8}
 ```
+
+The server caches the latest `sysinfo`, `now_playing`, and `climate` and replays them
+to every newly-connected client (see `send_welcome`), so a reconnecting overlay shows
+current values immediately rather than waiting for the next slow sensor report.
 
 ### Client → Server (intercepted by server, NOT relayed to other clients)
 
@@ -628,6 +652,15 @@ All messages are JSON. Two directions: **server→clients** (broadcasts from ser
 {"type": "music_resume"}
 {"type": "music_skip"}
 {"type": "music_prev"}
+
+// Main page → Mobile: a friend appeared for the first time (triggers 10s flash)
+// Sent before friends_present so mobile can mark the new entry
+{"type": "friend_appeared", "user": "ninja"}
+
+// Main page → Mobile: full current friend presence state
+// watching = IRC JOIN detected → bold; chatting = PRIVMSG only → normal
+// Sent after every change and on disconnect (both arrays empty)
+{"type": "friends_present", "watching": ["ninja"], "chatting": ["pokimane"]}
 ```
 
 Server distinguishes commands (type prefix `cmd_` or `obs_config`) from relay messages. OBS commands are executed against OBS and not relayed; `obs_config` updates the OBS connection config. All other messages relay to other clients normally.

@@ -34,7 +34,9 @@ export class OBSModule extends BaseModule {
 
     // Frame drop alert state
     this.lastAlertTime = 0;
-    this.ALERT_COOLDOWN_MS = 10000;
+    this.ALERT_COOLDOWN_MS = 10_000;
+    this._prevDropped = 0;
+    this._prevTotal = 0;
   }
 
   getDisplayName() {
@@ -181,9 +183,8 @@ export class OBSModule extends BaseModule {
     const userId = this.moduleManager?.get('twitch-eventsub')?.currentUserId;
     if (!userId) return;
     try {
-      const data = await request(
-        `https://api.twitch.tv/helix/streams?user_id=${userId}`
-      );
+      const res  = await request(`https://api.twitch.tv/helix/streams?user_id=${userId}`);
+      const data = await res.json();
       const count = data?.data?.[0]?.viewer_count ?? null;
       if (count !== null) this.pushViewerCount(count);
     } catch {}
@@ -206,11 +207,51 @@ export class OBSModule extends BaseModule {
         case "obs_recording":
           this._applyRecording(msg.recording);
           break;
+        case "twitch_shoutout":
+          if (msg.user) this._twitchShoutout(msg.user).catch(e => this.log(`💥 Shoutout: ${e.message}`));
+          break;
+        case "twitch_timeout":
+          if (msg.user) this._twitchTimeout(msg.user, msg.duration ?? 600).catch(e => this.log(`💥 Timeout: ${e.message}`));
+          break;
         // heartrate and other bus messages are ignored here
       }
     } catch (e) {
       // ignore malformed messages
     }
+  }
+
+  _broadcasterId() {
+    return this.moduleManager?.get("twitch-eventsub")?.currentUserId ?? null;
+  }
+
+  async _lookupUserId(username) {
+    const r = await request(`https://api.twitch.tv/helix/users?login=${encodeURIComponent(username)}`);
+    const data = await r.json();
+    const id = data?.data?.[0]?.id;
+    if (!id) throw new Error(`user '${username}' not found`);
+    return id;
+  }
+
+  async _twitchShoutout(username) {
+    const bid = this._broadcasterId();
+    if (!bid) throw new Error("broadcaster ID not available");
+    const targetId = await this._lookupUserId(username);
+    await request(
+      `https://api.twitch.tv/helix/chat/shoutouts?from_broadcaster_id=${bid}&to_broadcaster_id=${targetId}&moderator_id=${bid}`,
+      { method: "POST" },
+    );
+    this.log(`📣 Shouted out @${username}`);
+  }
+
+  async _twitchTimeout(username, duration) {
+    const bid = this._broadcasterId();
+    if (!bid) throw new Error("broadcaster ID not available");
+    const targetId = await this._lookupUserId(username);
+    await request(
+      `https://api.twitch.tv/helix/moderation/bans?broadcaster_id=${bid}&moderator_id=${bid}`,
+      { method: "POST", body: JSON.stringify({ data: { user_id: targetId, duration } }) },
+    );
+    this.log(`🔇 Timed out @${username} for ${duration}s`);
   }
 
   _applyState(msg) {
@@ -224,12 +265,22 @@ export class OBSModule extends BaseModule {
     if (!info || !info.active) {
       this.streaming = false;
       this.streamingInfo = null;
+      this._prevDropped = 0;
+      this._prevTotal = 0;
     } else {
       this.streaming = true;
       this.streamingInfo = info;
-      // Check for frame drops and alert
-      if (info.dropped_frames > 0) {
-        this._alertFrameDrops(info.dropped_frames, info.total_frames);
+      // Alert only on NEW drops in this poll interval — dropped_frames is cumulative.
+      const deltaDropped   = info.dropped_frames - this._prevDropped;
+      this._prevDropped    = info.dropped_frames;
+      this._prevTotal      = info.total_frames;
+      // Alert only when new drops are happening AND the cumulative rate is bad (>1%).
+      // Cumulative rate smooths out accidental single drops; deltaDropped ensures
+      // the stream is actively degrading right now, not just has a history of drops.
+      const cumulativeRate = info.total_frames > 0
+        ? (info.dropped_frames / info.total_frames) * 100 : 0;
+      if (deltaDropped > 0 && cumulativeRate > 1) {
+        this._alertFrameDrops(deltaDropped, info.dropped_frames, info.total_frames);
       }
     }
     this.updateCustomIndicators();
@@ -375,12 +426,12 @@ export class OBSModule extends BaseModule {
     }
   }
 
-  _alertFrameDrops(dropped, total) {
+  _alertFrameDrops(deltaDropped, totalDropped, totalFrames) {
     const now = Date.now();
     if (now - this.lastAlertTime < this.ALERT_COOLDOWN_MS) return;
-    const rate = total > 0 ? (dropped / total * 100).toFixed(1) : "?";
     this.lastAlertTime = now;
-    this.log(`⚠️ Stream: ${dropped} dropped frames (${rate}%)`);
+    const cumulativeRate = totalFrames > 0 ? (totalDropped / totalFrames * 100).toFixed(1) : "?";
+    this.log(`⚠️ Stream: ${deltaDropped} new dropped frames (cumulative: ${totalDropped}, ${cumulativeRate}%)`);
     if (window.mp3) window.mp3("startup", 0.2);
   }
 }

@@ -315,7 +315,7 @@ async function connectModules(token, username) {
   // Connect Twitch Chat
   const chatModule = moduleManager.get("twitch-chat");
   if (chatModule) {
-    await chatModule.setAuth(token, username).catch((err) => {
+    await chatModule.setAuth(token, username, currentUserId).catch((err) => {
       log(`⚠️ Twitch Chat connection failed: ${err.message}`);
     });
 

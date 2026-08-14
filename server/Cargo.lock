@@ -1588,6 +1588,7 @@ dependencies = [
  "futures-util",
  "if-addrs",
  "mdns-sd",
+ "rand",
  "rcgen",
  "rustls",
  "rustls-pemfile",

@@ -80,6 +80,8 @@ export const TWITCH_SCOPES = [
   "channel:read:redemptions",
   "moderator:manage:banned_users",
   "moderator:manage:chat_messages",
+  "user:read:follows",
+  "moderator:manage:shoutouts",
 ];
 
 // Default WebSocket URLs (can be overridden via localStorage)

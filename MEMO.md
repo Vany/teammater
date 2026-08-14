@@ -6,6 +6,16 @@
 
 
 
+## Recent Improvements (2026-07)
+
+### Zigbee2MQTT Climate → OBS Overlay
+- New server task `server/src/zigbee.rs`: connects to the Z2M frontend WS bridge `ws://c:8081/api`, watches sensor `T1` (Xiaomi WSDCGQ01LM temp/humidity), broadcasts `{"type":"climate","temperature":T,"humidity":H}` to `/obs` (`sender_id = u64::MAX`). Zero new deps (reuses `tokio-tungstenite`). Mirrors `ble.rs`: 5s reconnect, never affects other services; answers WS pings.
+- `build_climate()` pure fn (5 unit tests): filters `topic == "T1"`, merges partial temp/humidity reports, rounds to 1 decimal, skips non-climate reports.
+- Late-joiner cache: `AppState.last_climate` replayed in `send_welcome` — T1 reports slowly (minutes to ~1h), so a reconnecting overlay must not wait for the next report.
+- Overlay `#climate-widget` (obs.html/obs.js): 🌡 °C + 💧 % rows with sparklines; reuses `updateSysChart`/`applyMetricColor`; comfort color zones (temp ≤26/27–29/≥30; humidity 40–60/30–70/else). No stale-out.
+- Design decision: server-side, NOT a browser module — obs.html is a standalone OBS Browser Source that doesn't run the JS modules, so the source must live server-side like BLE/OBS/sysinfo.
+- Verified: unit tests green; live Rust↔Z2M probe (HTTP 101, parsed real T1 frame 23.6°C/60.95%); `node --check obs.js` OK. NOT yet verified: overlay render through the *restarted* server — deferred, Vany was live-streaming and the server must not be restarted mid-stream.
+
 ## Recent Improvements (2026-02)
 
 ### LLM Module — Qwen3 / Streaming / Thinking Mode

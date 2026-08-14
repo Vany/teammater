@@ -174,6 +174,49 @@
         }
     }
 
+    // ── Climate (Zigbee sensor T1) ────────────────────────
+    const climWidget   = document.getElementById('climate-widget');
+    const climTempVal  = document.getElementById('clim-temp-value');
+    const climHumVal   = document.getElementById('clim-hum-value');
+    const climTempLine = document.getElementById('clim-temp-line');
+    const climTempFill = document.getElementById('clim-temp-fill');
+    const climTempDot  = document.getElementById('clim-temp-dot');
+    const climGradTemp = document.getElementById('grad-clim-temp');
+    const climHumLine  = document.getElementById('clim-hum-line');
+    const climHumFill  = document.getElementById('clim-hum-fill');
+    const climHumDot   = document.getElementById('clim-hum-dot');
+    const climGradHum  = document.getElementById('grad-clim-hum');
+
+    const climTempHistory = [], climHumHistory = [];
+
+    // Room comfort zones (one-sided: warmer = worse)
+    function roomTempColor(c) { return c >= 30 ? '#ff4444' : c >= 27 ? '#ffcc00' : '#44dd88'; }
+    // Ideal 40–60%; acceptable 30–70%; else too dry / too damp
+    function humColor(h) {
+        if (h >= 40 && h <= 60) return '#44dd88';
+        if (h >= 30 && h <= 70) return '#ffcc00';
+        return '#ff4444';
+    }
+
+    // No stale timer: T1 reports on change (minutes–hours), last reading stays valid.
+    function onClimate({ temperature, humidity }) {
+        climWidget.classList.add('visible');
+        if (typeof temperature === 'number') {
+            climTempVal.textContent = temperature.toFixed(1);
+            applyMetricColor(climTempVal, climTempLine, climTempFill, climGradTemp, climTempDot, roomTempColor(temperature));
+            climTempHistory.push(temperature);
+            if (climTempHistory.length > SYS_MAX) climTempHistory.shift();
+            updateSysChart(climTempHistory, climTempLine, climTempFill, climTempDot);
+        }
+        if (typeof humidity === 'number') {
+            climHumVal.textContent = humidity.toFixed(0);
+            applyMetricColor(climHumVal, climHumLine, climHumFill, climGradHum, climHumDot, humColor(humidity));
+            climHumHistory.push(humidity);
+            if (climHumHistory.length > SYS_MAX) climHumHistory.shift();
+            updateSysChart(climHumHistory, climHumLine, climHumFill, climHumDot);
+        }
+    }
+
     // ── WebSocket ─────────────────────────────────────────
     // Match protocol: wss on HTTPS (port 8443), ws on HTTP (port 8442)
     const [proto, port] = location.protocol === 'https:' ? ['wss:', 8443] : ['ws:', 8442];
@@ -192,6 +235,7 @@
                 if (typeof msg.heartrate === 'number') onHeartRate(msg.heartrate);
                 if (msg.type === 'now_playing') onNowPlaying(msg);
                 if (msg.type === 'sysinfo') onSysInfo(msg);
+                if (msg.type === 'climate') onClimate(msg);
             } catch {}
         };
         ws.onclose = () => {

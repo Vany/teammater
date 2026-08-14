@@ -26,6 +26,19 @@
       transition: background 0.3s;
     }
 
+    /* Live screen-wake-lock state — glance for colour, tap for the exact error */
+    #wake-dot {
+      position: fixed;
+      top: 5px; right: 24px;
+      font: 700 11px/1.3 system-ui, sans-serif;
+      padding: 1px 5px;
+      border-radius: 8px;
+      background: #555;
+      color: #fff;
+      z-index: 200;
+      transition: background 0.3s;
+    }
+
     #layout {
       display: flex;
       height: 100vh;
@@ -134,7 +147,14 @@
       color: #44dd88;
       font-variant-numeric: tabular-nums;
     }
-    #viewer-count { color: #888; font-size: 13px; }
+    #viewer-count {
+      margin-left: auto;
+      font-size: 18px;
+      font-weight: 700;
+      color: #aaeebb;
+      font-variant-numeric: tabular-nums;
+    }
+    #viewer-count::after { content: ' 👁'; font-size: 14px; }
     #stream-quality { font-size: 12px; margin-top: 3px; color: #aaa; }
 
     /* ── Heart rate + Song row ── */
@@ -256,6 +276,46 @@
     }
     .sys-m-sep { color: #333; font-size: 14px; }
 
+    /* ── Friends watching section ── */
+    #friends-section {
+      background: #0e0816;
+      border: 1px solid #3a1560;
+      border-radius: 8px;
+      padding: 8px 12px;
+      flex-shrink: 0;
+    }
+    #friends-label {
+      font-size: 10px;
+      color: #7a4a9a;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 5px;
+    }
+    #friends-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px 10px;
+    }
+    .friend-item {
+      font-size: 14px;
+      font-weight: 500;
+      color: #9966bb;
+      border-radius: 4px;
+      padding: 1px 4px;
+    }
+    .friend-item.watching {
+      font-weight: 700;
+      color: #cc88ff;
+    }
+    @keyframes friendFlash {
+      0%   { color: #ffffff; text-shadow: 0 0 8px #ff88ff, 0 0 24px #cc33ff; background: rgba(200, 50, 255, 0.3); }
+      40%  { color: #f0c0ff; text-shadow: 0 0 4px #cc44ff; background: rgba(150, 30, 200, 0.12); }
+      100% { background: transparent; }
+    }
+    .friend-item.new {
+      animation: friendFlash 10s ease-out forwards;
+    }
+
     /* ── Recording section ── */
     #recording-section {
       background: #130a0a;
@@ -372,10 +432,56 @@
       cursor: pointer;
       margin-top: 4px;
     }
+
+    /* ── User action menu ── */
+    #user-menu {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.8);
+      display: none;
+      align-items: flex-end;
+      justify-content: center;
+      z-index: 2000;
+      touch-action: none;
+    }
+    #user-menu.open { display: flex; }
+    #user-menu-sheet {
+      width: 100%;
+      background: #1a1a1a;
+      border-radius: 18px 18px 0 0;
+      padding: 20px 16px 44px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    #user-menu-name {
+      font-size: 15px;
+      color: #88bbff;
+      font-weight: 700;
+      text-align: center;
+      margin-bottom: 10px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid #2a2a2a;
+    }
+    .user-menu-btn {
+      width: 100%;
+      padding: 20px 16px;
+      border: none;
+      border-radius: 12px;
+      font-size: 19px;
+      font-weight: 600;
+      cursor: pointer;
+      text-align: left;
+      transition: opacity 0.15s;
+    }
+    .user-menu-btn:active { opacity: 0.7; }
+    #btn-shoutout { background: #1a3050; color: #88ccff; }
+    #btn-mute     { background: #3a1515; color: #ff8888; }
   </style>
 </head>
 <body>
 
+<div id="wake-dot" title="Wake lock">🌙</div>
 <div id="conn-dot" title="Disconnected"></div>
 
 <div id="layout">
@@ -401,8 +507,8 @@
       <div id="stream-live-row">
         <span id="stream-live-badge">LIVE</span>
         <span id="stream-time">0:00:00</span>
+        <span id="viewer-count"></span>
       </div>
-      <div id="viewer-count"></div>
       <div id="stream-quality"></div>
     </div>
 
@@ -437,6 +543,12 @@
       </div>
     </div>
 
+    <!-- Friends watching (hidden when none) -->
+    <div id="friends-section" style="display:none">
+      <div id="friends-label">👥 Friends watching</div>
+      <div id="friends-list"></div>
+    </div>
+
     <!-- Recording (always shown) -->
     <div id="recording-section">
       <div id="rec-row">
@@ -446,6 +558,15 @@
       </div>
     </div>
 
+  </div>
+</div>
+
+<!-- User action menu -->
+<div id="user-menu" onclick="onUserMenuBackdrop(event)">
+  <div id="user-menu-sheet">
+    <div id="user-menu-name"></div>
+    <button class="user-menu-btn" id="btn-shoutout" onclick="doShoutout()">📣 &nbsp;Shout out</button>
+    <button class="user-menu-btn" id="btn-mute"     onclick="doMute()">🔇 &nbsp;Mute 10 minutes</button>
   </div>
 </div>
 
@@ -467,6 +588,8 @@ let musicPaused = false;
 let streamBaseMs = 0, streamBaseTime = 0;
 let recBaseMs = 0, recBaseTime = 0;
 let reconnectTimer = null;
+// user → { isNew: bool, timer: timeoutId | null }
+let watchingFriends = {};
 
 // ─── WebSocket ────────────────────────────────────────────────────────────────
 function connect() {
@@ -523,7 +646,7 @@ function handleMsg(msg) {
     case 'viewer_count':
       viewerCount = msg.count;
       document.getElementById('viewer-count').textContent =
-        viewerCount != null ? `${viewerCount} viewers` : '';
+        viewerCount != null ? viewerCount : '';
       break;
     case 'heartrate':
       renderHeartrate(msg.heartrate);
@@ -536,6 +659,12 @@ function handleMsg(msg) {
       break;
     case 'chat_message':
       appendChatLog(msg.user, msg.text);
+      break;
+    case 'friend_appeared':
+      onFriendAppeared(msg.user);
+      break;
+    case 'friends_present':
+      onFriendsPresent(msg.watching ?? [], msg.chatting ?? []);
       break;
   }
 }
@@ -654,6 +783,82 @@ function renderSong(msg) {
   }
 }
 
+// ─── Friends widget ───────────────────────────────────────────────────────────
+// watchingFriends / chattingFriends: { user → { isNew: bool, timer: id|null } }
+// watching = IRC JOIN detected → bold; chatting = PRIVMSG only → normal weight
+
+let chattingFriends = {};
+let _pendingFlash = null; // set by friend_appeared, consumed by friends_present
+
+function onFriendAppeared(user) {
+  _pendingFlash = user; // friends_present arrives right after and applies the flash
+}
+
+function onFriendsPresent(watching, chatting) {
+  function syncBucket(current, users, bucket) {
+    for (const user of users) {
+      const isNew = user === _pendingFlash && !current[user];
+      if (isNew) {
+        // Start 10s flash timer
+        bucket[user] = {
+          isNew: true,
+          timer: setTimeout(() => {
+            if (bucket[user]) {
+              bucket[user].isNew = false;
+              const el = document.getElementById('friend-' + user);
+              if (el) el.classList.remove('new');
+            }
+          }, 10000),
+        };
+      } else {
+        bucket[user] = current[user] ?? { isNew: false, timer: null };
+      }
+    }
+    // Cancel timers for users no longer in this bucket
+    for (const [u, s] of Object.entries(current)) {
+      if (!bucket[u]) clearTimeout(s.timer);
+    }
+  }
+
+  const nextW = {}, nextC = {};
+
+  // Watching friends get upgraded from chatting if they were there
+  for (const user of watching) {
+    if (chattingFriends[user]) { clearTimeout(chattingFriends[user].timer); delete chattingFriends[user]; }
+  }
+
+  syncBucket(watchingFriends, watching, nextW);
+  syncBucket(chattingFriends, chatting, nextC);
+
+  watchingFriends = nextW;
+  chattingFriends = nextC;
+  _pendingFlash = null;
+  renderFriendsSection();
+}
+
+function renderFriendsSection() {
+  const section = document.getElementById('friends-section');
+  const list = document.getElementById('friends-list');
+
+  // watching first (bold), then chatting
+  const entries = [
+    ...Object.keys(watchingFriends).map(u => ({ u, watching: true,  s: watchingFriends[u] })),
+    ...Object.keys(chattingFriends).map(u => ({ u, watching: false, s: chattingFriends[u] })),
+  ];
+
+  if (entries.length === 0) { section.style.display = 'none'; return; }
+
+  section.style.display = '';
+  list.innerHTML = '';
+  for (const { u, watching, s } of entries) {
+    const div = document.createElement('div');
+    div.id = 'friend-' + u;
+    div.className = 'friend-item' + (watching ? ' watching' : '') + (s.isNew ? ' new' : '');
+    div.textContent = u;
+    list.appendChild(div);
+  }
+}
+
 function toggleMusicPause() {
   sendCmd(musicPaused ? 'music_resume' : 'music_pause');
   // Optimistic local toggle while waiting for server echo
@@ -732,6 +937,7 @@ function appendChatLog(user, text) {
   const output = document.getElementById('log-output');
   const div = document.createElement('div');
   div.className = 'log-chat';
+  attachLongPress(div, () => openUserMenu(user));
   const name = document.createElement('span');
   name.className = 'chat-user';
   name.textContent = user + ': ';
@@ -742,8 +948,55 @@ function appendChatLog(user, text) {
   output.scrollTop = output.scrollHeight;
 }
 
+// ─── Long-press ───────────────────────────────────────────────────────────────
+function attachLongPress(el, cb, ms = 500) {
+  let timer = null, startX = 0, startY = 0;
+  el.addEventListener('touchstart', e => {
+    startX = e.touches[0].clientX;
+    startY = e.touches[0].clientY;
+    timer = setTimeout(() => { timer = null; cb(); }, ms);
+  }, { passive: true });
+  const cancel = () => { clearTimeout(timer); timer = null; };
+  el.addEventListener('touchend',    cancel, { passive: true });
+  el.addEventListener('touchcancel', cancel, { passive: true });
+  el.addEventListener('touchmove', e => {
+    const dx = e.touches[0].clientX - startX;
+    const dy = e.touches[0].clientY - startY;
+    if (Math.hypot(dx, dy) > 10) cancel();
+  }, { passive: true });
+}
+
+// ─── User menu ────────────────────────────────────────────────────────────────
+let menuUser = null;
+
+function openUserMenu(user) {
+  menuUser = user;
+  document.getElementById('user-menu-name').textContent = '@' + user;
+  document.getElementById('user-menu').classList.add('open');
+}
+
+function closeUserMenu() {
+  document.getElementById('user-menu').classList.remove('open');
+  menuUser = null;
+}
+
+function onUserMenuBackdrop(e) {
+  if (e.target === e.currentTarget) closeUserMenu();
+}
+
+function doShoutout() {
+  if (menuUser) sendCmd('twitch_shoutout', { user: menuUser });
+  closeUserMenu();
+}
+
+function doMute() {
+  if (menuUser) sendCmd('twitch_timeout', { user: menuUser, duration: 600 });
+  closeUserMenu();
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function setDot(ok) {
+  wsConnected = ok;
   const dot = document.getElementById('conn-dot');
   dot.style.background = ok ? '#44dd88' : '#cc2222';
   dot.title = ok ? 'Connected' : 'Disconnected';
@@ -767,26 +1020,104 @@ function fmtDuration(ms) {
 }
 
 // ─── Screen Wake Lock ─────────────────────────────────────────────────────────
+// Strategy: native Wake Lock API (iOS 16.4+, Chrome) + hidden looping video
+// fallback (older iOS). Video play() requires a user gesture on iOS.
+//
+// Known iOS quirks handled here:
+//   1. Lock is silently released on tab hide — re-acquire on visibilitychange
+//   2. wakeLock reference stays non-null after release if .released isn't checked
+//   3. obsState.connected lags behind actual WS state — use wsConnected instead
+//   4. Periodic heartbeat catches any silent release between events
+
 let wakeLock = null;
+let wsConnected = false;
+let wakeErr = ''; // last Wake Lock rejection name (e.g. NotAllowedError = iOS Low Power Mode)
+
+const _noSleepVideo = (() => {
+  const v = document.createElement('video');
+  v.loop = true; v.muted = true;
+  v.setAttribute('playsinline', '');
+  v.setAttribute('webkit-playsinline', '');
+  v.style.cssText = 'position:fixed;width:1px;height:1px;top:-2px;left:-2px;opacity:0;pointer-events:none';
+  const webm = document.createElement('source');
+  webm.type = 'video/webm';
+  webm.src = 'data:video/webm;base64,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';
+  const mp4 = document.createElement('source');
+  mp4.type = 'video/mp4';
+  mp4.src = 'data:video/mp4;base64,AAAAHGZ0eXBNNFYgAAACAGlzb21pc28yYXZjMQAAAAhmcmVlAAAGF21kYXTeBAAAbGliZmFhYyAxLjI4AABCAJMgBDIARwAAArEGBf//rdxF6b3m2Ui3lizYINkj7u94MjY0IC0gY29yZSAxNDIgcjIgOTU2YzhkOCAtIEguMjY0L01QRUctNCBBVkMgY29kZWMgLSBDb3B5bGVmdCAyMDAzLTIwMTQgLSBodHRwOi8vd3d3LnZpZGVvbGFuLm9yZy94MjY0Lmh0bWwgLSBvcHRpb25zOiBjYWJhYz0wIHJlZj0zIGRlYmxvY2s9MTowOjAgYW5hbHlzZT0weDE6MHgxMTEgbWU9aGV4IHN1Ym1lPTcgcHN5PTEgcHN5X3JkPTEuMDA6MC4wMCBtaXhlZF9yZWY9MSBtZV9yYW5nZT0xNiBjaHJvbWFfbWU9MSB0cmVsbGlzPTEgOHg4ZGN0PTAgY3FtPTAgZGVhZHpvbmU9MjEsMTEgZmFzdF9wc2tpcD0xIGNocm9tYV9xcF9vZmZzZXQ9LTIgdGhyZWFkcz02IGxvb2thaGVhZF90aHJlYWRzPTEgc2xpY2VkX3RocmVhZHM9MCBucj0wIGRlY2ltYXRlPTEgaW50ZXJsYWNlZD0wIGJsdXJheV9jb21wYXQ9MCBjb25zdHJhaW5lZF9pbnRyYT0wIGJmcmFtZXM9MCB3ZWlnaHRwPTAga2V5aW50PTI1MCBrZXlpbnRfbWluPTI1IHNjZW5lY3V0PTQwIGludHJhX3JlZnJlc2g9MCByY19sb29rYWhlYWQ9NDAgcmM9Y3JmIG1idHJlZT0xIGNyZj0yMy4wIHFjb21wPTAuNjAgcXBtaW49MCBxcG1heD02OSBxcHN0ZXA9NCB2YnZfbWF4cmF0ZT03NjggdmJ2X2J1ZnNpemU9MzAwMCBjcmZfbWF4PTAuMCBuYWxfaHJkPW5vbmUgZmlsbGVyPTAgaXBfcmF0aW89MS40MCBhcT0xOjEuMAAg\
+AAAAFZliIQL8mKAAKvMnJycnJycnJycnXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXiEASZACGQAjgCEASZACGQAjgAAAAAdBmjgX4GSAIQBJkAIZACOAAAAAB0GaVAX4GSAhAEmQAhkAI4AhAEmQAhkAI4AAAAAGQZpgL8DJIQBJkAIZACOAIQBJkAIZACOAAAAABkGagC/AySEASZACGQAjgAAAAAZBmqAvwMkhAEmQAhkAI4AhAEmQAhkAI4AAAAAGQZrAL8DJIQBJkAIZACOAAAAABkGa4C/AySEASZACGQAjgCEASZACGQAjgAAAAAZBmwAvwMkhAEmQAhkAI4AAAAAGQZsgL8DJIQBJkAIZACOAIQBJkAIZACOAAAAABkGbQC/AySEASZACGQAjgCEASZACGQAjgAAAAAZBm2AvwMkhAEmQAhkAI4AAAAAGQZuAL8DJIQBJkAIZACOAIQBJkAIZACOAAAAABkGboC/AySEASZACGQAjgAAAAAZBm8AvwMkhAEmQAhkAI4AhAEmQAhkAI4AAAAAGQZvgL8DJIQBJkAIZACOAAAAABkGaAC/AySEASZACGQAjgCEASZACGQAjgAAAAAZBmiAvwMkhAEmQAhkAI4AhAEmQAhkAI4AAAAAGQZpAL8DJIQBJkAIZACOAAAAABkGaYC/AySEASZACGQAjgCEASZACGQAjgAAAAAZBmoAvwMkhAEmQAhkAI4AAAAAGQZqgL8DJIQBJkAIZACOAIQBJkAIZACOAAAAABkGawC/AySEASZACGQAjgAAAAAZBmuAvwMkhAEmQAhkAI4AhAEmQAhkAI4AAAAAGQZsAL8DJIQBJkAIZACOAAAAABkGbIC/AySEASZACGQAjgCEASZACGQAjgAAAAAZBm0AvwMkhAEmQAhkAI4AhAEmQAhkAI4AAAAAGQZtgL8DJIQBJkAIZACOAAAAABkGbgCvAySEASZACGQAjgCEASZACGQAjgAAAAAZBm6AnwMkhAEmQAhkAI4AhAEmQAhkAI4AhAEmQAhkAI4AhAEmQAhkAI4AAAAhubW9vdgAAAGxtdmhkAAAAAAAAAAAAAAAAAAAD6AAABDcAAQAAAQAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAA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';
+  v.appendChild(webm);
+  v.appendChild(mp4);
+  document.body.appendChild(v);
+  return v;
+})();
 
 async function acquireWakeLock() {
-  if (!('wakeLock' in navigator)) return;
-  if (wakeLock) return;
-  try {
-    wakeLock = await navigator.wakeLock.request('screen');
-    wakeLock.addEventListener('release', () => { wakeLock = null; });
-  } catch {}
+  // Native Wake Lock API (iOS 16.4+, Chrome, Firefox).
+  // Check .released — without it a stale non-null reference blocks re-acquisition.
+  if ('wakeLock' in navigator && (!wakeLock || wakeLock.released)) {
+    try {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeErr = '';
+      wakeLock.addEventListener('release', () => { wakeLock = null; renderWakeDot(); });
+    } catch (e) { wakeErr = e?.name || 'error'; }
+  }
+  // Hidden looping video — older iOS fallback. Silently fails without prior
+  // user gesture; touchstart handler below activates it on first touch.
+  if (_noSleepVideo.paused) _noSleepVideo.play().catch(() => {});
+  renderWakeDot();
 }
 
 function releaseWakeLock() {
-  wakeLock?.release();
+  wakeLock?.release().catch(() => {});
   wakeLock = null;
+  _noSleepVideo.pause();
+  renderWakeDot();
 }
 
-// Re-acquire after browser releases it on tab hide/restore
+// Live wake-state badge — makes an otherwise invisible failure observable on the phone.
+function renderWakeDot() {
+  const el = document.getElementById('wake-dot');
+  if (!el) return;
+  const supported = 'wakeLock' in navigator;
+  const held = !!(wakeLock && !wakeLock.released);
+  el.textContent = held ? '🔆' : '🌙';
+  el.style.background = held ? '#1c7d4a' : (!supported || wakeErr ? '#c33' : '#886600');
+  el.title = held ? 'Screen kept awake'
+    : !supported ? 'Wake Lock API unsupported'
+    : `Not held${wakeErr ? ' (' + wakeErr + ')' : ''}`;
+}
+
+// Re-acquire after tab restore — iOS always releases the lock on hide.
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && obsState.connected) acquireWakeLock();
+  if (document.visibilityState === 'visible' && wsConnected) acquireWakeLock();
 });
+
+// iOS requires a user gesture before video.play() — activate on first touch.
+document.addEventListener('touchstart', () => {
+  if (wsConnected) acquireWakeLock();
+}, { passive: true });
+
+// Heartbeat: re-acquire every 30 s in case iOS silently dropped the lock.
+setInterval(() => {
+  if (wsConnected && (!wakeLock || wakeLock.released)) acquireWakeLock();
+}, 30000);
+
+// Tap the badge for the exact state — distinguishes "not granted" from "OS overrides us".
+document.getElementById('wake-dot')?.addEventListener('click', () => {
+  const supported = 'wakeLock' in navigator;
+  const held = !!(wakeLock && !wakeLock.released);
+  alert(
+    'Screen Wake Lock\n' +
+    `• held: ${held}\n` +
+    `• API supported: ${supported}\n` +
+    `• last error: ${wakeErr || 'none'}\n\n` +
+    'If held is true but the screen still sleeps, it is an iOS setting the web cannot override:\n' +
+    '– turn off Low Power Mode, and/or\n' +
+    '– Settings ▸ Display & Brightness ▸ Auto-Lock ▸ Never'
+  );
+});
+renderWakeDot();
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 connect();
