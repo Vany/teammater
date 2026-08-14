@@ -648,6 +648,10 @@ function handleMsg(msg) {
       document.getElementById('viewer-count').textContent =
         viewerCount != null ? viewerCount : '';
       break;
+    // lore-ok[2ab57293]: fixed at the source instead — server/src/ble.rs now
+    // stamps {"type":"heartrate","heartrate":N}, so this case fires. The
+    // producer was the wrong shape, not this dispatcher; obs.js sniffs the
+    // heartrate field directly and keeps working either way.
     case 'heartrate':
       renderHeartrate(msg.heartrate);
       break;

@@ -363,6 +363,78 @@ export class TwitchEventSubModule extends BaseModule {
   }
 
   /**
+   * Migrate to the socket Twitch hands us in `session_reconnect`.
+   *
+   * The old socket keeps delivering until the new one has greeted us, so this
+   * loses nothing — that is the whole point of the message. Subscriptions carry
+   * over to the new session, so we must NOT call _subscribeAll() here; doing so
+   * would create a second set and double every notification.
+   *
+   * On failure we fall back to the ordinary path: close the old socket and let
+   * onclose → _scheduleReconnect build a fresh session from scratch.
+   * @private
+   */
+  async _migrateSocket(reconnectUrl) {
+    this.log(`🔄 EventSub session_reconnect → migrating to new edge...`);
+    const oldWs = this.ws;
+    const newWs = new WebSocket(reconnectUrl);
+
+    try {
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error("reconnect_url welcome timeout")),
+          30000,
+        );
+        newWs.onerror = () => {
+          clearTimeout(timer);
+          reject(new Error("reconnect socket error"));
+        };
+        newWs.onmessage = async (event) => {
+          const m = JSON.parse(event.data);
+          if (m.metadata?.message_type === "session_welcome") {
+            clearTimeout(timer);
+            this.sessionId = m.payload.session.id;
+            resolve();
+            return;
+          }
+          // Notifications can arrive on the new socket before the swap below.
+          await this._handleEventSubMessage(event.data);
+        };
+      });
+    } catch (error) {
+      this.log(`❌ EventSub migration failed: ${error.message} — falling back`);
+      newWs.close();
+      // Old socket is about to be closed by Twitch anyway; let onclose retry.
+      return;
+    }
+
+    // Take over: detach the old socket's onclose FIRST so its death does not
+    // trigger a reconnect that would race the session we just established.
+    oldWs.onclose = null;
+    oldWs.close();
+
+    this.ws = newWs;
+    newWs.onerror = () => {
+      this._failReady(new Error("EventSub socket error (migrated)"));
+    };
+    newWs.onclose = () => {
+      this.log("❌ EventSub disconnected");
+      this.updateStatus(false);
+      this.sessionId = null;
+      this._scheduleReconnect();
+    };
+    newWs.onmessage = async (event) => {
+      try {
+        await this._handleEventSubMessage(event.data);
+      } catch (error) {
+        this.log(`💥 EventSub: ${error.message}`);
+      }
+    };
+
+    this.log(`✅ EventSub migrated, session: ${this.sessionId}`);
+  }
+
+  /**
    * Handle EventSub message
    */
   async _handleEventSubMessage(data) {
@@ -377,6 +449,16 @@ export class TwitchEventSubModule extends BaseModule {
       // resolves, which happens only if every subscription below succeeded.
       await this._subscribeAll();
       this._readyResolve();
+      return;
+    }
+
+    if (type === "session_reconnect") {
+      // Twitch is rotating edges and will close this socket shortly. Relying on
+      // onclose → _scheduleReconnect instead means a multi-second dead window
+      // plus a full resubscribe, and Twitch never replays notifications missed
+      // while disconnected — a redemption in that window is lost, points spent,
+      // nothing logged. Migrate to reconnect_url BEFORE the old socket dies.
+      await this._migrateSocket(msg.payload.session.reconnect_url);
       return;
     }
 

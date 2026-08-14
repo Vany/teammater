@@ -20,11 +20,15 @@
 - [x] Automatic preset restoration on page load using stored_as="stream_preset"
 
 ## Pinned Message Management
-- [x] Fully automatic pinned message management on login 
-- [x] Preset-specific pinned messages for different stream types
-- [x] Default fallback pinned message when no preset active
+NOT WIRED UP. `twitch-stream/module.js` has `pinMessageById()` and every preset
+carries a `pinned_message`, but nothing calls it: `applyPreset()` only writes the
+text into the UI. Sending the message and capturing its id — the step that would
+give `pinMessageById()` an id to pin — does not exist in the modular codebase.
+- [ ] Fully automatic pinned message management on login
+- [x] Preset-specific pinned messages defined for different stream types (data only)
+- [ ] Default fallback pinned message when no preset active
 - [x] UI display of pinned message content in preset info
-- [x] IRC tags integration for message ID capture and automatic pinning
+- [ ] IRC tags integration for message ID capture and automatic pinning
 
 ## Channel Point Rewards System
 - [x] Custom Reward Creation: Automated setup of 7 default interactive rewards
@@ -93,8 +97,10 @@
 - Speech synthesis API integration
 - Responsive UI layout with control panel
 - Built-in preset configuration (modify DEFAULT_PRESETS in source)
-- Twitch messaging: send_twitch(), whisper() (public mentions), and apiWhisper() (private) functions
-- Fully automatic pinned message system with API integration
+- Twitch messaging: send_twitch() only. whisper() and apiWhisper() do not exist
+  in the modular codebase — actions that called apiWhisper() threw TypeError
+  and now address the viewer in chat instead
+- Pinned message system: data and API method only, not wired up (see above)
 - Channel Point Rewards system with automatic redemption handling and async action support
 - Message moderation system with configurable ban rules (BAN_RULES)
 - LLM integration: Ollama-compatible API for AI-powered chat responses
@@ -113,7 +119,7 @@
 - Connects to localhost:11434 HTTP server (Ollama LLM)
 - Channel defaults to authenticated user's channel (override via ?channel=name)
 - Twitch API integration for stream management and chat settings
-- Fully automatic pinned message workflow with IRC tags
+- Pinned message workflow with IRC tags — planned, not implemented
 - UserScript manager required (Tampermonkey/Greasemonkey) for Yandex Music integration
 - EventSub WebSocket for real-time channel point redemptions
 - Ollama server required for LLM features (optional, graceful degradation)

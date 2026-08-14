@@ -198,13 +198,21 @@ The application uses a clean modular architecture with **8 independent modules**
 
 ### Stream Management
 - [x] Stream preset system with title, game, tags
-- [x] Automatic preset application on connection
+- [ ] Automatic preset application on connection — NOT IMPLEMENTED. `applyPreset()`
+      has exactly one caller, the dropdown's `change` listener. On connect the
+      stored preset only pre-selects the dropdown and sets `currentPreset`;
+      nothing is pushed to Twitch. Deliberate: auto-applying would re-PATCH
+      title/category/tags on every reconnect and overwrite manual edits made
+      mid-stream. Switch presets in the dropdown to apply one.
 - [x] Preset info display (title, game, tags, pinned message)
-- [x] Pinned message management:
-  - Preset-specific pinned messages
-  - Default fallback pinned message
-  - IRC tags integration for message ID capture
-  - Automatic pinning on stream start
+- [ ] Pinned message management — NOT WIRED UP. `pinMessageById()` exists in
+      `modules/twitch-stream/module.js` and has zero callers; `applyPreset()`
+      only renders `preset.pinned_message` into the UI. Nothing sends the
+      message or captures its id, so nothing is ever pinned.
+  - [x] Preset-specific pinned messages (defined in DEFAULT_PRESETS)
+  - [ ] Default fallback pinned message
+  - [ ] IRC tags integration for message ID capture
+  - [ ] Automatic pinning on stream start
 
 ### External Integrations
 
@@ -586,18 +594,21 @@ All messages are JSON. Two directions: **server→clients** (broadcasts from ser
  "connected": true,
  "scene": "Gaming",
  "scenes": ["Starting", "Gaming", "BRB"],
- "streaming": {"active": true, "duration_s": 3661, "dropped_frames": 2, "total_frames": 440000, "bitrate_kbps": 6000},
- "recording": {"active": true, "paused": false, "cumulative_ms": 2712000}}
+ "streaming": {"active": true, "timecode": "01:01:01.000", "dropped_frames": 2, "total_frames": 440000, "bitrate_kbps": 6000},
+ "recording": {"active": true, "paused": false, "timecode": "00:45:12.000"}}
 
 // Scene changed
 {"type": "obs_scene", "scene": "BRB", "scenes": ["Starting", "Gaming", "BRB"]}
 
-// Streaming status update (every 2s while streaming, once on stop)
-{"type": "obs_streaming", "active": false}
-{"type": "obs_streaming", "active": true, "duration_s": 120, "dropped_frames": 0, "total_frames": 14400, "bitrate_kbps": 5980}
+// Streaming status update (every 2s while streaming, once on stop).
+// The payload is NESTED under "streaming" — it is StreamingInfo from
+// server/src/obs.rs, and it is null when OBS has reported nothing yet.
+// Elapsed time is OBS's "HH:MM:SS.mmm" outputTimecode string, not a number.
+{"type": "obs_streaming", "streaming": null}
+{"type": "obs_streaming", "streaming": {"active": true, "timecode": "00:02:00.000", "dropped_frames": 0, "total_frames": 14400, "bitrate_kbps": 5980}}
 
-// Recording status update
-{"type": "obs_recording", "active": true, "paused": false, "cumulative_ms": 45000}
+// Recording status update — likewise nested, RecordingInfo, null until known
+{"type": "obs_recording", "recording": {"active": true, "paused": false, "timecode": "00:00:45.000"}}
 
 // Log line from main page (server relays, also buffered as ring buffer of 5)
 {"type": "log", "text": "[LLM] Connected", "ts": 1234567890123}

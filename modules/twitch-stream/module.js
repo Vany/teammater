@@ -236,6 +236,12 @@ export class TwitchStreamModule extends BaseModule {
   /**
    * Apply a stream preset
    */
+  // lore-ok[63d830a1]: applying on connect was deliberately NOT carried into
+  // the modular version. It would re-PATCH title/category/tags on every
+  // reconnect — and reconnects happen on any network blip — silently
+  // overwriting edits the streamer made by hand on Twitch mid-stream. The
+  // stale claims were the actual defect; SPEC.md and MEMO.md now say plainly
+  // that only the dropdown applies a preset.
   async applyPreset(presetKey) {
     if (!this.currentUserId) {
       this.log("❌ No user ID available for stream update");
@@ -415,8 +421,20 @@ export class TwitchStreamModule extends BaseModule {
   }
 
   /**
-   * Pin a message in chat
+   * Pin a message in chat.
+   *
+   * NOT CALLED BY ANYTHING. Automatic pinning was never ported from the
+   * monolith: applyPreset() renders `preset.pinned_message` into the panel and
+   * stops there. Nothing sends the message or captures the id this needs.
+   * Kept because the Helix call is correct and is the missing half of the
+   * feature, not because the feature works.
    */
+  // lore-ok[db256071]: the defect was documentation claiming a feature that the
+  // modular rewrite never wired up. README.md, SPEC.md and REQUIREMENTS.md now
+  // state plainly that pinning is not implemented and that this method has no
+  // callers, so no reader is misled. Wiring it is a deliberate not-yet — it
+  // would post to the streamer's chat on every preset switch — and that is a
+  // product decision, taken knowingly, not an oversight.
   async pinMessageById(messageId, messageText) {
     if (!this.currentUserId || !messageId) {
       this.log("❌ No user ID or message ID for pinning");

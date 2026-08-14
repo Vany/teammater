@@ -30,7 +30,10 @@ import {
 export const CHAT_ACTIONS = [
   [ban(), /viewers/i, /nezhna.+\.com/i], // Ban spam with "viewers" + nezhna*.com
   [mute(30), /zhopa/i, /spam/i], // Timeout for profanity spam
-  [voice(), /^!voice\s$/i], // TTS command: !voice <text>
+  // TTS command: !voice <text> — the capture group is what gets spoken.
+  // Was /^!voice\s$/i, which required the message to END at the space and so
+  // matched nothing; the documented command had never once fired.
+  [voice(), /^!voice\s+(.+)$/i],
 ];
 
 // will became MCP TOOLS

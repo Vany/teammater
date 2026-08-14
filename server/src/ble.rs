@@ -8,7 +8,8 @@ use uuid::Uuid;
 
 use crate::ObsMessage;
 
-// Real BLE code kept intact — temporarily dormant while fake_hr_task is active.
+// This is the LIVE heart rate path: main.rs spawns ble_task. fake_hr_task at
+// the bottom of this file is the dormant one, kept for testing without the strap.
 #[allow(dead_code)]
 const DEVICE_NAME: &str = "HeartCast";
 #[allow(dead_code)]
@@ -119,7 +120,14 @@ async fn run_ble(
                             }
                             let _ = tx.send(ObsMessage {
                                 sender_id: u64::MAX,
-                                text: format!("{{\"heartrate\":{}}}", bpm),
+                                // `type` is required: mobile.html dispatches on
+                                // msg.type and dropped every typeless reading.
+                                // obs.js sniffs the heartrate field directly,
+                                // so it keeps working either way.
+                                text: format!(
+                                    "{{\"type\":\"heartrate\",\"heartrate\":{}}}",
+                                    bpm
+                                ),
                             });
                         }
                         None => warn!("💓 Malformed HR packet: {:?}", data.value),
@@ -222,7 +230,8 @@ fn parse_hr(data: &[u8]) -> Option<u16> {
     }
 }
 
-// TEMPORARY: fake heartrate task — real BLE code above is untouched.
+// DORMANT: synthetic heartrate for testing without the strap. NOT spawned —
+// main.rs runs the real ble_task above. Swap only for local testing, never live.
 // Distribution: 64% → 79, 25% → 80, 10% → 81, 1% → 82.
 pub async fn fake_hr_task(tx: broadcast::Sender<ObsMessage>) {
     use rand::{Rng, SeedableRng, rngs::StdRng};
@@ -238,7 +247,8 @@ pub async fn fake_hr_task(tx: broadcast::Sender<ObsMessage>) {
         };
         let _ = tx.send(ObsMessage {
             sender_id: u64::MAX,
-            text: format!("{{\"heartrate\":{}}}", bpm),
+            // Same shape as the real task above — see the note there.
+            text: format!("{{\"type\":\"heartrate\",\"heartrate\":{}}}", bpm),
         });
         tokio::time::sleep(Duration::from_secs(1)).await;
     }

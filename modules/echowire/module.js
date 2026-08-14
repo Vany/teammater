@@ -268,10 +268,12 @@ export class EchowireModule extends BaseModule {
 
     // Check if echowire is enabled in LLM config
     if (llmModule?.isConnected()) {
-      const echowireEnabled = llmModule.getConfigValue(
-        "echowire_enabled",
-        true,
-      );
+      // Compare against the STRING: ui-builder stores checkbox state as
+      // "true"/"false" and getConfigValue returns it verbatim, so the old
+      // `!echowireEnabled` test saw the string "false" as truthy and the
+      // toggle never disabled anything. Same shape as llm:1427 / eventsub:478.
+      const raw = llmModule.getConfigValue("echowire_enabled", "true");
+      const echowireEnabled = raw === true || raw === "true";
       if (!echowireEnabled) {
         this.log("⚠️ Echowire forwarding disabled in LLM config");
         return;

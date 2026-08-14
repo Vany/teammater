@@ -182,7 +182,12 @@ const YOUTUBE_RE = /^https:\/\/((www\.)?youtube\.com\/watch\?.*v=|youtu\.be\/)[\
 
 export function music() {
   return (context, user, message) => {
-    const { musicQueue, apiWhisper, send_twitch, log } = context;
+    // send_twitch, not apiWhisper: nothing in the modular codebase ever
+    // provides apiWhisper, so both error branches threw TypeError and the
+    // viewer got silence instead of the feedback the reward promises.
+    // Addressed by name in chat rather than whispered — there is no whisper
+    // helper in the context, and inventing one is a feature, not a fix.
+    const { musicQueue, send_twitch, log } = context;
 
     const raw = message.trim();
     const isYandex = YANDEX_RE.test(raw);
@@ -190,13 +195,14 @@ export function music() {
 
     if (!isYandex && !isYoutube) {
       log(`❌ Invalid music URL from ${user}: ${raw}`);
-      apiWhisper(user, "Invalid URL. Use a Yandex Music track or YouTube video URL.");
+      if (send_twitch)
+        send_twitch(`@${user} Invalid URL. Use a Yandex Music track or YouTube video URL.`);
       return false;
     }
 
     if (!musicQueue) {
       log(`❌ Music queue not available`);
-      apiWhisper(user, "Music queue is not available");
+      if (send_twitch) send_twitch(`@${user} Music queue is not available`);
       return false;
     }
 
@@ -267,9 +273,18 @@ export function playing(messageFormat = "🎹 Now playing: {song}") {
   return (context, user, message) => {
     const { currentSong, ws, CHANNEL, log } = context;
 
+    // Guard like vote_skip does: twitch-chat sets this.ws = null while it is
+    // reconnecting, so an unguarded send threw TypeError and canceled the
+    // viewer's redemption whenever a redemption landed mid-reconnect.
+    if (!ws || !CHANNEL) {
+      log(`❌ Cannot report song for ${user}: chat not connected`);
+      return false;
+    }
+
     const formattedMessage = messageFormat.replace("{song}", currentSong);
     ws.send(`PRIVMSG #${CHANNEL} :/me ${formattedMessage}`);
     log(`ℹ️ Song info requested by ${user}: ${currentSong}`);
+    return true;
   };
 }
 
@@ -440,24 +455,67 @@ async function executeModerationAPI(
 }
 
 /**
+ * Resolve the Twitch user id of a moderation target.
+ *
+ * Two call paths reach these actions and only one of them carries an id:
+ *   - chat rules: executeChatAction injects context.userId from the IRC tags
+ *   - LLM tools:  the model passes only a username, so context.userId is unset
+ * Without this the LLM path silently bailed on every call, so moderation the
+ * model believed it had performed never happened.
+ *
+ * @param {Object} context - action context (must provide request, log)
+ * @param {string} user - username, used when context.userId is absent
+ * @returns {Promise<string|null>} - user id, or null if it cannot be resolved
+ */
+async function resolveUserId(context, user) {
+  const { userId, request, log } = context;
+  if (userId) return userId;
+  if (!user || user === "unknown") return null;
+
+  try {
+    const response = await request(
+      `https://api.twitch.tv/helix/users?login=${encodeURIComponent(user)}`,
+    );
+    const data = await response.json();
+    const id = data?.data?.[0]?.id;
+    if (!id) {
+      log(`❌ Cannot resolve user '${user}': not found`);
+      return null;
+    }
+    return id;
+  } catch (error) {
+    log(`❌ Cannot resolve user '${user}': ${error.message}`);
+    return null;
+  }
+}
+
+/**
  * Mute action initializer: creates timeout action with specified duration
  * @param {number} seconds - Timeout duration in seconds
  * @param {string|null} reason - Custom reason for timeout (optional)
- * @returns {Function} - closure(context, user, message) => Promise<void>
+ * @returns {Function} - closure(context, user, message) => Promise<boolean>
  */
 export function mute(seconds, reason = null) {
   const timeoutReason =
     reason || `Automated timeout (${seconds}s): message violated rules`;
 
   return async (context, user, message) => {
-    const { currentUserId, userId, log } = context;
+    const { currentUserId, log } = context;
 
-    if (!currentUserId || !userId) {
-      log("❌ Cannot mute: missing user IDs");
-      return;
+    // Always return a boolean: the LLM tool loop reports a bare `undefined` as
+    // "Function has no result", which the model reads as success.
+    if (!currentUserId) {
+      log("❌ Cannot mute: no broadcaster id");
+      return false;
     }
 
-    await executeModerationAPI(
+    const userId = await resolveUserId(context, user);
+    if (!userId) {
+      log(`❌ Cannot mute '${user}': unresolved user id`);
+      return false;
+    }
+
+    return await executeModerationAPI(
       context,
       `/moderation/bans?broadcaster_id=${currentUserId}&moderator_id=${currentUserId}`,
       {
@@ -483,14 +541,21 @@ export function mute(seconds, reason = null) {
  */
 export function ban(reason = "Automated ban: message violated rules") {
   return async (context, user, message) => {
-    const { currentUserId, userId, log } = context;
+    const { currentUserId, log } = context;
 
-    if (!currentUserId || !userId) {
-      log("❌ Cannot ban: missing user IDs");
-      return;
+    // Boolean result for the same reason as mute() — see resolveUserId().
+    if (!currentUserId) {
+      log("❌ Cannot ban: no broadcaster id");
+      return false;
     }
 
-    await executeModerationAPI(
+    const userId = await resolveUserId(context, user);
+    if (!userId) {
+      log(`❌ Cannot ban '${user}': unresolved user id`);
+      return false;
+    }
+
+    return await executeModerationAPI(
       context,
       `/moderation/bans?broadcaster_id=${currentUserId}&moderator_id=${currentUserId}`,
       {
@@ -517,12 +582,16 @@ export function delete_message(silent = false) {
   return async (context, user, message) => {
     const { currentUserId, messageId, log } = context;
 
+    // messageId comes from IRC tags and CANNOT be recovered from a username,
+    // so unlike mute/ban this action is chat-path only. Return false rather
+    // than undefined so an LLM caller is told it failed instead of assuming
+    // success from "Function has no result".
     if (!currentUserId || !messageId) {
       if (!silent) log("❌ Cannot delete message: missing IDs");
-      return;
+      return false;
     }
 
-    await executeModerationAPI(
+    return await executeModerationAPI(
       context,
       `/moderation/chat?broadcaster_id=${currentUserId}&moderator_id=${currentUserId}&message_id=${messageId}`,
       { method: "DELETE" },
@@ -541,6 +610,10 @@ export const delete_ = delete_message;
 
 /**
  * OBS scene switch + source refresh action
+ *
+ * lore-ok[dcc37367]: fixed in the closure body below — _sendRequest/
+ * _waitForReconnect are gone, replaced by obs.switchScene() over the /obs bus.
+ *
  * @param {string} scene - OBS scene name to switch to
  * @param {string} source - Input source name to refresh (browser source)
  * @returns {Function} - closure(context, user, message) => void
@@ -552,16 +625,22 @@ export function obs_scene(scene, source) {
       if (log) log(`❌ obs_scene: OBS not connected`);
       return;
     }
-    obs._sendRequest("SetCurrentProgramScene", { sceneName: scene });
-    if (log) log(`👓 Scene → "${scene}", waiting for OBS (crash workaround)...`);
+    // switchScene(), not _sendRequest(): the OBS module is a thin client over
+    // the server's /obs bus now, and _sendRequest/_waitForReconnect went with
+    // the direct obs-websocket connection. Both calls threw TypeError, so the
+    // voice commands and the "👓 Glasses + Refresh" button were dead.
+    //
+    // The obs-websocket 5.7.2 crash workaround (strlen(NULL) in the
+    // CurrentProgramSceneChanged broadcast) is no longer this side's problem
+    // either: the SERVER owns the OBS socket and its own reconnect, so the
+    // browser has nothing to wait for.
     try {
-      // SetCurrentProgramScene crashes obs-websocket 5.7.2 via strlen(NULL) in
-      // CurrentProgramSceneChanged broadcast. Scene switch completes before crash,
-      // so we wait for auto-reconnect, then refresh the source.
-      await new Promise(r => setTimeout(r, 500)); // let close event fire
-      await obs._waitForReconnect(12000);
+      obs.switchScene(scene);
+      if (log) log(`👓 Scene → "${scene}"`);
+      // refreshSource still needs a direct multi-step OBS request loop that the
+      // bus does not carry — it logs its own error and resolves. Kept in the
+      // call chain so the gap stays visible rather than silently skipped.
       await obs.refreshSource(source);
-      if (log) log(`✅ Source "${source}" refreshed`);
     } catch (err) {
       if (log) log(`❌ obs_scene failed: ${err.message}`);
     }
@@ -628,13 +707,17 @@ export function neuro(neuroConfig = {}) {
         content: text,
       });
 
-      // Call LLM
-      const response = await llm.chat(messages, {
+      // chatRaw, not chat: LLMModule.chat() did not survive the modular
+      // refactor, so every redemption used to throw TypeError and answer the
+      // viewer with "Neuro encountered an error". chatRaw returns the assembled
+      // message OBJECT, so the text lives in .content — not the return value.
+      const message = await llm.chatRaw(messages, {
         maxTokens: config.maxTokens,
         temperature: config.temperature,
       });
+      const response = message?.content || "";
 
-      if (!response || !response.trim()) {
+      if (!response.trim()) {
         if (log) log(`⚠️ Neuro returned empty response for ${user}`);
         if (send_twitch) send_twitch("🤖 Neuro has nothing to say");
         return false;

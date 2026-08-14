@@ -6,6 +6,28 @@ Estimated reduction: ~950 lines (from ~4500 to ~3500 LOC), zero functionality lo
 
 ## BUG
 - OBS crash when scene changed.
+  (obs-websocket 5.7.2 `strlen(NULL)` in the CurrentProgramSceneChanged broadcast.
+  Now the SERVER owns the OBS socket and its own reconnect, so the browser no
+  longer needs the wait-for-reconnect workaround — but OBS still crashes.)
+- Twitch EventSub subscription failure — ROOT CAUSE STILL UNKNOWN. The
+  false-green that hid it is fixed; the real Twitch error now prints to the
+  console on connect. Reload, re-enable EventSub, read the error.
+
+
+## From the 2026-08-14 lore review (see MEMO.md)
+
+- [ ] **Prevent the recurring context-shape bug.** Four findings were the same
+      defect: `actions.js` calling something the modular rewrite deleted
+      (`llm.chat`, `apiWhisper`, `obs._sendRequest`, `obs._waitForReconnect`).
+      All current call sites resolve, but nothing stops the next one. Needs a
+      rule, a lint, or a context assertion — not another manual fix.
+- [ ] Decide on `pinMessageById()`: wire it up, or delete it and the
+      `pinned_message` preset field. Currently justified as a documented gap.
+- [ ] Consider a dev-only `package.json` so lore's tsc/eslint tiers can run.
+      They would have caught `llm.chat()` and `apiWhisper()` for free.
+      Currently justified as deliberate (`lore-ok[704edc91]`).
+- [ ] Report the lore schema bug upstream: T1 emitting `severity: "critical"`
+      silently drops real HIGH findings from the review.
 
 
 

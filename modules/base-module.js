@@ -288,6 +288,11 @@ export class BaseModule {
    */
   async disconnect() {
     if (!this.connected) {
+      // Not connected does NOT mean nothing to stop: a module sitting in its
+      // reconnect backoff has an armed timer, and that timer's connect() has
+      // no enabled check — so returning here brought the module back online
+      // with its checkbox off. Kill the pending retry before leaving.
+      this._cleanupReconnect();
       return;
     }
 
@@ -414,6 +419,14 @@ export class BaseModule {
     this.log(`🔄 Reconnecting in ${reconnectDelay}ms...`);
 
     this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      // Re-check at fire time, not only at schedule time: the module can be
+      // disabled during the backoff, and reconnecting a disabled module is
+      // exactly the bug the checkbox is supposed to prevent.
+      if (!this.shouldReconnect || !this.enabled) {
+        this.log(`⏹️ Reconnect canceled — module disabled`);
+        return;
+      }
       this.connect().catch((err) => {
         this.log(`💥 Reconnect failed: ${err.message}`);
       });

@@ -293,6 +293,11 @@ export class MusicQueueModule extends BaseModule {
       this.log(`▶️ Idle — playing immediately: ${url}`);
       this.currentlyPlaying = url;
       this._playSong(url);
+      // Arm the watchdog exactly as _playNext does: without it a dead player
+      // tab never sends music_done, currentlyPlaying stays set forever, and
+      // every later request queues behind a phantom track with no recovery.
+      if (!this._isYoutube(url)) this._startWatchdog("yandex");
+      // YouTube watchdog starts in the youtube_ready listener
       return { queued: false, position: null };
     }
     this.queue.push(url);
@@ -388,7 +393,10 @@ export class MusicQueueModule extends BaseModule {
     ws.onmessage = ({ data }) => {
       try {
         const msg = JSON.parse(data);
-        if (msg.request === "now_playing") { if (this.nowPlaying.cover) this._broadcastNowPlaying(); return; }
+        // Answer regardless of cover: gating on it left a coverless track
+        // unanswerable, so a client that reconnected mid-track kept showing
+        // the server's last cover-bearing (i.e. previous) song forever.
+        if (msg.request === "now_playing") { this._broadcastNowPlaying(); return; }
         switch (msg.type) {
           case "music_pause":  this.pauseMusic();  break;
           case "music_resume": this.resumeMusic(); break;

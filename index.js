@@ -405,8 +405,14 @@ async function handleChatMessage(messageData) {
     minecraftModule.sendMessage(username, message);
   }
 
-  // Check chat actions
-  if (userId) {
+  // Check chat actions.
+  // lore-ok[623bc07a]: fixed here, in handleChatMessage, on the line below.
+  // Never moderate ourselves: CHAT_ACTIONS match on message CONTENT, so the
+  // streamer quoting a scam to warn viewers hit the ban rule and fired a
+  // self-ban attempt at Helix. Twitch rejects it, but the rule still consumed
+  // the message and logged an error every time. The monolith had this guard;
+  // the modular rewrite dropped it while REQUIREMENTS.md kept claiming it.
+  if (userId && userId !== currentUserId) {
     const context = moduleManager.buildContext();
     const matched = await actionRegistry.executeChatAction(
       message,

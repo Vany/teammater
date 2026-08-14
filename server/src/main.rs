@@ -24,7 +24,7 @@ use std::{
 };
 use tokio::sync::{broadcast, mpsc, watch, RwLock};
 use tower_http::services::{ServeDir, ServeFile};
-use tracing::{error, info, info_span, Instrument};
+use tracing::{error, info, info_span, warn, Instrument};
 
 mod ble;
 mod echowire;
@@ -116,7 +116,10 @@ async fn main() -> Result<()> {
     let state = Arc::new(state_inner);
 
     tokio::spawn(echowire::mdns_task(state.echowire.clone()).instrument(info_span!("mdns")));
-    // TEMPORARY: fake heartrate — swap back to ble::ble_task when done.
+    // REAL BLE heart rate. fake_hr_task exists in ble.rs for testing without
+    // the strap and is NOT spawned — the comments here used to claim the
+    // opposite, which would have talked a maintainer into putting synthetic
+    // bpm on the live stream.
     tokio::spawn(ble::ble_task(state.obs_broadcast.clone()).instrument(info_span!("ble")));
     tokio::spawn(
         obs::obs_task(
@@ -269,7 +272,20 @@ async fn handle_obs_client(socket: WebSocket, state: Arc<AppState>, client_id: u
     let state_recv = state.clone();
 
     let send_task = async move {
-        while let Ok(msg) = broadcast_rx.recv().await {
+        loop {
+            // Lagged is NOT terminal. `while let Ok(..)` treated it as such, so
+            // a client that stalled past the 16-slot buffer went permanently
+            // deaf with its socket still open — while server/SPEC.md promises
+            // "lagged receivers drop silently". Skip the dropped messages and
+            // keep serving; only Closed ends the task.
+            let msg = match broadcast_rx.recv().await {
+                Ok(msg) => msg,
+                Err(broadcast::error::RecvError::Lagged(n)) => {
+                    warn!("📡 Client {} lagged, dropped {} message(s)", client_id, n);
+                    continue;
+                }
+                Err(broadcast::error::RecvError::Closed) => break,
+            };
             if msg.sender_id != client_id && tx.send(Message::Text(msg.text)).await.is_err() {
                 break;
             }
@@ -339,10 +355,12 @@ async fn route_incoming(
             });
         }
         "now_playing" => {
-            // Cache only when cover is present so new clients always get complete data
-            if !v["cover"].is_null() {
-                *state.last_now_playing.lock().unwrap() = Some(text.clone());
-            }
+            // Cache EVERY now_playing, cover or not. Caching only cover-bearing
+            // messages meant a coverless track left the previous track cached,
+            // and a reconnecting client was confidently shown the wrong song —
+            // stale data is worse than a missing cover, and the live reply path
+            // gated on cover too, so nothing ever corrected it.
+            *state.last_now_playing.lock().unwrap() = Some(text.clone());
             let _ = obs_broadcast.send(ObsMessage {
                 sender_id: client_id,
                 text,

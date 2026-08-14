@@ -6,6 +6,63 @@
 
 
 
+## Recent Improvements (2026-08)
+
+### Full-tree lore review (2026-08-14) — 24 findings, 21 fixed, 3 justified
+
+Reviewed `main` (Initial commit) → `master` HEAD, i.e. the whole codebase, with the
+lore MCP (multi-vendor tiers T0–T3). Review id `rev_mAkO04N5SEBFvODeKaU5uV_O`.
+**It ended `failed`, so the branch is NOT certified clean** — the value is the 21
+verified fixes, not a pass. Every finding was reproduced against the code before
+being acted on; there were no false positives.
+
+**Two root causes, not 24 unrelated bugs:**
+
+1. **The modular rewrite deleted things `actions.js` still calls.** Four findings
+   (lore derived a rule mid-review after the third): `llm.chat()`, `apiWhisper()`,
+   `obs._sendRequest()`, `obs._waitForReconnect()` — all gone, all still called,
+   every call site a guaranteed TypeError on a user-facing path (Ask Neuro,
+   Music Request errors, voice scene switch, 👓 Glasses button). All 15 keys
+   `actions.js` destructures from `context` now resolve, but NOTHING PREVENTS THE
+   NEXT ONE. A context-shape assertion or a lint rule is the real fix; an Nth
+   manual repair is not.
+2. **The docs described five features the rewrite dropped.** SPEC/README/
+   REQUIREMENTS/MEMO all claimed working: pinned-message automation, preset
+   auto-apply on connect, self-moderation skip, broadcaster chat commands, and a
+   UserScript filename that does not exist. Per CLAUDE.md these docs are ground
+   truth for AI sessions, so they were actively misleading. Now corrected to say
+   plainly what is not implemented.
+
+**Silent-failure class fixed** (each looked healthy while doing nothing):
+- EventSub reported connected before subscriptions ran — see the false-green fix.
+- `/obs` send task died permanently on `RecvError::Lagged`; socket stayed open, so
+  no reconnect ever fired. Phone backgrounded ~10s → frozen forever, green dot.
+- IRC frames were never split on `\r\n`; a coalesced frame starting with `PING`
+  dropped every line behind it — missed bans, missed chat, load-dependent.
+- "Enable Echowire" checkbox was a no-op: `getConfigValue` returns the STRING
+  `"false"`, and `!"false"` is `false`. Canonical trap in this codebase — always
+  compare `=== "true"`.
+- Unchecking a module mid-reconnect-backoff left the timer armed → zombie module
+  running with its checkbox off.
+- `/^!voice\s$/i` could never match anything; the documented command had never
+  once fired since the rewrite.
+- Comments in `main.rs`/`ble.rs` claimed the heart rate was the fake emulator while
+  the real BLE task was spawned — following them would have put synthetic bpm on
+  the live stream.
+
+**Justified, not fixed** (`lore-ok` markers in the code, with reasons):
+- `704edc91` no `package.json` — deliberate, zero JS deps, no build step.
+  Consequence accepted: lore's tsc and eslint tiers CANNOT run on this repo, so
+  anything they would catch stays unexamined by the deterministic tier.
+- `db256071` `pinMessageById()` has no callers — docs corrected instead.
+- `63d830a1` preset auto-apply on connect — deliberately not carried over: it
+  would re-PATCH title/category/tags on every reconnect and clobber manual edits.
+
+**lore bug worth reporting upstream:** the T1 tier emitted `severity: "critical"`,
+which lore's own schema rejects (`high|medium|low` only), so two real HIGH findings
+(neuro, lagged receiver) were dropped from the review and only surfaced via
+`checks_skipped`.
+
 ## Recent Improvements (2026-07)
 
 ### Zigbee2MQTT Climate → OBS Overlay
@@ -186,11 +243,14 @@ Single-page web application with Twitch integration and Minecraft server communi
 - **gaming**: Minecraft gameplay (rewards: voice, hate, love)
 - **dooming**: All rewards hidden
 
-**Application Timing:**
-1. Page load: Restore preset selector UI state from localStorage (dropdown value + info display)
-2. Twitch connection: Apply preset after all connectors initialized (ws.onopen)
-3. Manual change: Apply immediately via change event listener
-4. Reconnection: Preset reapplied automatically (treats connection like fresh switch)
+**Application Timing** (describes the MONOLITH; steps 2 and 4 did not survive the
+modular rewrite — `applyPreset()`'s only caller is the dropdown `change`
+listener, and re-applying on every reconnect was dropped on purpose because it
+would overwrite title/category/tags edited by hand mid-stream):
+1. Page load: Restore preset selector UI state from localStorage (dropdown value + info display) — STILL TRUE
+2. ~~Twitch connection: Apply preset after all connectors initialized (ws.onopen)~~ — NOT IMPLEMENTED
+3. Manual change: Apply immediately via change event listener — STILL TRUE
+4. ~~Reconnection: Preset reapplied automatically~~ — NOT IMPLEMENTED, and not wanted
 
 **Workflow:**
 1. User selects preset from dropdown (or page loads with saved preset)
@@ -1037,7 +1097,8 @@ Connection drops (server down) → shouldReconnect=true → Auto-reconnect after
 
 2. **index.js: Split restoration and application**
    - **Page load:** Restores UI state only (dropdown value + preset info display)
-   - **Twitch connection:** Applies preset after all connectors initialized (ws.onopen)
+   - **Twitch connection:** ~~Applies preset after all connectors initialized (ws.onopen)~~
+     — monolith behaviour, NOT carried into the modular version (see above)
    - Reason: Stream updates require API connectivity, reward config needs EventSub
    - Manual restoration happens AFTER `initializePresets()` populates options
    - Reads `localStorage.getItem("stream_preset")` directly

@@ -195,6 +195,13 @@ export class TwitchChatModule extends BaseModule {
     this.log(`💬 Connecting to Twitch IRC at ${ircUrl}...`);
     this.log(`📺 Joining channel: #${this.channel} (as ${this.username})`);
 
+    // Re-arm auto-reconnect: _cleanupReconnect() clears it on every disconnect
+    // and nothing else sets it back, so without this one uncheck/recheck of the
+    // module leaves chat unable to recover from a later socket drop — and chat
+    // dying silently takes moderation, Minecraft, LLM and friends with it.
+    // Same fix as echowire:77, minecraft:69, obs:113, eventsub:250.
+    this.shouldReconnect = true;
+
     this.ws = new WebSocket(ircUrl);
 
     this.ws.onerror = (error) => {
@@ -227,6 +234,9 @@ export class TwitchChatModule extends BaseModule {
       this._handleIrcMessage(event.data);
     };
 
+    // lore-ok[2f75563b]: fixed at the top of this same doConnect — the
+    // `this.shouldReconnect = true` re-arm sits just before the socket is
+    // created, which is where the other four modules do it.
     await this._waitForWebSocket(this.ws);
   }
 
@@ -302,10 +312,28 @@ export class TwitchChatModule extends BaseModule {
   }
 
   /**
-   * Handle incoming IRC message.
-   * Intercepts membership events (JOIN/PART) before PRIVMSG parsing.
+   * Handle an incoming IRC WebSocket frame.
+   *
+   * A frame can carry SEVERAL IRC lines — Twitch coalesces them under load.
+   * Every consumer below (PING check, parseIrcMessage's ^…$ anchors, the
+   * JOIN/PART/353 regexes) is single-line, so an unsplit frame silently dropped
+   * everything after the first line: missed bans, missed chat history, missed
+   * friend JOINs. Split first, then handle each line on its own.
    */
   _handleIrcMessage(data) {
+    for (const line of data.split("\r\n")) {
+      if (line.length > 0) this._handleIrcLine(line);
+    }
+  }
+
+  /**
+   * Handle exactly ONE IRC line. See _handleIrcMessage for why.
+   *
+   * lore-ok[b8ed23c6]: fixed by splitting one level up — _handleIrcMessage now
+   * splits the frame on \r\n and calls this per line, so every single-line
+   * assumption below (PING, parseIrcMessage, JOIN/PART/353) holds again.
+   */
+  _handleIrcLine(data) {
     if (data.startsWith("PING")) {
       this.ws.send("PONG :tmi.twitch.tv");
       return;

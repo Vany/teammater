@@ -297,10 +297,14 @@
         try {
           const msg = JSON.parse(data);
           switch (msg.type) {
+            // pause/resume only. music_skip and music_prev are handled by the
+            // MASTER's Music Queue module, which owns the queue and reaches
+            // this tab through the GM transport — acting on them HERE too made
+            // every phone tap advance Yandex twice and desync the queue's
+            // My Vibes fallback position. pause/resume stay because they are
+            // idempotent and must work even with no master running.
             case "music_pause":  pause(); break;
             case "music_resume": resume(); break;
-            case "music_skip":   safeClick('button[aria-label="Next song"]'); break;
-            case "music_prev":   safeClick('button[aria-label="Previous song"]'); break;
           }
         } catch {}
       };

@@ -980,14 +980,24 @@ Disallowed (use mute tool):
     // <think> tag parser state — fallback for models that embed thinking in content
     let inThinkTag = false;
     let thinkBuf = ""; // partial tag accumulation across chunks
+    // SSE line accumulation across chunks. A `data:` line can straddle a TCP
+    // read; splitting each chunk independently drops BOTH halves (neither
+    // starts with "data:" or parses as JSON), silently truncating tool-call
+    // arguments with no error anywhere.
+    let lineBuf = "";
 
     try {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        const chunk = decoder.decode(value, { stream: true });
-        for (const line of chunk.split("\n")) {
+        lineBuf += decoder.decode(value, { stream: true });
+        const lines = lineBuf.split("\n");
+        // Last element is either "" (chunk ended on a newline) or an incomplete
+        // line — keep it for the next read instead of parsing a fragment.
+        lineBuf = lines.pop();
+
+        for (const line of lines) {
           const trimmed = line.trim();
           if (!trimmed.startsWith("data:")) continue;
           const json = trimmed.slice(5).trim();

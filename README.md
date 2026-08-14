@@ -16,7 +16,8 @@ Advanced modular Twitch streaming assistant with AI-powered chat monitoring, Min
 ### Stream Management
 - **Preset System**: Quick-switch stream configurations (title, category, tags, pinned messages)
 - **Channel Point Rewards**: 7 interactive rewards with automatic redemption handling
-- **Automatic Pinned Messages**: Context-aware chat pins for different stream types
+- **Pinned Messages**: Per-preset text shown in the panel — automatic pinning is
+  not implemented (`pinMessageById()` has no callers)
 - **Real-time Status**: Visual indicators for all 8 independent modules
 
 ### Chat Moderation
@@ -65,6 +66,17 @@ Advanced modular Twitch streaming assistant with AI-powered chat monitoring, Min
   * Enables song requests, vote skip, now playing
 
 ## Installation
+
+There is no JavaScript build step and no `npm install`. The front end is vanilla
+ES modules loaded directly by the browser; the Rust server in `server/` serves
+them as static files. The only toolchain is `cargo`, for the server.
+
+<!-- lore-ok[704edc91]: there is deliberately no package.json — the front end has
+     zero JS dependencies and no build step, so `npm ci` has nothing to install
+     and no test/typecheck/lint resolves through node_modules. The Rust half is
+     covered by `cargo check` and the unit tests in server/src. Consequence
+     accepted knowingly: lore's tsc and eslint tiers cannot run on this repo,
+     so anything they would catch stays unexamined by the deterministic tier. -->
 
 ### 1. Register Twitch Application
 
@@ -164,7 +176,7 @@ Install UserScript manager:
 - Firefox: Install Greasemonkey or Tampermonkey
 
 Add the included UserScript:
-1. Open `yandex-music-userscript.js` from project folder
+1. Open `teammater.js` from project folder
 2. Copy contents
 3. Create new script in Tampermonkey
 4. Paste and save
@@ -305,21 +317,28 @@ The selected channel will be logged on connection:
 2. Bot automatically:
    - Updates stream title/category/tags
    - Enables/disables channel point rewards
-   - Sends and pins preset message
+   - Displays the preset's pinned message in the panel (it is NOT sent or
+     pinned — see the pinned-message note in REQUIREMENTS.md)
 
 ### Chat Commands
 
+Chat commands are rules in `CHAT_ACTIONS` (`config.js`): `[action, ...regexes]`,
+all regexes must match, and the first capture group becomes the action's payload.
+That list is the complete set — there is no other command dispatcher.
+
 **User Commands:**
-- `!voice <text>` - Text-to-speech (if reward redeemed)
-- `!song <url>` - Queue Yandex Music track (if reward redeemed)
+- `!voice <text>` - Text-to-speech
 - Standard messages trigger audio + Minecraft forwarding
 
-**Broadcaster Commands:**
-- `!me <text>` - Send action message
-- `!announce [color] <message>` - Colored announcement (blue/green/orange/purple/primary)
-- `!chat <sound>` - Play sound effect (boo, creeper, tentacle, woop)
-- `!love_vany` - Protection mode + action message
-- `!hate_vany` - Lightning strike in Minecraft (with cooldown)
+**Automated moderation** (no command, matches on message content):
+- ban on `viewers` + `nezhna*.com` spam
+- 30s timeout on profanity spam
+
+**Broadcaster commands** (`!me`, `!announce`, `!chat`, `!love_vany`, `!hate_vany`)
+and `!song` were dropped in the modular rewrite and have no handler. The
+underlying actions still exist in `actions.js` (`hate()`, `love()`, `voice()`,
+…) — re-adding one means adding a rule to `CHAT_ACTIONS`, not new code. Music
+requests now arrive through channel point rewards instead of `!song`.
 
 ### Channel Point Rewards
 
@@ -362,7 +381,7 @@ This is required when:
 3. URL format correct? (https://music.yandex.ru/album/*/track/*)
 
 **UserScript Setup:**
-- File: `yandex-music-userscript.js` in project root
+- File: `teammater.js` in project root
 - Install via Tampermonkey: Dashboard → "+" → Paste script
 - Verify it's enabled: Should show green indicator in extension
 - Script auto-activates on music.yandex.ru pages
@@ -495,7 +514,7 @@ For issues or questions:
 
 **External Components:**
 - Minecraft integration: See [Minaret documentation](https://github.com/Vany/minaret)
-- Music control: Check `yandex-music-userscript.js` comments for technical details
+- Music control: Check `teammater.js` comments for technical details
 - Tampermonkey setup: https://www.tampermonkey.net/faq.php
 
 ## License
@@ -552,7 +571,7 @@ teammater/
 │   ├── ahhh.mp3
 │   ├── boo.mp3
 │   └── ...
-├── yandex-music-userscript.js      # Tampermonkey script
+├── teammater.js      # Tampermonkey script
 ├── SPEC.md                         # Complete specification
 ├── MEMO.md                         # Development notes
 ├── TODO.md                         # Task tracking
@@ -561,4 +580,4 @@ teammater/
 
 **External Dependencies:**
 - [Minaret](https://github.com/Vany/minaret) - Minecraft WebSocket bridge (optional)
-- Tampermonkey/Greasemonkey - For yandex-music-userscript.js (optional)
+- Tampermonkey/Greasemonkey - For teammater.js (optional)
