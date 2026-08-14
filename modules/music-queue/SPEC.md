@@ -118,7 +118,7 @@ Runs before clicking play. If validation fails, sends `youtube_invalid` and does
 
 | Check | Source | Condition |
 |-------|--------|-----------|
-| Category | `ytInitialPlayerResponse.microformat.playerMicroformatRenderer.category` | `=== "Music"` |
+| Category | `ytInitialPlayerResponse.microformat.playerMicroformatRenderer.category` | `=== "Music"`, **or** `looksLikeMusic()` fallback |
 | View count | `ytInitialPlayerResponse.videoDetails.viewCount` | `> 1000` |
 | Duration | `ytInitialPlayerResponse.videoDetails.lengthSeconds` | `120–480 s` (2–8 min) |
 
@@ -271,4 +271,11 @@ Deep validation (category, views, duration) runs in the YouTube tab after naviga
 - If YouTube tab is closed mid-song by the user, watchdog recovers within 65s
 - No per-user request cooldown or deduplication
 - YouTube validation requires page load; invalid songs cause a brief tab navigation before rejection
-- YouTube category must be exactly `"Music"` — covers, unofficial uploads may fail
+- YouTube category `"Music"` passes outright. Anything else falls back to
+  `looksLikeMusic()`: ≥2 DISTINCT keywords from a ~90-entry list matched against
+  title + description + tags, each anchored with `\b`. The boundaries matter —
+  unanchored, `ost` matched inside "most" and `ep` inside "episode", so the gate
+  passed almost everything. Multi-word entries are tried longest-first, so
+  "Official Video" counts as ONE keyword, not two; a non-Music upload therefore
+  needs two genuinely different signals. Covers and unofficial uploads can still
+  fail if their metadata is sparse.

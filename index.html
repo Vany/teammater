@@ -154,9 +154,27 @@
                             pushHistory(value);
                             historyIndex = null;
                             draft = "";
+                            // Send FIRST, clear the reminder only on success.
+                            // This used to be `eval(localStorage.getItem("ANNOUNCE"))`
+                            // followed by `await ANNOUNCE(value)` — nothing in the
+                            // repo ever defines ANNOUNCE, so on a fresh browser the
+                            // ReferenceError surfaced only as an unhandled rejection:
+                            // the announcement was never sent AND the 10-minute
+                            // reminder had already been cancelled, losing both.
+                            const chat = window.moduleManager?.get("twitch-chat");
+                            if (!chat?.isConnected()) {
+                                console.error("[announce] Twitch Chat not connected — not sent");
+                                input.style.borderColor = "red";
+                                return;
+                            }
+                            // Posted as a normal chat message. TRUE Twitch
+                            // announcements need POST /helix/chat/announcements and
+                            // the moderator:manage:announcements scope, which is NOT
+                            // in TWITCH_SCOPES — adding it forces a re-auth, so that
+                            // is a deliberate open decision, not an oversight.
+                            chat.send(value);
+                            console.log("[announce] sent:", value);
                             clearAnnounceTimer(input);
-                            eval(localStorage.getItem("ANNOUNCE"));
-                            console.log(await ANNOUNCE(value));
                         } else {
                             // Any other key resets history browsing
                             historyIndex = null;

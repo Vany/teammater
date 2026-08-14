@@ -12,7 +12,7 @@ Teammater is a Twitch streaming bot with a modular architecture that integrates:
 - OBS Studio WebSocket for stream monitoring
 - Android STT (Speech-to-Text) via Echowire WebSocket
 
-The bot connects to a Twitch channel (default: authenticated user's own channel, or specify `?channel=name` in URL) and provides interactive features through channel point rewards, chat commands, and automated moderation.
+The bot connects to a Twitch channel (default: the authenticated user's own channel; override it in the Twitch Chat module's config panel via the `twitch_channel` field). There is NO `?channel=` URL parameter — it was removed entirely. The bot provides interactive features through channel point rewards, chat commands, and automated moderation.
 
 ## Architecture
 
@@ -272,12 +272,15 @@ The application uses a clean modular architecture with **8 independent modules**
 - [x] Browser OBS module refactored to thin client (subscribes to `/obs` bus, sends `obs_config`)
 
 ### Moderator Rights Enforcement
-- [x] Automatic detection when connected to non-default channel (via `?channel=name`)
-- [x] Checks moderator status via Twitch API `/helix/moderation/moderators`
-- [x] EventSub connection disabled if no moderator rights
-- [x] Minecraft connector disabled if no moderator rights
-- [x] Warning messages logged when connecting without permissions
-- [x] Always allows EventSub and Minecraft for authenticated user's own channel
+NOT IMPLEMENTED — none of this exists in the modular codebase. There is no call
+to `/helix/moderation/moderators` anywhere, and EventSub and Minecraft connect
+unconditionally. Do not rely on any of it as a safety gate.
+- [ ] Automatic detection when connected to non-default channel
+- [ ] Checks moderator status via Twitch API `/helix/moderation/moderators`
+- [ ] EventSub connection disabled if no moderator rights
+- [ ] Minecraft connector disabled if no moderator rights
+- [ ] Warning messages logged when connecting without permissions
+- [ ] Always allows EventSub and Minecraft for authenticated user's own channel
 
 ### Audio & TTS
 - [x] Audio playback for sound effects (MP3 files)
@@ -617,8 +620,10 @@ All messages are JSON. Two directions: **server→clients** (broadcasts from ser
 {"type": "viewer_count", "count": 42}
 
 // ── Server-originated sensor broadcasts (overlay hides each until its first message) ──
-// Heart rate from BLE monitor
-{"heartrate": 72}
+// Heart rate from BLE monitor. `type` is REQUIRED — mobile.html dispatches on
+// msg.type and dropped every typeless reading; obs.js sniffs the heartrate
+// field directly, so it accepts either shape. Emit both fields.
+{"type": "heartrate", "heartrate": 72}
 // Host CPU usage / temperature from sysinfo task (cpu_temp omitted if unavailable)
 {"type": "sysinfo", "cpu_usage": 12.5, "cpu_temp": 47.0}
 // Room climate from Zigbee2MQTT sensor T1 (server zigbee task; temperature °C + humidity %)
@@ -706,7 +711,8 @@ Server distinguishes commands (type prefix `cmd_` or `obs_config`) from relay me
 
 ### URL Parameters
 - Default: Connects to authenticated user's channel
-- `?channel=name` - Connect to specified channel (requires moderator rights)
+- ~~`?channel=name`~~ - REMOVED. Set the channel in the Twitch Chat module config
+  panel (`twitch_channel`); the parameter is silently ignored if passed.
 - `?wipe` - Clear all localStorage (reset all settings)
 
 ### Module UI Structure

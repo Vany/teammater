@@ -50,7 +50,9 @@ Advanced modular Twitch streaming assistant with AI-powered chat monitoring, Min
 ### Required
 - Modern web browser (Chrome, Firefox, Edge)
 - Twitch account with **moderator or broadcaster** status on your channel
-- Caddy or similar web server for HTTPS serving (localhost:8443 by default)
+- Rust toolchain (`cargo`) — builds the server in `server/`, which serves the
+  app over HTTPS on :8443 and owns the OBS / BLE / Zigbee integrations.
+  A plain static file server (Caddy, nginx) is NOT sufficient.
 
 ### Optional (for enhanced features)
 - **[Ollama](https://ollama.ai)** - Local LLM server for AI chat monitoring
@@ -96,20 +98,19 @@ On first run, you'll be prompted to enter your Twitch Client ID. This is stored 
 
 ### 3. Set Up Web Server
 
-Using Caddy (example Caddyfile):
+The server is the Rust binary in `server/` — it replaced Caddy and does more
+than serve files: it owns the OBS WebSocket connection, the BLE heart-rate
+reader, the Zigbee climate reader and the `/obs` broadcast bus. Caddy cannot
+substitute for it. The `Caddyfile` in the repo root is a leftover.
 
-```
-localhost:8443 {
-    tls internal
-    root * /path/to/teammater
-    file_server
-}
-```
-
-Start Caddy:
 ```bash
-caddy run
+make serve      # cargo run --release, HTTPS :8443 + HTTP :8442
+make status     # is it up?
+make stop       # stop it
 ```
+
+TLS is self-signed and generated automatically into `server/certs/` on first
+run, so expect a certificate warning in the browser.
 
 ### 4. First Authentication
 

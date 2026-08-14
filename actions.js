@@ -472,6 +472,7 @@ async function resolveUserId(context, user) {
   if (userId) return userId;
   if (!user || user === "unknown") return null;
 
+
   try {
     const response = await request(
       `https://api.twitch.tv/helix/users?login=${encodeURIComponent(user)}`,
@@ -515,6 +516,16 @@ export function mute(seconds, reason = null) {
       return false;
     }
 
+    // lore-ok[623bc07a]: the self-moderation guard lives HERE, not in
+    // handleChatMessage. CHAT_ACTIONS match on message CONTENT, so the streamer
+    // quoting a scam to warn viewers hit the ban rule and fired a self-ban at
+    // Helix. Guarding the dispatcher instead also killed !voice for the
+    // broadcaster; scoping it to the moderation actions fixes both.
+    if (userId === currentUserId) {
+      log(`⏭️ Skipping mute: '${user}' is the broadcaster`);
+      return false;
+    }
+
     return await executeModerationAPI(
       context,
       `/moderation/bans?broadcaster_id=${currentUserId}&moderator_id=${currentUserId}`,
@@ -552,6 +563,12 @@ export function ban(reason = "Automated ban: message violated rules") {
     const userId = await resolveUserId(context, user);
     if (!userId) {
       log(`❌ Cannot ban '${user}': unresolved user id`);
+      return false;
+    }
+
+    // Never ban the broadcaster — see the note in mute().
+    if (userId === currentUserId) {
+      log(`⏭️ Skipping ban: '${user}' is the broadcaster`);
       return false;
     }
 

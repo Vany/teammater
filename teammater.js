@@ -364,7 +364,21 @@
         'band','artist','singer','producer','group','vevo','official channel','record label',
         'playlist','mv',
       ]
-      .map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      // Longest first: JS alternation is leftmost-first, so without this
+      // 'official' would shadow 'official video' and the two would never be
+      // counted as distinct keywords.
+      .sort((a, b) => b.length - a.length)
+      // Word boundaries are mandatory. Unbounded, this list matched INSIDE
+      // ordinary words — 'ost' in "most", 'ep' in "episode", 'hit' in "white",
+      // 'lp' in "help" — so "Most epic episode" scored two hits and any video
+      // passed the category gate. Anchor only on the sides that actually end
+      // in a word character: 'feat.' and 'ft.' end in punctuation, where \b
+      // would demand a following word char and never match.
+      .map(w => {
+        const t = w.trim();
+        const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        return (/^\w/.test(t) ? '\\b' : '') + escaped + (/\w$/.test(t) ? '\\b' : '');
+      })
       .join('|'),
       'i'
     );

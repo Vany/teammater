@@ -104,20 +104,23 @@ give `pinMessageById()` an id to pin — does not exist in the modular codebase.
 - Channel Point Rewards system with automatic redemption handling and async action support
 - Message moderation system with configurable ban rules (BAN_RULES)
 - LLM integration: Ollama-compatible API for AI-powered chat responses
-- **Moderator Rights Enforcement:**
-  * Automatic detection when connected to non-default channel (via ?channel=name)
-  * Checks moderator status via Twitch API `/helix/moderation/moderators`
-  * EventSub connection (channel point rewards) disabled if no moderator rights
-  * Minecraft connector (minaret WebSocket) disabled if no moderator rights
-  * Logs warning messages when connecting without permissions
-  * Always allows EventSub and Minecraft for authenticated user's own channel
+- **Moderator Rights Enforcement — NOT IMPLEMENTED.** None of the following
+  exists in the modular codebase. There is no `/helix/moderation/moderators`
+  call anywhere, no `?channel=` parameter, and EventSub and Minecraft connect
+  unconditionally. Do not treat any of it as a safety gate:
+  * ~~Checks moderator status via Twitch API `/helix/moderation/moderators`~~
+  * ~~EventSub connection (channel point rewards) disabled if no moderator rights~~
+  * ~~Minecraft connector (minaret WebSocket) disabled if no moderator rights~~
+  * ~~Logs warning messages when connecting without permissions~~
+  * ~~Always allows EventSub and Minecraft for authenticated user's own channel~~
 
 ## Environment
 - Web-based client-side application
 - Served via Caddy on localhost:8443 with TLS
 - Connects to localhost:8765 WebSocket server (Minecraft)
 - Connects to localhost:11434 HTTP server (Ollama LLM)
-- Channel defaults to authenticated user's channel (override via ?channel=name)
+- Channel defaults to authenticated user's channel (override via the Twitch Chat
+  module config field `twitch_channel` — NOT a URL parameter)
 - Twitch API integration for stream management and chat settings
 - Pinned message workflow with IRC tags — planned, not implemented
 - UserScript manager required (Tampermonkey/Greasemonkey) for Yandex Music integration

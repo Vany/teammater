@@ -369,8 +369,19 @@ export class UIBuilder {
   _getStoredValue(key, defaultValue) {
     const stored = localStorage.getItem(key);
     if (stored !== null && stored !== "") return stored;
-    const value = defaultValue || "";
-    if (value) localStorage.setItem(key, value);
+    // ALWAYS return a STRING. Callers compare against "true"/"false", so a raw
+    // boolean default made `=== "true"` false: a checkbox defaulting to true
+    // rendered UNCHECKED while this same call persisted "true" underneath —
+    // the box said off, the runtime read on, and they disagreed for the whole
+    // first session after a wipe or on a fresh browser. This is the producer
+    // side of the string-vs-boolean trap; the readers were fixed separately.
+    // `false` is now stored explicitly as "false" rather than dropped, which
+    // matches what the change listener writes (input.checked.toString()).
+    const value =
+      defaultValue === undefined || defaultValue === null
+        ? ""
+        : String(defaultValue);
+    if (value !== "") localStorage.setItem(key, value);
     return value;
   }
 

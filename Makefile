@@ -1,64 +1,66 @@
 # Teammater - Twitch Stream Control
 # Makefile for project management
+#
+# The web server is the Rust binary in server/, NOT Caddy. Caddy was replaced
+# and only `serve` was migrated at the time — stop/status/logs/clean still
+# gated on a .caddy.pid file that nothing has written since, so `make stop`
+# always claimed the server was not running while cargo kept holding :8443.
+# Everything below now targets the cargo process.
 
-.PHONY: serve stop status logs clean help
+.PHONY: serve stop status logs clean help dev-info
+
+BIN := teammater-server
+PORT := 8443
 
 # Default target
 help:
 	@echo "Teammater Makefile - Available targets:"
 	@echo ""
-	@echo "  serve   - Start the Caddy web server (localhost:8443)"
-	@echo "  stop    - Stop the Caddy web server"
-	@echo "  status  - Check if Caddy is running"
-	@echo "  logs    - Show Caddy logs"
-	@echo "  clean   - Clean temporary files and caches"
+	@echo "  serve   - Build and run the Rust server (https://localhost:$(PORT))"
+	@echo "  stop    - Stop the running server"
+	@echo "  status  - Check whether the server is running"
+	@echo "  logs    - Explain where logs go"
+	@echo "  clean   - Remove Rust build artifacts"
 	@echo "  help    - Show this help message"
 	@echo ""
-	@echo "Note: Requires Caddy web server to be installed"
+	@echo "Note: requires a Rust toolchain (cargo). Caddy is NOT used."
 
 serve:
 	cargo run --release --manifest-path=server/Cargo.toml
 
-
-
-
+# Match on the listening port rather than a pid file: `cargo run` execs the
+# binary as a child, so a pid we wrote would be the wrong process anyway.
 stop:
-	@echo "🛑 Stopping Teammater web server..."
-	@if [ -f .caddy.pid ]; then \
-		caddy stop --config Caddyfile; \
-		rm -f .caddy.pid; \
-		echo "✅ Server stopped"; \
+	@echo "🛑 Stopping Teammater server..."
+	@PIDS=$$(lsof -ti tcp:$(PORT) 2>/dev/null); \
+	if [ -n "$$PIDS" ]; then \
+		kill $$PIDS && echo "✅ Server stopped (pid: $$PIDS)"; \
 	else \
-		echo "⚠️ Server not running (no PID file found)"; \
+		echo "⚠️ Nothing listening on port $(PORT)"; \
 	fi
 
 status:
-	@if [ -f .caddy.pid ]; then \
-		PID=$$(cat .caddy.pid); \
-		if ps -p $$PID > /dev/null 2>&1; then \
-			echo "✅ Teammater server is running (PID: $$PID)"; \
-			echo "🌐 URL: https://localhost:8443"; \
-		else \
-			echo "❌ Server not running (stale PID file)"; \
-			rm -f .caddy.pid; \
-		fi \
+	@PIDS=$$(lsof -ti tcp:$(PORT) 2>/dev/null); \
+	if [ -n "$$PIDS" ]; then \
+		echo "✅ Teammater server is running (pid: $$PIDS)"; \
+		echo "🌐 URL: https://localhost:$(PORT)"; \
 	else \
-		echo "❌ Server not running"; \
+		echo "❌ Server not running (nothing on port $(PORT))"; \
 	fi
 
 logs:
-	@echo "📋 Checking Caddy logs..."
-	@caddy list-adapters 2>/dev/null || echo "No active Caddy processes or logs available"
+	@echo "📋 The server logs to stdout via tracing — read them in the terminal"
+	@echo "   running 'make serve'. Set RUST_LOG=debug for more detail."
 
 clean:
-	@echo "🧹 Cleaning temporary files..."
-	@rm -f .caddy.pid
+	@echo "🧹 Cleaning Rust build artifacts..."
+	@cargo clean --manifest-path=server/Cargo.toml
 	@echo "✅ Cleanup complete"
 
 # Development targets
 dev-info:
 	@echo "🔧 Development Information:"
-	@echo "  - Web server: Caddy (https://localhost:8443)"
+	@echo "  - Web server: Rust (server/), https://localhost:$(PORT), http :8442"
 	@echo "  - WebSocket: ws://localhost:8765 (minaret server)"
-	@echo "  - Files: index.html, *.mp3 audio files"
-	@echo "  - Config: Caddyfile, REQUIREMENTS.md"
+	@echo "  - Files: index.html, obs.html, mobile.html, *.mp3 audio files"
+	@echo "  - Docs: SPEC.md, MEMO.md, TODO.md, REQUIREMENTS.md"

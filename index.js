@@ -71,6 +71,11 @@ async function initialize() {
 
   // Create module manager with log forwarding to OBS bus for mobile
   moduleManager = new ModuleManager();
+  // index.js is an ES module, so its bindings are NOT globals. The inline
+  // <script> in index.html (announce input) needs the manager, and window is
+  // the only channel between the two — same reason voice/minaret_use above
+  // are exported.
+  window.moduleManager = moduleManager;
   moduleManager.setLogger((msg) => {
     systemLog(msg);
     const obsModule = moduleManager.get('obs');
@@ -406,13 +411,11 @@ async function handleChatMessage(messageData) {
   }
 
   // Check chat actions.
-  // lore-ok[623bc07a]: fixed here, in handleChatMessage, on the line below.
-  // Never moderate ourselves: CHAT_ACTIONS match on message CONTENT, so the
-  // streamer quoting a scam to warn viewers hit the ban rule and fired a
-  // self-ban attempt at Helix. Twitch rejects it, but the rule still consumed
-  // the message and logged an error every time. The monolith had this guard;
-  // the modular rewrite dropped it while REQUIREMENTS.md kept claiming it.
-  if (userId && userId !== currentUserId) {
+  // The self-moderation guard lives in mute()/ban(), NOT here: CHAT_ACTIONS
+  // also carries interactive commands like !voice, and gating the whole block
+  // on `userId !== currentUserId` silently killed those for the broadcaster in
+  // his own channel. Only moderation must refuse to target its own operator.
+  if (userId) {
     const context = moduleManager.buildContext();
     const matched = await actionRegistry.executeChatAction(
       message,
