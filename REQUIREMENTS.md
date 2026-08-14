@@ -3,13 +3,17 @@
 ## Core Functionality
 - [x] Twitch chat integration via IRC WebSocket
 - [x] OAuth2 authentication with Twitch
-- [x] Chat command processing (!hello, !reset, !voice, !chat, !announce, !me, etc.)
+- [x] Chat command processing — but ONLY the rules in CHAT_ACTIONS (config.js).
+  Currently: !voice plus two content-matched moderation rules. !hello, !reset,
+  !chat, !announce and !me have no handler and were dropped in the rewrite
 - [x] Local WebSocket connection to "minarert" server (localhost:8765)
 - [x] Audio playback for various sound effects
 - [x] Speech synthesis for !voice commands
 - [x] Minecraft server integration via commands
 - [x] Cross-tab communication for music control
-- [x] Multiple message types: regular chat, private whispers, action messages, announcements
+- [x] Regular chat messages. NOT implemented: private whispers, action
+  messages and announcements — no /helix/whispers or /helix/chat/announcements
+  call exists in the modular codebase
 - [x] Automated message moderation with configurable pattern matching
 
 ## Control Panel Extension
@@ -53,10 +57,15 @@ give `pinMessageById()` an id to pin — does not exist in the modular codebase.
   * Uses `is_enabled` flag for complete visibility control (hidden when disabled)
 
 ## Enhanced Messaging System
-- [x] Action Messages (!me command): Grayed/italicized messages using IRC ACTION format
-- [x] Colored Announcements (!announce command): Official Twitch announcements with color options
-- [x] Private Whispers (apiWhisper): True private messages via Twitch API with fallback
-- [x] Public Mentions (whisper): @username format for public notifications
+- [ ] Action Messages (!me command) — no handler; the IRC ACTION format is only
+      PARSED on incoming messages, never sent
+- [ ] Colored Announcements (!announce command) — no handler and no
+      /helix/chat/announcements call. Would also need the
+      moderator:manage:announcements scope, which is not requested
+- [ ] Private Whispers (apiWhisper) — the function does not exist; see the
+      Technical Requirements note below, which this line used to contradict
+- [ ] Public Mentions (whisper) — likewise absent; actions use `@name` inline
+      in an ordinary send_twitch() message instead
 - [x] Regular Chat (send_twitch): Standard chat messages
 - [x] User ID caching system for efficient API calls
 - [x] Automatic fallback mechanisms for reliability
@@ -116,7 +125,8 @@ give `pinMessageById()` an id to pin — does not exist in the modular codebase.
 
 ## Environment
 - Web-based client-side application
-- Served via Caddy on localhost:8443 with TLS
+- Served by the Rust server in `server/` on localhost:8443 (TLS) and :8442
+  (plain HTTP). Caddy was replaced and is no longer used
 - Connects to localhost:8765 WebSocket server (Minecraft)
 - Connects to localhost:11434 HTTP server (Ollama LLM)
 - Channel defaults to authenticated user's channel (override via the Twitch Chat

@@ -40,10 +40,13 @@ Advanced modular Twitch streaming assistant with AI-powered chat monitoring, Min
 - **Now Playing**: Display current track on demand
 
 ### Enhanced Messaging
-- **Private Whispers**: True private messages via Twitch API
-- **Action Messages**: /me style grayed messages
-- **Colored Announcements**: Official Twitch announcement boxes
-- **Public Mentions**: @username fallback for compatibility
+- ~~Private Whispers~~: NOT IMPLEMENTED — no `/helix/whispers` call exists
+  anywhere. Actions that need to reach a viewer address them in chat by name
+- ~~Action Messages~~: NOT IMPLEMENTED — /me is parsed on incoming messages,
+  never sent
+- ~~Colored Announcements~~: NOT IMPLEMENTED — needs /helix/chat/announcements
+  and the moderator:manage:announcements scope, neither of which is present
+- **Public Mentions**: `@username` written inline into an ordinary chat message
 
 ## Prerequisites
 

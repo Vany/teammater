@@ -171,8 +171,12 @@ On disconnect from OBS: publish `{"type":"obs_state","connected":false}` to broa
 
 **Published message format:**
 ```json
-{"heartrate": 72}
+{"type": "heartrate", "heartrate": 72}
 ```
+`type` is REQUIRED. mobile.html dispatches on `msg.type` and silently dropped
+every typeless reading; obs.js sniffs the `heartrate` field directly, so it
+accepts either. Emit both fields — a new sensor copied from the old typeless
+shape would reintroduce the bug, spec-driven this time.
 
 ### Zigbee2MQTT Climate Sensor (`src/zigbee.rs`)
 

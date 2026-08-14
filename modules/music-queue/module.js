@@ -276,8 +276,13 @@ export class MusicQueueModule extends BaseModule {
       this.log(`▶️ Playing next (${this.queue.size()} remaining): ${url}`);
       this.currentlyPlaying = url;
       this._playSong(url);
-      if (!this._isYoutube(url)) this._startWatchdog("yandex");
-      // YouTube watchdog starts in youtube_ready listener
+      // Arm for BOTH sources. Waiting for youtube_ready left the window
+      // between opening the tab and playback unwatched: a tab closed (or
+      // autoplay-blocked) before its play event emits no youtube_ready, no
+      // youtube_invalid — that 10s timeout runs INSIDE the tab — and no
+      // music_done, so currentlyPlaying wedged forever. youtube_ready still
+      // restarts the watchdog once playback actually begins.
+      this._startWatchdog(this._isYoutube(url) ? "youtube" : "yandex");
     } else {
       this.log("▶️ Queue empty — returning to My Vibes");
       this.currentlyPlaying = this._emptyUrl;
@@ -293,11 +298,12 @@ export class MusicQueueModule extends BaseModule {
       this.log(`▶️ Idle — playing immediately: ${url}`);
       this.currentlyPlaying = url;
       this._playSong(url);
-      // Arm the watchdog exactly as _playNext does: without it a dead player
-      // tab never sends music_done, currentlyPlaying stays set forever, and
-      // every later request queues behind a phantom track with no recovery.
-      if (!this._isYoutube(url)) this._startWatchdog("yandex");
-      // YouTube watchdog starts in the youtube_ready listener
+      // Arm the watchdog exactly as _playNext does — for BOTH sources. Without
+      // it a dead player tab never sends music_done, currentlyPlaying stays set
+      // forever, and every later request queues behind a phantom track with no
+      // recovery. See the note in _playNext for why YouTube cannot wait for
+      // youtube_ready to arm it.
+      this._startWatchdog(this._isYoutube(url) ? "youtube" : "yandex");
       return { queued: false, position: null };
     }
     this.queue.push(url);

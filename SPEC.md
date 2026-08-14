@@ -114,7 +114,7 @@ The application uses a clean modular architecture with **8 independent modules**
    - Message parsing with tags (user-id, message-id)
    - Chat history buffer for LLM monitoring
    - Message handler system for plugins (priority-based)
-   - Multiple message types: chat, whisper, action, announcement
+   - Message types: chat only. whisper/action/announcement are NOT implemented
    - Configurable: IRC URL, reconnect delay, nickname, username
    - Includes Twitch Client ID configuration
    - Internal methods: _addToChatHistory, _notifyMessageHandlers
@@ -157,7 +157,7 @@ The application uses a clean modular architecture with **8 independent modules**
 - [x] Chat command processing via action registry pattern
 - [x] Multiple message types:
   - Regular chat messages
-  - Private whispers (via API)
+  - ~~Private whispers (via API)~~ — NOT IMPLEMENTED, no /helix/whispers call
   - Public mentions (@username)
   - Action messages (/me format, grayed/italicized)
   - Colored announcements (official Twitch announcements)
@@ -713,7 +713,8 @@ Server distinguishes commands (type prefix `cmd_` or `obs_config`) from relay me
 - Default: Connects to authenticated user's channel
 - ~~`?channel=name`~~ - REMOVED. Set the channel in the Twitch Chat module config
   panel (`twitch_channel`); the parameter is silently ignored if passed.
-- `?wipe` - Clear all localStorage (reset all settings)
+- ~~`?wipe`~~ - NOT IMPLEMENTED. No code reads this parameter; it is silently
+  ignored. To reset, clear the site's localStorage from browser devtools.
 
 ### Module UI Structure
 Each module's UI is auto-generated:
@@ -834,7 +835,8 @@ Available rewards:
 - [x] Stream preset management with auto-apply
 - [x] Reward enable/disable based on preset
 - [x] Message moderation with configurable rules (AND/OR logic)
-- [x] Multiple message types (chat, whisper, action, announcement)
+- [ ] Multiple message types — chat only; whisper, action and announcement
+      were never carried into the modular version
 - [x] Minecraft server integration
 - [x] Yandex Music queue with cross-tab control
 - [x] LLM chat monitoring and responses

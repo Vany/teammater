@@ -1499,6 +1499,15 @@ Disallowed (use mute tool):
     this.log("🤖 LLM processing chat batch...");
     this._setIndicator("busy");
 
+    // Snapshot the boundary NOW, while it still matches what the prompt will
+    // contain. chatHistory is a LIVE reference and the tool loop takes seconds
+    // — reading .length afterwards marked every message that arrived mid-cycle
+    // as processed although the model never saw it, and the llmPendingRun
+    // re-run then found marker >= length and did nothing. On a busy chat that
+    // is the normal case, not an edge. Declared outside the try so the catch
+    // path advances to the same boundary.
+    const processedUpTo = chatHistory.length;
+
     try {
       const chatLog = chatModule.formatChatHistoryForLLM();
       this._refreshChatLog();
@@ -1535,12 +1544,14 @@ ${this.getConfigValue("rules", "") || this.getConfig().features.rules.default}`,
         fallbackUser,
       );
 
-      // Advance marker — done after full cycle
-      chatModule.setChatMarkerPosition(chatHistory.length);
+      // Advance to the snapshot, NOT the live length — anything that arrived
+      // during the loop stays unprocessed and is picked up by the next run.
+      chatModule.setChatMarkerPosition(processedUpTo);
       this._setIndicator("idle");
     } catch (error) {
-      // Advance marker even on failure to avoid retrying the same batch
-      chatModule.setChatMarkerPosition(chatHistory.length);
+      // Advance even on failure to avoid retrying the same batch — but only to
+      // the snapshot, for the same reason as the success path.
+      chatModule.setChatMarkerPosition(processedUpTo);
       this._setIndicator("error");
       this.log(`💥 LLM processing error: ${error.message}`);
     }
