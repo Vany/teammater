@@ -38,8 +38,29 @@ use tracing::{error, info, info_span, warn, Instrument};
 /// Runs as a layer over the whole router, but every real route is matched
 /// before the ServeDir fallback and none of them live under those prefixes.
 fn is_sensitive_path(path: &str) -> bool {
-    let hidden = path.split('/').any(|seg| seg.starts_with('.'));
-    let server_dir = path == "/server" || path.starts_with("/server/");
+    // Compare the DECODED path. The first version of this guard checked the raw
+    // URI, but ServeDir percent-decodes each segment before hitting the disk —
+    // so `/%2Emcp.json` and `/%73erver/certs/key.pem` sailed past it and served
+    // the MCP token and the TLS private key anyway. Verified against the
+    // running server: 200 with real content, while the undecoded spellings
+    // correctly 404'd.
+    //
+    // Decode repeatedly until stable so a double-encoded `/%252Emcp.json`
+    // cannot slip through either. Bounded, because a decode loop on attacker
+    // input must terminate.
+    let mut decoded = path.to_owned();
+    for _ in 0..4 {
+        let next = percent_encoding::percent_decode_str(&decoded)
+            .decode_utf8_lossy()
+            .into_owned();
+        if next == decoded {
+            break;
+        }
+        decoded = next;
+    }
+
+    let hidden = decoded.split('/').any(|seg| seg.starts_with('.'));
+    let server_dir = decoded == "/server" || decoded.starts_with("/server/");
     hidden || server_dir
 }
 
@@ -93,6 +114,22 @@ mod path_guard_tests {
         ] {
             assert!(!is_sensitive_path(ok), "{ok} must stay reachable");
         }
+    }
+
+    #[test]
+    fn blocks_percent_encoded_spellings_of_the_same_paths() {
+        // These returned 200 with the real MCP token and TLS key against the
+        // running server while the guard compared the RAW path.
+        assert!(is_sensitive_path("/%2Emcp.json"));
+        assert!(is_sensitive_path("/%73erver/certs/key.pem"));
+        assert!(is_sensitive_path("/%73erver/certs/bus_token.txt"));
+        assert!(is_sensitive_path("/%2E%67it/config"));
+    }
+
+    #[test]
+    fn blocks_double_encoded_spellings() {
+        assert!(is_sensitive_path("/%252Emcp.json"));
+        assert!(is_sensitive_path("/%2573erver/certs/key.pem"));
     }
 
     #[test]

@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+# Path guard must compare the DECODED path — ServeDir decodes before it
+# touches the filesystem. See deny_sensitive_paths in main.rs.
+percent-encoding = "2"
 tokio = { version = "1.42", features = ["full"] }
 axum = { version = "0.7", features = ["ws"] }
 tower = "0.5"
