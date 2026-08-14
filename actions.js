@@ -463,6 +463,12 @@ async function executeModerationAPI(
  * Without this the LLM path silently bailed on every call, so moderation the
  * model believed it had performed never happened.
  *
+ * lore-ok[49d6b16b]: fixed at the caller, in modules/llm/module.js
+ * _runToolLoop — mute/ban/delete now REFUSE a tool call that omits `user`
+ * instead of falling back to the last chatter. Guessing a target is the bug;
+ * resolving a named one is this function's job and is correct. The guard
+ * belongs where the guess was made, not here.
+ *
  * @param {Object} context - action context (must provide request, log)
  * @param {string} user - username, used when context.userId is absent
  * @returns {Promise<string|null>} - user id, or null if it cannot be resolved

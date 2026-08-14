@@ -255,6 +255,8 @@ export class UIBuilder {
         input = document.createElement("input");
         input.type = "checkbox";
         input.setAttribute("stored_as", storageKey);
+        // lore-ok[3536f1f3]: fixed in _getStoredValue, which now always returns
+        // a STRING. This `=== "true"` comparison was correct; its input was not.
         input.checked =
           this._getStoredValue(storageKey, defaultValue) === "true";
         input.addEventListener("change", () => {

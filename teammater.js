@@ -339,6 +339,10 @@
       });
     }
 
+    // lore-ok[db5df4c7]: fixed in the .map() below — every entry is now anchored
+    // with \b (on the sides that end in a word character), and the list is
+    // sorted longest-first so multi-word phrases are not shadowed. The word
+    // list itself is unchanged; the missing boundaries were the defect.
     const MUSIC_RE = new RegExp(
       [
         // General

@@ -30,6 +30,15 @@ const INDICATOR = {
 };
 
 export class LLMModule extends BaseModule {
+  /**
+   * Tool names (the token before the double space in an LLM_ACTIONS key) that
+   * act ON a specific person and must never be given a guessed target.
+   * See the refusal in _runToolLoop for what goes wrong without this.
+   * Listed by name, not by inference, so adding a moderation action to
+   * LLM_ACTIONS is a deliberate act that requires updating this line.
+   */
+  static TARGETED_ACTIONS = ["mute", "ban", "delete"];
+
   constructor() {
     super();
     this.healthCheckTimer = null;
@@ -1398,18 +1407,30 @@ Disallowed (use mute tool):
           const closure = this._resolveAction(name);
           if (closure) {
             try {
-              const user =
-                args.user ||
-                fallbackUser ||
-                getBroadcasterUsername() ||
-                "unknown";
-              const message = args.message || "";
-              const result = await closure(context, user, message);
-              toolResult =
-                result !== undefined
-                  ? `Result: ${JSON.stringify(result)}`
-                  : "Function has no result";
-              this.log(`✅ Action "${name}" executed — ${toolResult}`);
+              // Moderation NEVER gets an implicit target. For everything else
+              // the last chatter is a sane default, but for mute/ban it means
+              // punishing whoever happened to speak most recently: viewer A
+              // posts hate speech, viewer B says something harmless a second
+              // later, the model calls mute() without `user`, and B is timed
+              // out for 600s while the tool reports success. Make the model
+              // name its target or fail loudly.
+              if (LLMModule.TARGETED_ACTIONS.includes(name) && !args.user) {
+                toolResult = `Error: "${name}" needs an explicit "user" argument — refusing to guess a target`;
+                this.log(`⛔ Action "${name}" refused: no explicit user`);
+              } else {
+                const user =
+                  args.user ||
+                  fallbackUser ||
+                  getBroadcasterUsername() ||
+                  "unknown";
+                const message = args.message || "";
+                const result = await closure(context, user, message);
+                toolResult =
+                  result !== undefined
+                    ? `Result: ${JSON.stringify(result)}`
+                    : "Function has no result";
+                this.log(`✅ Action "${name}" executed — ${toolResult}`);
+              }
             } catch (err) {
               toolResult = `Error: ${err.message}`;
               this.log(`💥 Action "${name}" failed: ${err.message}`);
