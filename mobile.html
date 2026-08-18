@@ -1020,11 +1020,11 @@ function doMute() {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function setDot(ok) {
-  wsConnected = ok;
   const dot = document.getElementById('conn-dot');
   dot.style.background = ok ? '#44dd88' : '#cc2222';
   dot.title = ok ? 'Connected' : 'Disconnected';
-  if (ok) acquireWakeLock(); else releaseWakeLock();
+  // Wake lock is intentionally independent of bus connectivity — see the
+  // Screen Wake Lock section. Do not couple it to this dot.
 }
 
 /** Parse OBS timecode "HH:MM:SS.mmm" to milliseconds */
@@ -1047,14 +1047,21 @@ function fmtDuration(ms) {
 // Strategy: native Wake Lock API (iOS 16.4+, Chrome) + hidden looping video
 // fallback (older iOS). Video play() requires a user gesture on iOS.
 //
+// Deliberately NOT gated on wsConnected. It used to be: every acquire call
+// site required the /obs bus to be connected, and setDot(false) actively
+// released the lock on every disconnect. Keeping the PHONE SCREEN on has
+// nothing to do with whether the bus websocket happens to be connected at
+// this instant — that coupling meant a server restart, a network blip, or
+// (after bus auth was added) simply never having a token stored made the
+// screen sleep with the page still open in front of you. Wake lock now
+// tracks page visibility only; the connection dot is a separate concern.
+//
 // Known iOS quirks handled here:
 //   1. Lock is silently released on tab hide — re-acquire on visibilitychange
 //   2. wakeLock reference stays non-null after release if .released isn't checked
-//   3. obsState.connected lags behind actual WS state — use wsConnected instead
-//   4. Periodic heartbeat catches any silent release between events
+//   3. Periodic heartbeat catches any silent release between events
 
 let wakeLock = null;
-let wsConnected = false;
 let wakeErr = ''; // last Wake Lock rejection name (e.g. NotAllowedError = iOS Low Power Mode)
 
 const _noSleepVideo = (() => {
@@ -1092,13 +1099,6 @@ async function acquireWakeLock() {
   renderWakeDot();
 }
 
-function releaseWakeLock() {
-  wakeLock?.release().catch(() => {});
-  wakeLock = null;
-  _noSleepVideo.pause();
-  renderWakeDot();
-}
-
 // Live wake-state badge — makes an otherwise invisible failure observable on the phone.
 function renderWakeDot() {
   const el = document.getElementById('wake-dot');
@@ -1114,18 +1114,28 @@ function renderWakeDot() {
 
 // Re-acquire after tab restore — iOS always releases the lock on hide.
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && wsConnected) acquireWakeLock();
+  if (document.visibilityState === 'visible') acquireWakeLock();
 });
 
-// iOS requires a user gesture before video.play() — activate on first touch.
+// iOS requires a user gesture for BOTH video.play() and (in practice, though
+// not strictly required by spec) navigator.wakeLock.request() to succeed —
+// activate on first touch. This is the path that reliably works on iOS.
 document.addEventListener('touchstart', () => {
-  if (wsConnected) acquireWakeLock();
+  acquireWakeLock();
 }, { passive: true });
 
 // Heartbeat: re-acquire every 30 s in case iOS silently dropped the lock.
 setInterval(() => {
-  if (wsConnected && (!wakeLock || wakeLock.released)) acquireWakeLock();
+  if (!wakeLock || wakeLock.released) acquireWakeLock();
 }, 30000);
+
+// Best-effort acquire on load — do not wait for the bus to connect. iOS
+// Safari commonly rejects this call without a prior user gesture, so on iOS
+// expect wakeErr = 'NotAllowedError' here and the real acquisition to land
+// on the first touchstart instead. Cheap to attempt regardless: it succeeds
+// outright on desktop Chrome/Firefox and on iOS once a gesture already
+// happened earlier in the session (e.g. accepting the mobile page itself).
+acquireWakeLock();
 
 // Tap the badge for the exact state — distinguishes "not granted" from "OS overrides us".
 document.getElementById('wake-dot')?.addEventListener('click', () => {
