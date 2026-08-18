@@ -154,27 +154,43 @@
                             pushHistory(value);
                             historyIndex = null;
                             draft = "";
-                            // Send FIRST, clear the reminder only on success.
-                            // This used to be `eval(localStorage.getItem("ANNOUNCE"))`
-                            // followed by `await ANNOUNCE(value)` — nothing in the
-                            // repo ever defines ANNOUNCE, so on a fresh browser the
-                            // ReferenceError surfaced only as an unhandled rejection:
-                            // the announcement was never sent AND the 10-minute
-                            // reminder had already been cancelled, losing both.
-                            const chat = window.moduleManager?.get("twitch-chat");
-                            if (!chat?.isConnected()) {
-                                console.error("[announce] Twitch Chat not connected — not sent");
+
+                            // ANNOUNCE is a hook YOU define, not code in this repo:
+                            // put `async function ANNOUNCE(text) { ... }` (posts to
+                            // Telegram/Discord/wherever) in localStorage under the
+                            // key "ANNOUNCE". Direct eval() is deliberate — that is
+                            // what lets a bare `function ANNOUNCE...` declaration
+                            // bind into this handler's scope for the call below;
+                            // switching to indirect eval or new Function() would
+                            // run it in global scope instead and break that.
+                            //
+                            // The real bug here used to be ORDER: the timer was
+                            // cleared BEFORE this ran, so a ReferenceError (no
+                            // ANNOUNCE configured yet) surfaced only as an
+                            // unhandled rejection and silently cancelled the
+                            // 10-minute reminder along with losing the
+                            // announcement. Clear only on success now, and fail
+                            // loud instead of an invisible unhandled rejection.
+                            const announceSrc = localStorage.getItem("ANNOUNCE");
+                            if (!announceSrc) {
+                                console.error(
+                                    "[announce] No ANNOUNCE hook configured — " +
+                                    "set localStorage['ANNOUNCE'] to an " +
+                                    "`async function ANNOUNCE(text) {...}` that " +
+                                    "posts to Telegram/Discord.",
+                                );
                                 input.style.borderColor = "red";
                                 return;
                             }
-                            // Posted as a normal chat message. TRUE Twitch
-                            // announcements need POST /helix/chat/announcements and
-                            // the moderator:manage:announcements scope, which is NOT
-                            // in TWITCH_SCOPES — adding it forces a re-auth, so that
-                            // is a deliberate open decision, not an oversight.
-                            chat.send(value);
-                            console.log("[announce] sent:", value);
-                            clearAnnounceTimer(input);
+                            try {
+                                eval(announceSrc);
+                                const result = await ANNOUNCE(value);
+                                console.log("[announce] sent:", value, result);
+                                clearAnnounceTimer(input);
+                            } catch (err) {
+                                console.error("[announce] ANNOUNCE failed:", err);
+                                input.style.borderColor = "red";
+                            }
                         } else {
                             // Any other key resets history browsing
                             historyIndex = null;

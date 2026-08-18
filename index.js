@@ -71,11 +71,6 @@ async function initialize() {
 
   // Create module manager with log forwarding to OBS bus for mobile
   moduleManager = new ModuleManager();
-  // index.js is an ES module, so its bindings are NOT globals. The inline
-  // <script> in index.html (announce input) needs the manager, and window is
-  // the only channel between the two — same reason voice/minaret_use above
-  // are exported.
-  window.moduleManager = moduleManager;
   moduleManager.setLogger((msg) => {
     systemLog(msg);
     const obsModule = moduleManager.get('obs');
