@@ -96,15 +96,20 @@ pub fn is_sensitive_path(path: &str) -> bool {
         decoded = next;
     }
 
-    // Compare case-INSENSITIVELY. This machine's filesystem (macOS APFS,
-    // default config) is case-insensitive but case-PRESERVING, so
-    // /SERVER/certs/key.pem resolves to the same file as
-    // /server/certs/key.pem even though the two strings are not equal —
-    // the exact-case check below let it through. Verified live: both
-    // returned 200 before this fix. The dotfile check was accidentally
-    // immune (it only tests for a literal '.', whose case never varies),
-    // which is exactly why this went unnoticed the first two times.
-    let decoded = decoded.to_lowercase();
+    // Compare via Unicode CASE FOLDING, not to_lowercase(). Those are two
+    // different Unicode operations: to_lowercase() is the LOWERCASE MAPPING,
+    // meant for display, and leaves some characters unchanged that are not
+    // already "lowercase" in a display sense — U+017F LATIN SMALL LETTER LONG S
+    // 'ſ' lowercase-maps to itself. CASE FOLDING is the operation meant
+    // for caseless COMPARISON, and folds 'ſ' to 's' — which is what matters
+    // here, because Apple documents APFS's default case-insensitive mode as
+    // Unicode-case-insensitive (Unicode 9.0), not ASCII-only. Verified two
+    // ways: `"ſerver".to_lowercase() == "server"` is false in Rust, and a
+    // literal directory named `server` was reachable on this machine's disk
+    // via the path spelled with 'ſ' instead of 's'. default_case_fold_str is
+    // from the `caseless` crate (unicode-rs org) — the same operation Servo
+    // uses for HTTP caseless matching, not hand-rolled.
+    let decoded = caseless::default_case_fold_str(&decoded);
     let hidden = decoded.split('/').any(|seg| seg.starts_with('.'));
     // No leading slash here — it was stripped above, matching tower-http.
     let server_dir = decoded == "server" || decoded.starts_with("server/");
@@ -217,5 +222,20 @@ mod path_guard_tests {
         // bypasses were found independently.
         assert!(is_sensitive_path("//SERVER/certs/key.pem"));
         assert!(is_sensitive_path("//%73erver/certs/key.pem"));
+    }
+
+    #[test]
+    fn blocks_unicode_case_folded_spellings() {
+        // U+017F LATIN SMALL LETTER LONG S ('ſ') lowercase-maps to itself —
+        // "ſerver".to_lowercase() == "server" is false in Rust — but it CASE
+        // FOLDS to 's', and this machine's filesystem (macOS APFS, default
+        // case-insensitive mode) resolves paths using Unicode case folding,
+        // not ASCII lowercasing: a directory literally named "server" was
+        // reachable on disk via a path spelled with 'ſ' instead of 's',
+        // confirmed directly (not assumed) before this fix. Regressing to
+        // to_lowercase() here would silently reopen this.
+        assert!(is_sensitive_path("/ſerver/certs/key.pem"));
+        assert!(is_sensitive_path("/ſERVER/certs/key.pem")); // folding + case
+        assert!(is_sensitive_path("//ſerver/certs/key.pem")); // + leading slash
     }
 }

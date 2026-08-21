@@ -7,6 +7,12 @@ edition = "2021"
 # Path guard must compare the DECODED path — ServeDir decodes before it
 # touches the filesystem. See deny_sensitive_paths in main.rs.
 percent-encoding = "2"
+# str::to_lowercase() is Unicode LOWERCASE MAPPING (for display), not CASE
+# FOLDING (for caseless comparison) — they differ for characters like U+017F
+# LATIN SMALL LETTER LONG S, which lowercase-maps to itself but case-FOLDS to
+# 's'. macOS APFS's case-insensitive comparison is Unicode case folding, so
+# to_lowercase() alone missed this. Same crate Servo uses for this purpose.
+caseless = "0.2"
 tokio = { version = "1.42", features = ["full"] }
 axum = { version = "0.7", features = ["ws"] }
 tower = "0.5"
