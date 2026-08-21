@@ -205,7 +205,12 @@ export function music() {
       return false;
     }
 
-    if (!musicQueue) {
+    // isConnected(), not just presence: buildContext() hands back every
+    // registered module's reference regardless of connected/enabled state,
+    // so `!musicQueue` alone was never false — unchecking the module in the
+    // UI didn't stop a redeemed request from being accepted and played,
+    // same isConnected() guard every other module-backed action already has.
+    if (!musicQueue || !musicQueue.isConnected()) {
       log(`❌ Music queue not available`);
       if (send_twitch) send_twitch(`@${user} Music queue is not available`);
       return false;
