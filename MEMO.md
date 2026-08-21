@@ -8,6 +8,28 @@
 
 ## Recent Improvements (2026-08)
 
+### server/: clippy::pedantic clean + main.rs split into security.rs/state.rs/bus.rs
+- Default clippy was already near-clean (1 warning); `-W clippy::all -W clippy::pedantic`
+  had 47, all mechanical (doc-comment backticks, `as` casts → `From`/`try_from`,
+  `x = y.clone()` → `x.clone_from(&y)`, `.map(f).unwrap_or(v)` → `.map_or(v, f)`,
+  `_ = fut =>` → `() = fut =>` in `select!`). Fixed all, zero warnings both levels now.
+- Found in the process: every fn in ble.rs's real BLE path carried a stale
+  `#[allow(dead_code)]`, leftover from before this session's fix when `fake_hr_task`
+  was the one actually spawned. Removed from the live path, added (with `reason=`)
+  only to `fake_hr_task`, which is the one genuinely-unused fn.
+- Then split main.rs 579 → 179 lines: `security.rs` (path guard + bus token + its
+  12 tests), `state.rs` (AppState + ObsMessage, re-exported as `pub use state::ObsMessage`
+  from main.rs so ble/zigbee/sysinfo_task/obs keep `crate::ObsMessage` unchanged),
+  `bus.rs` (the client-facing /obs protocol: handler, welcome burst, route_incoming).
+  obs.rs untouched — already one coherent concern.
+- Plan approved before implementation (EnterPlanMode/ExitPlanMode). Every moved
+  function body verified via `diff` against the pre-refactor git version, not
+  eyeballed — only differences anywhere were `pub` visibility and one import
+  normalization.
+- Commits: `66ec27b` (clippy), `315977f` (split). Not restarted — both are
+  compile-time-only, no runtime behavior differs, server was live-streaming
+  throughout.
+
 ### Full-tree lore review (2026-08-14) — 24 findings, 21 fixed, 3 justified
 
 Reviewed `main` (Initial commit) → `master` HEAD, i.e. the whole codebase, with the
