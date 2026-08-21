@@ -18,7 +18,7 @@ pub async fn sysinfo_task(
     let mut components = Components::new_with_refreshed_list();
 
     // Log available sensors once so we can see what the platform exposes
-    let labels: Vec<_> = components.iter().map(|c| c.label()).collect();
+    let labels: Vec<_> = components.iter().map(sysinfo::Component::label).collect();
     info!("🌡  Available sensors: {:?}", labels);
 
     loop {
@@ -44,14 +44,14 @@ pub async fn sysinfo_task(
                     _ => a.temperature().partial_cmp(&b.temperature()).unwrap_or(std::cmp::Ordering::Equal),
                 }
             })
-            .map(|c| c.temperature());
+            .map(sysinfo::Component::temperature);
 
         let mut obj = serde_json::json!({
             "type": "sysinfo",
-            "cpu_usage": ((cpu_usage as f64) * 10.0).round() / 10.0,
+            "cpu_usage": (f64::from(cpu_usage) * 10.0).round() / 10.0,
         });
         if let Some(temp) = cpu_temp {
-            obj["cpu_temp"] = serde_json::Value::from(((temp as f64) * 10.0).round() / 10.0);
+            obj["cpu_temp"] = serde_json::Value::from((f64::from(temp) * 10.0).round() / 10.0);
         }
 
         let text = obj.to_string();

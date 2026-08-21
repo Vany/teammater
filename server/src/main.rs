@@ -12,9 +12,11 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 use obs::ObsConfig;
+use rand::RngCore;
 use serde_json::Value;
 use std::{
     collections::VecDeque,
+    fmt::Write as _,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::Path,
     sync::{
@@ -36,7 +38,7 @@ use tracing::{error, info, info_span, warn, Instrument};
 ///   - anything under /server              → TLS keys in certs/, sources, target/
 ///
 /// Runs as a layer over the whole router, but every real route is matched
-/// before the ServeDir fallback and none of them live under those prefixes.
+/// before the `ServeDir` fallback and none of them live under those prefixes.
 fn is_sensitive_path(path: &str) -> bool {
     // Compare the DECODED path. The first version of this guard checked the raw
     // URI, but ServeDir percent-decodes each segment before hitting the disk —
@@ -154,7 +156,7 @@ const HTTP_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED),
 const CERT_PATH: &str = "server/certs/cert.pem";
 const KEY_PATH: &str = "server/certs/key.pem";
 /// Lives beside the TLS material: server/certs/ is gitignored AND blocked by
-/// deny_sensitive_paths, so the token is neither committed nor servable.
+/// `deny_sensitive_paths`, so the token is neither committed nor servable.
 const BUS_TOKEN_PATH: &str = "server/certs/bus_token.txt";
 
 /// Load the /obs bus token, generating one on first run.
@@ -169,10 +171,12 @@ fn load_or_create_bus_token() -> String {
         }
     }
 
-    use rand::RngCore;
     let mut bytes = [0u8; 24];
     rand::rngs::OsRng.fill_bytes(&mut bytes);
-    let token: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    let token = bytes.iter().fold(String::with_capacity(bytes.len() * 2), |mut s, b| {
+        let _ = write!(s, "{b:02x}");
+        s
+    });
 
     if let Some(dir) = Path::new(BUS_TOKEN_PATH).parent() {
         let _ = std::fs::create_dir_all(dir);
@@ -192,7 +196,7 @@ const LOG_RING_SIZE: usize = 5;
 
 // ─────────────────────────────────────────────────── bus types ──
 
-/// Broadcast envelope — sender_id == u64::MAX means server-originated (all clients receive).
+/// Broadcast envelope — `sender_id` == `u64::MAX` means server-originated (all clients receive).
 #[derive(Clone, Debug)]
 pub struct ObsMessage {
     pub sender_id: u64,
@@ -214,7 +218,7 @@ struct AppState {
     last_climate: Mutex<Option<String>>,
     lan_ip: String,
     /// Shared secret required to open /obs. The bus is not a read-only feed:
-    /// it carries twitch_timeout, twitch_shoutout and cmd_* record/scene
+    /// it carries `twitch_timeout`, `twitch_shoutout` and cmd_* record/scene
     /// commands that the main page executes with the streamer's moderator
     /// token. Both listeners bind 0.0.0.0 and the QR workflow deliberately
     /// invites household devices onto the network, so an unauthenticated bus
@@ -353,7 +357,7 @@ async fn main() -> Result<()> {
 
 /// Public info for any caller; the bus token ONLY for loopback.
 ///
-/// Pages served to localhost (index.html, obs.html, and the UserScript talking
+/// Pages served to localhost (index.html, obs.html, and the `UserScript` talking
 /// to localhost:8443) can therefore fetch the token directly. Remote devices
 /// cannot — the phone gets it from the QR URL fragment instead, which is why
 /// index.html builds that URL with `#token=` appended.
@@ -485,7 +489,7 @@ async fn handle_obs_client(socket: WebSocket, state: Arc<AppState>, client_id: u
         while let Some(Ok(msg)) = rx.next().await {
             match msg {
                 Message::Text(text) => {
-                    route_incoming(text, client_id, &obs_cmd_tx, &obs_bcast, &state_recv).await
+                    route_incoming(text, client_id, &obs_cmd_tx, &obs_bcast, &state_recv).await;
                 }
                 Message::Close(_) => break,
                 _ => {}
@@ -506,15 +510,12 @@ async fn route_incoming(
     obs_broadcast: &broadcast::Sender<ObsMessage>,
     state: &Arc<AppState>,
 ) {
-    let v: Value = match serde_json::from_str(&text) {
-        Ok(v) => v,
-        Err(_) => {
-            let _ = obs_broadcast.send(ObsMessage {
-                sender_id: client_id,
-                text,
-            });
-            return;
-        }
+    let Ok(v): Result<Value, _> = serde_json::from_str(&text) else {
+        let _ = obs_broadcast.send(ObsMessage {
+            sender_id: client_id,
+            text,
+        });
+        return;
     };
 
     match v["type"].as_str().unwrap_or("") {

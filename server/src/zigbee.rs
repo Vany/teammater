@@ -1,6 +1,6 @@
-//! Zigbee2MQTT climate source.
+//! `Zigbee2MQTT` climate source.
 //!
-//! Connects to the Zigbee2MQTT frontend WebSocket bridge (`ws://c:8081/api`),
+//! Connects to the `Zigbee2MQTT` frontend WebSocket bridge (`ws://c:8081/api`),
 //! watches a single temperature/humidity sensor (device `T1`, a Xiaomi
 //! WSDCGQ01LM), and broadcasts its readings to the `/obs` bus as
 //! `{"type":"climate","temperature":T,"humidity":H}` for the OBS overlay.
@@ -121,7 +121,7 @@ fn round1(x: f64) -> f64 {
 }
 
 fn fmt_opt(v: Option<f64>) -> String {
-    v.map(|x| format!("{x:.1}")).unwrap_or_else(|| "—".into())
+    v.map_or_else(|| "—".into(), |x| format!("{x:.1}"))
 }
 
 #[cfg(test)]

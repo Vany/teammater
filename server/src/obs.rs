@@ -23,7 +23,7 @@ pub struct ObsConfig {
 
 const OBS_RECONNECT_DELAY_MAX: u64 = 300;
 const OBS_POLL_INTERVAL: Duration = Duration::from_secs(2);
-/// EventSubscriptions: Scenes (1<<2=4) + Outputs (1<<6=64)
+/// `EventSubscriptions`: Scenes (1<<2=4) + Outputs (1<<6=64)
 const OBS_EVENT_SUBS: u32 = 68;
 
 type ObsWsTx = SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, WsMsg>;
@@ -238,7 +238,7 @@ async fn on_event(
             info!("🎬 Scene → {scene}");
             let bcast = {
                 let mut s = obs_state.write().await;
-                s.scene = scene.clone();
+                s.scene.clone_from(&scene);
                 json!({"type":"obs_scene","scene": scene,"scenes": s.scenes}).to_string()
             };
             broadcast_sys(broadcast_tx, bcast);
@@ -247,7 +247,7 @@ async fn on_event(
             let scenes = parse_scene_list(&data["scenes"]);
             let bcast = {
                 let mut s = obs_state.write().await;
-                s.scenes = scenes.clone();
+                s.scenes.clone_from(&scenes);
                 json!({"type":"obs_scene","scene": s.scene,"scenes": scenes}).to_string()
             };
             broadcast_sys(broadcast_tx, bcast);
@@ -276,15 +276,14 @@ async fn on_event(
             let paused = data["outputState"].as_str() == Some("OBS_WEBSOCKET_OUTPUT_PAUSED");
             let bcast = {
                 let mut s = obs_state.write().await;
-                if !active {
-                    s.recording = None;
-                } else {
+                if active {
                     let timecode = s
                         .recording
                         .as_ref()
-                        .map(|r| r.timecode.clone())
-                        .unwrap_or_else(|| "00:00:00.000".into());
+                        .map_or_else(|| "00:00:00.000".into(), |r| r.timecode.clone());
                     s.recording = Some(RecordingInfo { active: true, paused, timecode });
+                } else {
+                    s.recording = None;
                 }
                 json!({"type":"obs_recording","recording": s.recording}).to_string()
             };
@@ -325,8 +324,8 @@ async fn on_response(
             let scenes = parse_scene_list(&data["scenes"]);
             let snapshot = {
                 let mut s = obs_state.write().await;
-                s.scene = scene.clone();
-                s.scenes = scenes.clone();
+                s.scene.clone_from(&scene);
+                s.scenes.clone_from(&scenes);
                 s.to_state_json()
             };
             info!("🎬 OBS ready — scene: {scene} ({} scenes)", scenes.len());
@@ -338,19 +337,25 @@ async fn on_response(
                 let mut s = obs_state.write().await;
                 if active {
                     let bytes = data["outputBytes"].as_u64().unwrap_or(0);
-                    let bitrate = last_bytes
-                        .map(|prev| {
-                            let diff = bytes.saturating_sub(prev);
-                            (diff * 8 / OBS_POLL_INTERVAL.as_secs().max(1) / 1000) as u32
-                        })
-                        .unwrap_or(0);
+                    let bitrate = last_bytes.map_or(0, |prev| {
+                        let diff = bytes.saturating_sub(prev);
+                        let kbps = diff * 8 / OBS_POLL_INTERVAL.as_secs().max(1) / 1000;
+                        // Saturate rather than wrap: no real stream gets anywhere
+                        // near u32::MAX kbps, but a silent wraparound would be a
+                        // worse failure mode than a capped, visibly-wrong number.
+                        u32::try_from(kbps).unwrap_or(u32::MAX)
+                    });
                     *last_bytes = Some(bytes);
 
                     s.streaming = Some(StreamingInfo {
                         active: true,
                         timecode: str_val(&data["outputTimecode"]),
-                        dropped_frames: data["outputSkippedFrames"].as_u64().unwrap_or(0) as u32,
-                        total_frames: data["outputTotalFrames"].as_u64().unwrap_or(0) as u32,
+                        dropped_frames: u32::try_from(
+                            data["outputSkippedFrames"].as_u64().unwrap_or(0),
+                        )
+                        .unwrap_or(u32::MAX),
+                        total_frames: u32::try_from(data["outputTotalFrames"].as_u64().unwrap_or(0))
+                            .unwrap_or(u32::MAX),
                         bitrate_kbps: bitrate,
                     });
                 } else {

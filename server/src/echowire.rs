@@ -37,7 +37,7 @@ impl EchoWireService {
     }
 }
 
-/// Shared state for EchoWire discovery + proxy.
+/// Shared state for `EchoWire` discovery + proxy.
 pub struct EchoWireState {
     service:    RwLock<Option<EchoWireService>>,
     generation: watch::Sender<u64>,
@@ -177,7 +177,7 @@ async fn proxy(
         }
     };
 
-    tokio::select! { _ = c2b => {}, _ = b2c => {}, _ = gen_watch => {} }
+    tokio::select! { () = c2b => {}, () = b2c => {}, () = gen_watch => {} }
 }
 
 async fn connect_backend(url: &str) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>> {

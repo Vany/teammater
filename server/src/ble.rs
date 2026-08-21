@@ -1,4 +1,6 @@
-use btleplug::api::{bleuuid::uuid_from_u16, Central, CentralEvent, Manager as _, Peripheral as _};
+use btleplug::api::{
+    bleuuid::uuid_from_u16, Central, CentralEvent, Manager as _, Peripheral as _, ScanFilter,
+};
 use btleplug::platform::Manager;
 use futures_util::StreamExt;
 use std::time::Duration;
@@ -10,23 +12,28 @@ use crate::ObsMessage;
 
 // This is the LIVE heart rate path: main.rs spawns ble_task. fake_hr_task at
 // the bottom of this file is the dormant one, kept for testing without the strap.
-#[allow(dead_code)]
+// Nothing below here carries #[allow(dead_code)] — it is all genuinely reachable
+// from that spawn, and a blanket allow on live code hides the day it stops being
+// reachable, which is exactly the failure mode this file already had once (see
+// the note on fake_hr_task).
 const DEVICE_NAME: &str = "HeartCast";
-#[allow(dead_code)]
 const RECONNECT_DELAY: Duration = Duration::from_secs(5);
-#[allow(dead_code)]
 const SCAN_WINDOW: Duration = Duration::from_secs(5);
 /// If no HR packet arrives for this long, assume device is gone and reconnect.
-#[allow(dead_code)]
 const HR_WATCHDOG: Duration = Duration::from_secs(10);
 
+/// Build the `/obs` bus payload for a heart-rate reading. Shared by the real
+/// and fake tasks so the wire format — `type` is required, see the note below
+/// — can only drift in one place.
+fn heartrate_json(bpm: u16) -> String {
+    format!("{{\"type\":\"heartrate\",\"heartrate\":{bpm}}}")
+}
+
 // BLE Heart Rate Service (0x180D) / Heart Rate Measurement characteristic (0x2A37)
-#[allow(dead_code)]
 fn hr_char_uuid() -> Uuid {
     uuid_from_u16(0x2A37)
 }
 
-#[allow(dead_code)]
 pub async fn ble_task(tx: broadcast::Sender<ObsMessage>) {
     // Manager must stay alive for the duration — it owns the CoreBluetooth event loop.
     // Init once, retry until success; never reinitialize after that.
@@ -51,8 +58,7 @@ pub async fn ble_task(tx: broadcast::Sender<ObsMessage>) {
 }
 
 /// Returns (Manager, Adapter). Manager must be kept alive — dropping it kills
-/// the CoreBluetooth background event loop and silently breaks all BLE operations.
-#[allow(dead_code)]
+/// the `CoreBluetooth` background event loop and silently breaks all BLE operations.
 async fn init_adapter() -> anyhow::Result<(Manager, btleplug::platform::Adapter)> {
     let manager = Manager::new().await?;
     let adapter = manager
@@ -64,7 +70,6 @@ async fn init_adapter() -> anyhow::Result<(Manager, btleplug::platform::Adapter)
     Ok((manager, adapter))
 }
 
-#[allow(dead_code)]
 async fn run_ble(
     tx: &broadcast::Sender<ObsMessage>,
     adapter: &btleplug::platform::Adapter,
@@ -109,28 +114,23 @@ async fn run_ble(
                     break;
                 };
                 if data.uuid == hr_uuid {
-                    match parse_hr(&data.value) {
-                        Some(bpm) => {
-                            // Reset watchdog — we're alive.
-                            watchdog.as_mut().reset(tokio::time::Instant::now() + HR_WATCHDOG);
-                            let is_zero = bpm == 0;
-                            if last_zero != Some(is_zero) {
-                                info!("💓 Heart Rate: {} bpm", bpm);
-                                last_zero = Some(is_zero);
-                            }
-                            let _ = tx.send(ObsMessage {
-                                sender_id: u64::MAX,
-                                // `type` is required: mobile.html dispatches on
-                                // msg.type and dropped every typeless reading.
-                                // obs.js sniffs the heartrate field directly,
-                                // so it keeps working either way.
-                                text: format!(
-                                    "{{\"type\":\"heartrate\",\"heartrate\":{}}}",
-                                    bpm
-                                ),
-                            });
+                    if let Some(bpm) = parse_hr(&data.value) {
+                        // Reset watchdog — we're alive.
+                        watchdog.as_mut().reset(tokio::time::Instant::now() + HR_WATCHDOG);
+                        let is_zero = bpm == 0;
+                        if last_zero != Some(is_zero) {
+                            info!("💓 Heart Rate: {bpm} bpm");
+                            last_zero = Some(is_zero);
                         }
-                        None => warn!("💓 Malformed HR packet: {:?}", data.value),
+                        // `type` is required: mobile.html dispatches on msg.type
+                        // and dropped every typeless reading. obs.js sniffs the
+                        // heartrate field directly, so it keeps working either way.
+                        let _ = tx.send(ObsMessage {
+                            sender_id: u64::MAX,
+                            text: heartrate_json(bpm),
+                        });
+                    } else {
+                        warn!("💓 Malformed HR packet: {:?}", data.value);
                     }
                 } else {
                     info!("💓 Notification uuid={} value={:?}", data.uuid, data.value);
@@ -149,7 +149,7 @@ async fn run_ble(
                     _ => {}
                 }
             }
-            _ = &mut watchdog => {
+            () = &mut watchdog => {
                 warn!("💓 No HR data for {HR_WATCHDOG:?}, assuming device gone");
                 break;
             }
@@ -162,10 +162,9 @@ async fn run_ble(
     Ok(())
 }
 
-/// Scan in SCAN_WINDOW bursts until DEVICE_NAME is found. Never returns an error —
-/// all transient failures (adapter not ready after disconnect, stream errors) are
-/// retried internally with RECONNECT_DELAY.
-#[allow(dead_code)]
+/// Scan in `SCAN_WINDOW` bursts until `DEVICE_NAME` is found. Never returns an
+/// error — all transient failures (adapter not ready after disconnect, stream
+/// errors) are retried internally with `RECONNECT_DELAY`.
 async fn scan_until_found(adapter: &btleplug::platform::Adapter) -> btleplug::platform::Peripheral {
     info!("💓 Scanning for '{DEVICE_NAME}'...");
     loop {
@@ -179,7 +178,7 @@ async fn scan_until_found(adapter: &btleplug::platform::Adapter) -> btleplug::pl
             }
         };
 
-        if let Err(e) = adapter.start_scan(Default::default()).await {
+        if let Err(e) = adapter.start_scan(ScanFilter::default()).await {
             warn!("💓 start_scan failed: {e}, retrying...");
             tokio::time::sleep(RECONNECT_DELAY).await;
             continue;
@@ -218,14 +217,13 @@ async fn scan_until_found(adapter: &btleplug::platform::Adapter) -> btleplug::pl
 
 /// Parse BLE Heart Rate Measurement packet (Bluetooth SIG spec).
 /// flags byte bit0: 0 = HR as u8, 1 = HR as u16 LE
-#[allow(dead_code)]
 fn parse_hr(data: &[u8]) -> Option<u16> {
     let flags = *data.first()?;
     if flags & 0x01 == 0 {
-        data.get(1).map(|&v| v as u16)
+        data.get(1).map(|&v| u16::from(v))
     } else {
-        let lo = *data.get(1)? as u16;
-        let hi = *data.get(2)? as u16;
+        let lo = u16::from(*data.get(1)?);
+        let hi = u16::from(*data.get(2)?);
         Some(lo | (hi << 8))
     }
 }
@@ -233,22 +231,22 @@ fn parse_hr(data: &[u8]) -> Option<u16> {
 // DORMANT: synthetic heartrate for testing without the strap. NOT spawned —
 // main.rs runs the real ble_task above. Swap only for local testing, never live.
 // Distribution: 64% → 79, 25% → 80, 10% → 81, 1% → 82.
+#[allow(dead_code, reason = "kept for local testing without the BLE strap")]
 pub async fn fake_hr_task(tx: broadcast::Sender<ObsMessage>) {
-    use rand::{Rng, SeedableRng, rngs::StdRng};
+    use rand::{rngs::StdRng, Rng, SeedableRng};
     let mut rng = StdRng::from_entropy();
     info!("💓 [FAKE] Heartrate emulator started");
     loop {
-        let roll: u8 = rng.gen_range(0..100);
-        let bpm: u8 = match roll {
-            0       => 82,
-            1..=10  => 81,
+        let roll: u16 = rng.gen_range(0..100);
+        let bpm: u16 = match roll {
+            0 => 82,
+            1..=10 => 81,
             11..=35 => 80,
-            _       => 79,
+            _ => 79,
         };
         let _ = tx.send(ObsMessage {
             sender_id: u64::MAX,
-            // Same shape as the real task above — see the note there.
-            text: format!("{{\"type\":\"heartrate\",\"heartrate\":{}}}", bpm),
+            text: heartrate_json(bpm),
         });
         tokio::time::sleep(Duration::from_secs(1)).await;
     }

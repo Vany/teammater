@@ -8,7 +8,7 @@ use std::{
 };
 use tracing::{info, warn};
 
-const LOCALHOST: Ipv4Addr = Ipv4Addr::new(127, 0, 0, 1);
+const LOCALHOST: Ipv4Addr = Ipv4Addr::LOCALHOST;
 const LAN_IP_CACHE: &str = "server/certs/lan_ip.txt";
 
 /// Detect the real LAN IP, preferring 192.168.x.x over VPN/tunnel ranges.
