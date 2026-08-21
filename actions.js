@@ -636,7 +636,7 @@ export function ban(reason = "Automated ban: message violated rules") {
  */
 export function delete_message(silent = false) {
   return async (context, user, message) => {
-    const { currentUserId, messageId, log } = context;
+    const { currentUserId, userId, messageId, log } = context;
 
     // messageId comes from IRC tags and CANNOT be recovered from a username,
     // so unlike mute/ban this action is chat-path only. Return false rather
@@ -644,6 +644,15 @@ export function delete_message(silent = false) {
     // success from "Function has no result".
     if (!currentUserId || !messageId) {
       if (!silent) log("❌ Cannot delete message: missing IDs");
+      return false;
+    }
+
+    // Never delete the broadcaster's own message — same reasoning as
+    // mute()/ban(). Chat-only path, so userId here is always the real
+    // numeric id from IRC tags (never a resolveUserId sentinel), so a plain
+    // comparison is enough — no resolution step needed.
+    if (userId === currentUserId) {
+      if (!silent) log(`⏭️ Skipping delete: message is from the broadcaster`);
       return false;
     }
 

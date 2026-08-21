@@ -60,6 +60,7 @@ export class MusicQueueModule extends BaseModule {
     this._voteSkipThreshold = 3;
     this._ytPlayerActive = false;   // YouTube player tab is open
     this._watchdogTimer  = null;
+    this._watchdogPongTimeout = null; // per-tick "did we get a pong" timer — see _stopWatchdog
     this._pongReceived   = false;
   }
 
@@ -250,7 +251,10 @@ export class MusicQueueModule extends BaseModule {
       }
       this._pongReceived = false;
       bridge.send("ping", null, tabType);
-      setTimeout(() => {
+      // Tracked so _stopWatchdog() can cancel it — see the note there for why
+      // an untracked timeout here is a real race, not just untidy cleanup.
+      this._watchdogPongTimeout = setTimeout(() => {
+        this._watchdogPongTimeout = null;
         if (!this._pongReceived) {
           this.log(`⚠️ Watchdog: no pong from ${tabType} — advancing queue`);
           this._resetTrack();
@@ -265,6 +269,16 @@ export class MusicQueueModule extends BaseModule {
     if (this._watchdogTimer) {
       clearInterval(this._watchdogTimer);
       this._watchdogTimer = null;
+    }
+    if (this._watchdogPongTimeout) {
+      // Without this, skipping a track while its watchdog ping is in flight
+      // left the 5s "no pong" timeout armed. It fires against whichever
+      // track is playing BY THEN — the new, healthy one — reads
+      // _pongReceived (shared, not per-cycle) as false because the new
+      // cycle hadn't gotten its own pong yet either, and wrongly advances
+      // past a track that was never actually stuck.
+      clearTimeout(this._watchdogPongTimeout);
+      this._watchdogPongTimeout = null;
     }
   }
 

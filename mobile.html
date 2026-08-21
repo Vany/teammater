@@ -529,7 +529,11 @@
           <span id="sys-cpu-mobile" class="sys-m-val">--%</span>
         </div>
       </div>
-      <div id="song-section" style="display:none">
+      <!-- Always visible per SPEC.md: "Three buttons always visible: Prev /
+           Play-Pause / Skip". Used to be display:none until the first
+           now_playing message, hiding the transport controls along with the
+           song text — there was no reason those needed to wait for metadata. -->
+      <div id="song-section">
         <img id="song-cover" alt="" />
         <div id="song-text">
           <div id="song-title">—</div>
@@ -787,13 +791,13 @@ function renderHeartrate(bpm) {
 }
 
 function renderSong(msg) {
-  const section = document.getElementById('song-section');
   const title   = document.getElementById('song-title');
   const artist  = document.getElementById('song-artist');
   const cover   = document.getElementById('song-cover');
   const t = [msg.title, msg.version].filter(Boolean).join(' · ');
-  if (!t && !msg.artist) { section.style.display = 'none'; return; }
-  section.style.display = '';
+  // #song-section itself is always visible now (SPEC.md: transport buttons
+  // always visible) — with no title/artist this just leaves the '—'
+  // placeholder in place rather than hiding the whole row, buttons included.
   title.textContent  = t || '—';
   artist.textContent = msg.artist || '';
   musicPaused = msg.paused ?? false;

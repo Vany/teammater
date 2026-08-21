@@ -912,16 +912,33 @@ Disallowed (use mute tool):
     if (window.DEBUG)
       console.log("[LLM] →", JSON.parse(JSON.stringify(requestBody)));
 
+    // Two phases, matching chatRawStreaming: _fetchChat's own timer covers
+    // headers only and self-clears on failure. Once it resolves, WE own the
+    // timer, and it must stay armed through the body read too — clearing it
+    // right after headers (the previous shape) left response.json() with no
+    // timeout protection at all. If Ollama sends headers then stalls mid-body
+    // (backend failure after the response starts), the read hung forever,
+    // llmProcessing never cleared, and chat monitoring silently stopped
+    // running for the rest of the session.
+    let response, clearTimer;
     try {
-      const { response, clearTimer } = await this._fetchChat(
+      ({ response, clearTimer } = await this._fetchChat(
         `${baseUrl}/v1/chat/completions`,
         requestBody,
         timeout,
-      );
+      ));
+    } catch (error) {
+      const msg =
+        error.name === "AbortError"
+          ? (error.cause?.message ?? `Request timed out after ${timeout}ms`)
+          : error.message;
+      this.log(`💥 ChatRaw failed: ${msg}`);
+      throw new Error(msg);
+    }
 
-      clearTimer();
-
+    try {
       const data = await response.json();
+      clearTimer();
       const message = data.choices?.[0]?.message || {
         role: "assistant",
         content: "",
@@ -939,6 +956,7 @@ Disallowed (use mute tool):
 
       return message;
     } catch (error) {
+      clearTimer();
       const msg =
         error.name === "AbortError"
           ? (error.cause?.message ?? `Request timed out after ${timeout}ms`)
