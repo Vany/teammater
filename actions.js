@@ -243,7 +243,10 @@ export function vote_skip(threshold = 3) {
     if (!musicQueue) {
       log(`❌ Music queue not available`);
       if (send_twitch) send_twitch("❌ Music queue unavailable");
-      return;
+      return false; // executeRewardAction only treats a literal `false` as
+      // failure (anything else, including undefined, is FULFILLED) — a bare
+      // `return` here marked a failed redemption FULFILLED, spending the
+      // viewer's points for a vote that was never cast.
     }
 
     const result = musicQueue.voteSkip();
@@ -252,7 +255,7 @@ export function vote_skip(threshold = 3) {
       // Cannot skip (fallback URL or nothing playing)
       log(`❌ Vote skip failed: ${result.error}`);
       if (send_twitch) send_twitch(`❌ ${result.error}`);
-      return;
+      return false; // same reasoning as above
     }
 
     if (result.skipped) {
