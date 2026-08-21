@@ -61,6 +61,20 @@ pub fn load_or_create_bus_token() -> String {
 /// Runs as a layer over the whole router, but every real route is matched
 /// before the `ServeDir` fallback and none of them live under those prefixes.
 pub fn is_sensitive_path(path: &str) -> bool {
+    // Strip ALL leading slashes FIRST, mirroring tower-http 0.6.8's own
+    // ServeDir::build_and_validate_path (serve_dir/mod.rs) exactly:
+    // `requested_path.trim_start_matches('/')`, done before it percent-decodes.
+    // `//server/certs/key.pem` has no segment starting with '.' and does not
+    // start with "/server/" (two leading slashes, not one) — this guard let it
+    // through — but ServeDir strips BOTH leading slashes the same way and
+    // resolves it to ./server/certs/key.pem regardless. Verified live: a raw
+    // `GET //server/certs/key.pem` returned 200 before this fix. Matching
+    // tower-http's own normalization, rather than special-casing "exactly two
+    // slashes", is what keeps this guard's view of "the path" from being able
+    // to diverge from what ServeDir actually resolves — for any number of
+    // leading slashes, not just two.
+    let path = path.trim_start_matches('/');
+
     // Compare the DECODED path. The first version of this guard checked the raw
     // URI, but ServeDir percent-decodes each segment before hitting the disk —
     // so `/%2Emcp.json` and `/%73erver/certs/key.pem` sailed past it and served
@@ -92,7 +106,8 @@ pub fn is_sensitive_path(path: &str) -> bool {
     // which is exactly why this went unnoticed the first two times.
     let decoded = decoded.to_lowercase();
     let hidden = decoded.split('/').any(|seg| seg.starts_with('.'));
-    let server_dir = decoded == "/server" || decoded.starts_with("/server/");
+    // No leading slash here — it was stripped above, matching tower-http.
+    let server_dir = decoded == "server" || decoded.starts_with("server/");
     hidden || server_dir
 }
 
@@ -183,5 +198,24 @@ mod path_guard_tests {
         // Case variance combined with percent-encoding, since both bypasses
         // were found independently and either could reappear alone.
         assert!(is_sensitive_path("/%53ERVER/certs/key.pem"));
+    }
+
+    #[test]
+    fn blocks_extra_leading_slashes() {
+        // GET //server/certs/key.pem returned 200 against the running server
+        // before this fix: no segment starts with '.', and "//server/..."
+        // does not start with the literal "/server/" this guard checked for
+        // (two leading slashes, not one) — but tower-http's ServeDir strips
+        // ALL leading slashes the same way before resolving the file, so it
+        // served the real key regardless. Any number of extra slashes must
+        // collapse the same way this guard's own normalization does, not
+        // just exactly two.
+        assert!(is_sensitive_path("//server/certs/key.pem"));
+        assert!(is_sensitive_path("///server/certs/key.pem"));
+        assert!(is_sensitive_path("//.mcp.json"));
+        // Combined with case variance and percent-encoding, since all three
+        // bypasses were found independently.
+        assert!(is_sensitive_path("//SERVER/certs/key.pem"));
+        assert!(is_sensitive_path("//%73erver/certs/key.pem"));
     }
 }
