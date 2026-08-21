@@ -346,9 +346,15 @@ export class UIBuilder {
         break;
 
       case "text":
+      case "password":
       default:
         input = document.createElement("input");
-        input.type = "text";
+        // modules/obs/module.js declares its OBS WebSocket password field as
+        // type: "password", but this switch had no case for it — it fell
+        // through to the same default as an ordinary text field, rendering
+        // the saved password in plain text on screen. Any OTHER unrecognized
+        // type still degrades to a plain text input, unchanged.
+        input.type = type === "password" ? "password" : "text";
         input.setAttribute("stored_as", storageKey);
         input.value = this._getStoredValue(storageKey, defaultValue);
 
