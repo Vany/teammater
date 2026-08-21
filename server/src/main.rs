@@ -152,6 +152,16 @@ async fn api_info_handler(
     Json(body)
 }
 
+/// This is a debug/logging endpoint — it exists only to observe what a
+/// health-tracking app's import webhook actually sends, and every real
+/// payload here is a small JSON blob. `to_bytes` previously ran with
+/// `usize::MAX`, buffering the whole request body in memory with no cap
+/// before it was ever inspected. Both listeners bind 0.0.0.0 and the route
+/// accepts any method, so any LAN device could send a multi-gigabyte POST
+/// and put the server under memory pressure for a log line. A generous but
+/// bounded cap costs nothing here — nothing legitimate is anywhere close to it.
+const MAX_HEALTH_APP_BODY: usize = 1024 * 1024; // 1 MiB
+
 async fn health_app_handler(req: Request) -> StatusCode {
     let method = req.method().clone();
     let uri = req.uri().clone();
@@ -161,14 +171,15 @@ async fn health_app_handler(req: Request) -> StatusCode {
         .map(|(k, v)| format!("{k}: {}", v.to_str().unwrap_or("<binary>")))
         .collect::<Vec<_>>()
         .join(", ");
-    let body = to_bytes(req.into_body(), usize::MAX)
-        .await
-        .unwrap_or_default();
-    let body = String::from_utf8_lossy(&body);
-    info!(
-        "🏥 health-app {method} {uri} | headers=[{headers}] | body={}",
-        if body.is_empty() { "<empty>" } else { &body }
-    );
+    let body_display = match to_bytes(req.into_body(), MAX_HEALTH_APP_BODY).await {
+        Ok(bytes) if bytes.is_empty() => "<empty>".to_string(),
+        Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+        // Distinguish this from "<empty>" — the previous unwrap_or_default()
+        // logged both identically, which would have hidden the exact
+        // oversized-body condition this cap exists to catch.
+        Err(e) => format!("<body rejected: {e}>"),
+    };
+    info!("🏥 health-app {method} {uri} | headers=[{headers}] | body={body_display}");
     StatusCode::OK
 }
 
