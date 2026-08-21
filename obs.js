@@ -225,17 +225,24 @@
     let ws = null;
     let reconnectTimer = null;
     // The bus now requires ?token=. This overlay runs inside OBS on localhost,
-    // and /api/info returns bus_token to loopback callers only. Cached so a
-    // reconnect does not refetch. Not shared with bus-token.js because obs.html
-    // loads this as a plain script, not an ES module.
+    // and /api/info returns bus_token to loopback callers only. Not shared
+    // with bus-token.js because obs.html loads this as a plain script, not an
+    // ES module.
+    //
+    // busToken is a FALLBACK, not a cache to trust — every call re-fetches.
+    // Caching it across the ws.onclose → 3s → connect() reconnect loop used to
+    // mean that if server/certs/ ever got wiped and regenerated the token,
+    // this overlay would retry the dead one forever with no way to notice,
+    // indistinguishable from any other reconnect failure — even though this
+    // runs on localhost and could simply ask again. Only fall back to the
+    // last-known value when the server is transiently unreachable right now.
     let busToken = null;
 
     async function ensureToken() {
-        if (busToken) return busToken;
         try {
             const { bus_token } = await (await fetch('/api/info')).json();
-            busToken = bus_token || null;
-        } catch { busToken = null; }
+            if (bus_token) busToken = bus_token;
+        } catch { /* fall through to whatever was last known, if anything */ }
         if (!busToken) console.error('[obs] No bus token — /obs will refuse the connection');
         return busToken;
     }

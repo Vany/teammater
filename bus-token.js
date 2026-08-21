@@ -34,10 +34,15 @@ export async function getBusToken() {
     return fromHash;
   }
 
+  // 2. Every current caller of this function (modules/obs, modules/music-queue)
+  // is loopback-capable — served from index.html on localhost:8443 — so always
+  // ask the server first rather than trusting whatever is cached. Used to
+  // return the stored value unconditionally: if server/certs/ ever gets wiped
+  // and regenerates the token, these pages COULD have self-healed by asking
+  // again, but instead retried the dead token forever, indistinguishable from
+  // any other reconnect failure. The cache now only matters as a fallback for
+  // when the server is transiently unreachable, not as the source of truth.
   const stored = localStorage.getItem(STORAGE_KEY);
-  if (stored) return stored;
-
-  // 2. Loopback only: /api/info omits bus_token for any non-local caller.
   try {
     const response = await fetch("/api/info");
     const { bus_token } = await response.json();
@@ -46,10 +51,11 @@ export async function getBusToken() {
       return bus_token;
     }
   } catch {
-    // fall through — the caller logs and retries
+    // Server unreachable right now — fall through to the cache below rather
+    // than going straight to "" and forcing an immediate hard failure.
   }
 
-  return "";
+  return stored || "";
 }
 
 /**
