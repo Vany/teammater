@@ -82,6 +82,15 @@ pub fn is_sensitive_path(path: &str) -> bool {
         decoded = next;
     }
 
+    // Compare case-INSENSITIVELY. This machine's filesystem (macOS APFS,
+    // default config) is case-insensitive but case-PRESERVING, so
+    // /SERVER/certs/key.pem resolves to the same file as
+    // /server/certs/key.pem even though the two strings are not equal —
+    // the exact-case check below let it through. Verified live: both
+    // returned 200 before this fix. The dotfile check was accidentally
+    // immune (it only tests for a literal '.', whose case never varies),
+    // which is exactly why this went unnoticed the first two times.
+    let decoded = decoded.to_lowercase();
     let hidden = decoded.split('/').any(|seg| seg.starts_with('.'));
     let server_dir = decoded == "/server" || decoded.starts_with("/server/");
     hidden || server_dir
@@ -160,5 +169,19 @@ mod path_guard_tests {
         // Only a segment STARTING with '.' is hidden; extensions are fine.
         assert!(!is_sensitive_path("/teammater.js"));
         assert!(!is_sensitive_path("/server-status.html"));
+    }
+
+    #[test]
+    fn blocks_case_variant_spellings_of_the_same_paths() {
+        // These returned 200 with the real TLS private key against the running
+        // server: this filesystem is case-insensitive (macOS APFS default), so
+        // the exact-case string comparison this guard used to do let them serve.
+        assert!(is_sensitive_path("/SERVER/certs/key.pem"));
+        assert!(is_sensitive_path("/SeRvEr/certs/key.pem"));
+        assert!(is_sensitive_path("/.MCP.JSON"));
+        assert!(is_sensitive_path("/.Mcp.Json"));
+        // Case variance combined with percent-encoding, since both bypasses
+        // were found independently and either could reappear alone.
+        assert!(is_sensitive_path("/%53ERVER/certs/key.pem"));
     }
 }
