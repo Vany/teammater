@@ -40,7 +40,14 @@ export const CHAT_ACTIONS = [
 export const LLM_ACTIONS = {
   "mute  apply moderation mute for 10 minute": mute(600),
   "say  say outloud to attract attention of the owner": voice(),
-  "next_song  skip currently playing song": vote_skip(),
+  // Casts ONE vote toward music-queue's configurable threshold (default 3,
+  // see vote_skip_threshold) — does NOT skip on its own. The description
+  // below is what the model reads to decide when to call this, so it must
+  // say "vote", not "skip": telling the model it skips outright means it
+  // can call this once and then tell the user the song was skipped when it
+  // wasn't.
+  "next_song  cast one vote to skip the currently playing song (multiple votes required, not immediate)":
+    vote_skip(),
   "fireball  help cast fireball for player": fireball(),
 };
 
