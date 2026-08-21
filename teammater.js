@@ -14,7 +14,9 @@
 // @grant        GM_getValue
 // @grant        GM_deleteValue
 // @grant        GM_openInTab
+// @grant        GM_xmlhttpRequest
 // @grant        unsafeWindow
+// @connect      localhost
 // @run-at       document-end
 // ==/UserScript==
 
@@ -286,14 +288,31 @@
     }
 
     // Direct /obs bus connection — handles pause/resume without Tampermonkey on the remote end
+    // fetch() runs in the PAGE's origin (music.yandex.ru), so a plain fetch
+    // to localhost:8443 is a cross-origin request — the server sends no CORS
+    // headers (never needed one before), so the browser blocks it outright
+    // and the caught error was silent, retrying forever. GM_xmlhttpRequest
+    // runs in the userscript's own privileged context instead, which is
+    // exactly what it's for: bypassing page-origin CORS without having to
+    // open up the server's response headers to a third-party origin.
+    function fetchBusToken() {
+      return new Promise((resolve) => {
+        GM_xmlhttpRequest({
+          method: "GET",
+          url: "https://localhost:8443/api/info",
+          onload: (res) => {
+            try { resolve(JSON.parse(res.responseText).bus_token || null); }
+            catch { resolve(null); }
+          },
+          onerror: () => resolve(null),
+        });
+      });
+    }
+
     async function connectObsBus() {
       // The bus requires a token; this script talks to localhost, and
       // /api/info hands bus_token to loopback callers only.
-      let token = null;
-      try {
-        const r = await fetch("https://localhost:8443/api/info");
-        token = (await r.json()).bus_token || null;
-      } catch {}
+      const token = await fetchBusToken();
       if (!token) {
         log("no /obs bus token — retrying in 3s");
         setTimeout(connectObsBus, 3000);
