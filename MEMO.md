@@ -8,6 +8,90 @@
 
 ## Recent Improvements (2026-08)
 
+### Lore review continued: 10 more fixes, review PASSED (2026-08-21)
+
+Continuation of the same review as the 2026-08-14 entry below (`rev_ydxr7jZf18AkmcBPKb80PXSd`
+never restarted — restarting would have discarded every justification already
+ratified). This session's "continue" phase took it from 21 fixed/3 justified
+to **31 findings total, 25 fixed, 5 justified, state PASSED** (attested;
+partial — the t1 tier read an earlier tree and never re-read the final one,
+so this is `passed`, not an unqualified clean bill).
+
+**Fixed, by theme:**
+- **Auth/moderation ordering** (`index.js`): OAuth checked the stale stored
+  token before a fresh redirect fragment (`||` the wrong direction — fixed by
+  swapping to `extractToken() || stored`); chat side effects (ICQ sound,
+  Minecraft relay) ran BEFORE the CHAT_ACTIONS moderation check, so a
+  banned/muted message still played and forwarded before being suppressed.
+- **Reward-fulfillment-on-failure, twice** (`actions.js`): `vote_skip()`'s
+  two error paths used a bare `return;` (undefined), and
+  `executeRewardAction()` only treats a literal `false` as failure — so a
+  failed 30-point Skip Song redemption was marked FULFILLED and points spent
+  for nothing. Also missing the same `isConnected()` guard `music()` already
+  had, so a disabled Music Queue module still accepted the same reward.
+- **NaN config parsing, systemic** (`modules/base-module.js` +4 modules):
+  every numeric config field did bare `parseInt(getConfigValue(...))` with
+  no NaN check; a cleared number input stores `""`, not removed, so this
+  broke 5 different ways depending on the field — tight zero-delay
+  reconnect loops (`setTimeout(fn, NaN)` clamps to 0), thresholds that can
+  never trigger (`NaN < 1` / `x < NaN` always false), unbounded chat-history
+  growth, NaN silently serialized to `null` in LLM API requests. Added
+  `getConfigInt`/`getConfigFloat` to BaseModule (fallback to default on
+  missing/empty/invalid) and migrated all 9 call sites — one shared fix
+  instead of patching each field.
+- **LLM protocol correctness** (`modules/llm/module.js`): `tool_call_id`
+  wired through to tool-result messages — `call.id` was already captured by
+  both `chatRaw` and `chatRawStreaming`, just never forwarded, so this was
+  unused data in hand, not a guess. `num_ctx` sent via an `options` object
+  Ollama's OpenAI-compat endpoint doesn't document support for — genuinely
+  unverifiable here (Ollama not running in this environment); **Vany's
+  explicit decision (2026-08-21): leave as-is, verify empirically next time
+  Ollama is up, only consider moving to native `/api/chat` if truly inert**.
+  Marked `lore-ok[c7c48941]`/`[da167b0a]` accordingly — a first "deliberately
+  deferred, TBD" marker on this same finding was correctly rejected and
+  re-raised at HIGH, confirming lore-ok needs an actual stance, not a punt.
+- **UI correctness**: OBS WebSocket password field rendered as plaintext
+  (`ui-builder.js` had no `case "password":`, fell through to `type="text"`).
+- **Stale-cache bugs**: `bus-token.js`/`obs.js` cached the `/obs` bus token
+  after first fetch and never asked again — if `server/certs/` regenerates
+  it, these pages retried the dead token forever instead of self-healing.
+  Both now always re-fetch, falling back to cache only when the server is
+  transiently unreachable.
+- **Doc sync** (README.md, RUST_SERVER.md, SPEC.md, server/SPEC.md): LLM
+  Actions System example matched to the real double-space split; Caddy
+  fallback claim replaced with why it's actively unsafe now (no path guard,
+  no `/obs`); root SPEC.md's wake-lock description un-inverted to match
+  commit `300d485`; server/SPEC.md's constants table and file structure
+  corrected post-`security.rs`/`state.rs`/`bus.rs` split.
+
+**Signal from lore worth acting on, not just noting** (`history` field on
+several findings, derived rule dated 2026-08-14): this codebase has now
+produced **CWE-1051 (doc goes stale after code changes) 5 times** and
+**CWE-754 (missing check on an exceptional/edge condition — NaN, undefined-
+as-success) 7 times**. Lore's own words: "a defect that recurs is a missing
+rule, not N unrelated bugs." Neither has a structural fix yet — see TODO.md.
+
+**Reduced coverage this round** (`checks_skipped`, same as the 2026-08-14
+review): tsc/eslint still can't run (no `package.json`, `lore-ok[704edc91]`,
+unchanged); one tier (t1) was answered by a same-vendor stand-in model
+because its usual route was unavailable — ran and counts in full, just
+noting the substitution; one tier (t3) produced a finding this review
+doesn't contain because its JSON didn't parse — a real finding was silently
+dropped, same class of lore-internal bug as the 2026-08-14 entry's
+`severity: "critical"` schema rejection.
+
+**A second, unrelated review** (`rev_Ra1EZb4Q1hzZjTe3l8ldPsA0`) surfaced a
+stale HIGH finding (`67501bd3`, `/SERVER/certs/key.pem` case-sensitivity)
+from its deep tier catching up on an old, already-terminal ("failed") run —
+verified via `cargo test` that `blocks_case_variant_spellings_of_the_same_paths`
+already covers this exact case and passes (fixed in `40a946f`, well before
+this review's pinned tree). No action needed; can't submit to a terminal
+review anyway.
+
+Commits: `76c8a5c` `8cf2991` `4268adb` `dda1ee5` `4bdef89` `b699437` `2287e7f`
+`81052a7` `09e612d` `4e10019` `1a72480` `c87f63e` `181a5a7`. All pushed to
+`origin/master`. Not restarted — server was live-streaming throughout.
+
 ### server/: clippy::pedantic clean + main.rs split into security.rs/state.rs/bus.rs
 - Default clippy was already near-clean (1 warning); `-W clippy::all -W clippy::pedantic`
   had 47, all mechanical (doc-comment backticks, `as` casts → `From`/`try_from`,

@@ -25,9 +25,33 @@ Estimated reduction: ~950 lines (from ~4500 to ~3500 LOC), zero functionality lo
       `pinned_message` preset field. Currently justified as a documented gap.
 - [ ] Consider a dev-only `package.json` so lore's tsc/eslint tiers can run.
       They would have caught `llm.chat()` and `apiWhisper()` for free.
-      Currently justified as deliberate (`lore-ok[704edc91]`).
+      Currently justified as deliberate (`lore-ok[704edc91]`). Confirmed
+      still blocking coverage in the 2026-08-21 round too.
 - [ ] Report the lore schema bug upstream: T1 emitting `severity: "critical"`
-      silently drops real HIGH findings from the review.
+      silently drops real HIGH findings from the review. 2026-08-21 round hit
+      the same class again: a t3 finding dropped for unparseable JSON.
+
+## From the 2026-08-21 lore review continuation (see MEMO.md)
+
+- [ ] **Two recurring defect classes, per lore's own derived rule — need a
+      structural fix, not the Nth manual patch:**
+      - CWE-1051 (doc goes stale after code changes): 5 occurrences across
+        SPEC.md, RUST_SERVER.md, README.md. Some kind of "docs touched in the
+        same commit as the code they describe" habit or check.
+      - CWE-754 (missing check on an exceptional condition): 7 occurrences —
+        NaN from unchecked parseInt/parseFloat, `undefined` read as reward
+        success. The NaN half now has a shared fix (`getConfigInt`/
+        `getConfigFloat`); the undefined-as-success half doesn't — reward
+        actions returning `false` on failure is still a convention each
+        closure has to remember, not something the type/contract enforces.
+- [ ] **Verify `num_ctx` empirically once Ollama is running.**
+      `modules/llm/module.js` sends `options: { num_ctx }` to Ollama's
+      OpenAI-compat endpoint (`/v1/chat/completions`), which doesn't document
+      support for that field. Vany's call (2026-08-21): leave as-is, test for
+      real next time Ollama is up rather than guess. If confirmed inert,
+      decide then whether to move this module to Ollama's native `/api/chat`
+      (fixes num_ctx, but loses generic OpenAI-compat — see
+      `lore-ok[c7c48941]`/`[da167b0a]` in the code for the full tradeoff).
 
 
 
