@@ -215,17 +215,22 @@ Define custom actions the LLM can trigger in `config.js`:
 
 ```javascript
 export const LLM_ACTIONS = {
-  "mute for 10 minute": mute(10),
-  "Say by voice": voice(),
-  // Add more actions as needed
+  "mute  apply moderation mute for 10 minute": mute(600),
+  "say  say outloud to attract attention of the owner": voice(),
 };
 ```
 
 **How it works:**
-- LLM receives available actions in its system prompt
-- When LLM responds with `action: mute, reason: spamming`, the action executes
-- First word matching: "mute" matches "mute for 10 minute"
-- Reason is passed as the third parameter to the action
+- Each key is `"<tool name><TWO spaces><description>"`. `LLMModule._getActionsMap()`
+  splits on the FIRST double space: everything before it becomes the literal
+  tool name sent to the API (must be space-free — `mute`, `say`, not
+  `mute for 10 minute`), everything after is the human-readable description
+  the model sees. A key with no double space becomes the tool name in full,
+  spaces included, which most OpenAI-compatible endpoints will reject.
+- These become real OpenAI-style tool/function definitions in the model's
+  request — not a fuzzy "first word" match against free text — so the model
+  calls them the same way it calls any other tool, with `user`/`message`
+  arguments (see actions.js's closures for the exact signature each expects).
 
 ### Stream Presets
 

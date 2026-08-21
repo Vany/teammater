@@ -78,14 +78,23 @@ Replace with real certificates for production use.
 (`server/README.md` and `server/IMPLEMENTATION.md` were referenced here for a
 long time and have never existed in this tree.)
 
-## Keeping Caddy
+## Caddy Is No Longer An Option
 
-To use Caddy instead of Rust server:
-```bash
-caddy start
-```
+This used to say Caddy could substitute for the Rust server. It cannot, and
+running it against this repo is actively unsafe now, not just incomplete:
 
-Both servers can coexist (just not running simultaneously on same port).
+- The checked-in `Caddyfile` serves the project root with `file_server` and
+  no path filtering at all — none of `deny_sensitive_paths`'s protection
+  (`server/src/security.rs`), which exists specifically because
+  `server/certs/key.pem` (the TLS private key) and `.mcp.json` (a bearer
+  token) are reachable from that same root and were served in cleartext to
+  the LAN before that guard existed.
+- Caddy has no implementation of `/obs` at all — the broadcast bus every
+  browser/mobile client and the OBS overlay depend on — so nothing using
+  the bus works regardless of the security question.
+
+There's no bug for a fresh install to hit: `make serve` is the only server
+this project's Makefile knows how to start.
 
 ## Production Deployment
 

@@ -74,6 +74,16 @@ All internal services launch independently at startup. Each service manages its 
 
 The `/obs` WebSocket endpoint is the central hub for OBS state, commands, logs, and viewer data. Behavior depends on message type.
 
+**Requires `?token=<secret>`** (added after this section was first written —
+see `src/security.rs`). The bus is not read-only: it carries `twitch_timeout`/
+`twitch_shoutout`/`cmd_*` that the main page executes with the streamer's
+Twitch moderator token, and both listeners bind `0.0.0.0`. The upgrade is
+rejected with `401` before it completes if the token is missing or wrong.
+The token is generated on first run into `server/certs/bus_token.txt`
+(gitignored, and itself blocked by the same path guard); `GET /api/info`
+returns it only to loopback callers, and the QR flow carries it to the phone
+in the URL fragment. See `bus-token.js` (client side) for the acquisition logic.
+
 **On client connect**, server immediately sends:
 1. Last 5 log lines from ring buffer as individual `log` messages
 2. Current `obs_state` snapshot (if OBS is connected)
@@ -210,28 +220,36 @@ connects there rather than to the MQTT broker.
 
 ## Configuration
 
-All configuration is compile-time in `src/main.rs`, `src/ble.rs`, `src/obs.rs`, and `src/zigbee.rs`.
+All configuration is compile-time, spread across the module each constant
+belongs to (see `## File Structure` below) since the `main.rs` split. Names
+below are current as of that split — grep for the name rather than trusting
+this table blindly the next time something moves.
 
-| Constant | Value | Description |
-|----------|-------|-------------|
-| `LISTEN_ADDR` | `0.0.0.0:8443` | HTTPS bind address |
-| `HTTP_ADDR` | `0.0.0.0:8442` | HTTP bind address |
-| `CERT_PATH` | `server/certs/cert.pem` | TLS certificate |
-| `KEY_PATH` | `server/certs/key.pem` | TLS private key |
-| `MDNS_RETRY_DELAY` | 5s | mDNS daemon restart delay |
-| `OBS_BROADCAST_CAPACITY` | 16 | Broadcast channel buffer |
-| `OBS_LOG_RING_SIZE` | 5 | Log lines buffered for late joiners |
-| `OBS_ADDR` | `ws://localhost:4455` | OBS WebSocket address |
-| `OBS_POLL_INTERVAL` | 2s | Streaming/recording stats poll rate |
-| `OBS_RECONNECT_DELAY` | 5s | OBS reconnect delay on failure |
-| `SERVICE_TYPE` | `_echowire._tcp.local.` | mDNS service type |
-| `DEVICE_NAME` | `HeartCast` | BLE device name substring |
-| `RECONNECT_DELAY` | 5s | BLE scan/reconnect delay |
-| `SCAN_WINDOW` | 5s | BLE scan burst duration |
-| `HR_WATCHDOG` | 10s | Silence timeout before reconnect |
-| `Z2M_ADDR` | `ws://c:8081/api` | Zigbee2MQTT frontend WS bridge |
-| `Z2M_DEVICE` | `T1` | Watched sensor friendly name |
-| `Z2M_RECONNECT_DELAY` | 5s | Zigbee reconnect delay on failure |
+| Constant | Where | Value | Description |
+|----------|-------|-------|-------------|
+| `HTTPS_ADDR` | `main.rs` | `0.0.0.0:8443` | HTTPS bind address |
+| `HTTP_ADDR` | `main.rs` | `0.0.0.0:8442` | HTTP bind address |
+| `CERT_PATH` | `main.rs` | `server/certs/cert.pem` | TLS certificate |
+| `KEY_PATH` | `main.rs` | `server/certs/key.pem` | TLS private key |
+| `MAX_HEALTH_APP_BODY` | `main.rs` | 1 MiB | Cap on `/api/import/health-app` body size |
+| `BUS_TOKEN_PATH` | `security.rs` | `server/certs/bus_token.txt` | `/obs` shared secret |
+| `OBS_BROADCAST_CAPACITY` | `state.rs` | 16 | Broadcast channel buffer |
+| `LOG_RING_SIZE` | `state.rs` | 5 | Log lines buffered for late joiners |
+| `OBS_POLL_INTERVAL` | `obs.rs` | 2s | Streaming/recording stats poll rate |
+| `OBS_RECONNECT_DELAY_MAX` | `obs.rs` | 300s | Cap on the reconnect backoff (starts at 1s, doubles) |
+| `MDNS_RETRY_DELAY` | `echowire.rs` | 5s | mDNS daemon restart delay |
+| `SERVICE_TYPE` | `echowire.rs` | `_echowire._tcp.local.` | mDNS service type |
+| `DEVICE_NAME` | `ble.rs` | `HeartCast` | BLE device name substring |
+| `RECONNECT_DELAY` | `ble.rs` | 5s | BLE scan/reconnect delay |
+| `SCAN_WINDOW` | `ble.rs` | 5s | BLE scan burst duration |
+| `HR_WATCHDOG` | `ble.rs` | 10s | Silence timeout before reconnect |
+| `Z2M_ADDR` | `zigbee.rs` | `ws://c:8081/api` | Zigbee2MQTT frontend WS bridge |
+| `Z2M_DEVICE` | `zigbee.rs` | `T1` | Watched sensor friendly name |
+| `Z2M_RECONNECT_DELAY` | `zigbee.rs` | 5s | Zigbee reconnect delay on failure |
+
+The OBS *Studio* WebSocket address (`ws://localhost:4455` by default) is
+deliberately NOT a constant here — it's runtime-pushed by the browser OBS
+module via an `obs_config` bus message, see the section above.
 
 Runtime: `RUST_LOG=info` (default), `RUST_LOG=debug` for verbose output.
 
@@ -243,15 +261,20 @@ server/
 ├── Cargo.lock
 ├── SPEC.md             # This file
 ├── src/
-│   ├── main.rs         # Server, routing, mDNS, obs bus handler, echowire proxy
-│   ├── obs.rs          # OBS WebSocket client, state machine, command dispatch
+│   ├── main.rs         # main(): tracing/TLS/AppState setup, task spawns, router, dual-listener serve
+│   ├── state.rs        # AppState, ObsMessage, OBS_BROADCAST_CAPACITY, LOG_RING_SIZE
+│   ├── security.rs     # is_sensitive_path / deny_sensitive_paths guard, bus token generation
+│   ├── bus.rs          # /obs client protocol: upgrade, welcome burst, message routing
+│   ├── obs.rs          # OBS Studio WebSocket client, state machine, command dispatch
+│   ├── echowire.rs     # /echowire WS proxy + mDNS discovery of the STT backend
 │   ├── ble.rs          # BLE heart rate monitor
 │   ├── sysinfo_task.rs # Host CPU usage / temperature poller
 │   ├── zigbee.rs       # Zigbee2MQTT climate sensor (T1) via WS bridge
 │   └── tls.rs          # Certificate generation with LAN IP SAN
 └── certs/             # Auto-generated (not in git)
     ├── cert.pem
-    └── key.pem
+    ├── key.pem
+    └── bus_token.txt  # /obs shared secret
 ```
 
 ## Build & Run
