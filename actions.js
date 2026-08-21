@@ -239,8 +239,11 @@ export function vote_skip(threshold = 3) {
   return (context, user, message) => {
     const { musicQueue, ws, CHANNEL, log, send_twitch } = context;
 
+    // lore-ok[f0d22d52]: fixed — same isConnected() guard music() already
+    // has (see above); this one only checked presence, so a disabled
+    // Music Queue module still accepted a paid Skip Song redemption.
     // Use MusicQueue's voteSkip method
-    if (!musicQueue) {
+    if (!musicQueue || !musicQueue.isConnected()) {
       log(`❌ Music queue not available`);
       if (send_twitch) send_twitch("❌ Music queue unavailable");
       return false; // executeRewardAction only treats a literal `false` as
