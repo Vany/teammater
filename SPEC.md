@@ -582,7 +582,15 @@ Mobile page connects to `wss://<host>/obs` via WebSocket. On connect the server 
 
 Page auto-reconnects with 3s delay. Connection status shown as a small dot in corner.
 
-**Screen Wake Lock:** acquires `navigator.wakeLock.request('screen')` when connected, releases on disconnect. Re-acquires on `visibilitychange` (browser releases the lock when tab hides). Silent no-op if API unsupported.
+**Screen Wake Lock:** independent of `/obs` connectivity on purpose (see
+`mobile.html`, commit `300d485`) — a server restart, network blip, or a
+missing bus token used to let the screen sleep with the page still open, so
+the lock now tracks only page visibility, not the socket. Acquired
+unconditionally on load, on every `touchstart`, on `visibilitychange`
+returning to `visible`, and re-checked by a 30s heartbeat in case iOS
+silently dropped it. Falls back to a hidden looping muted video for older
+iOS. Silent no-op (tracked in a `wakeErr` badge, not thrown) if the API is
+unsupported or the browser rejects the request (e.g. iOS Low Power Mode).
 
 ---
 
