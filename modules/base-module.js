@@ -412,9 +412,7 @@ export class BaseModule {
       return;
     }
 
-    const reconnectDelay = parseInt(
-      this.getConfigValue(delayConfigKey, defaultDelay.toString()),
-    );
+    const reconnectDelay = this.getConfigInt(delayConfigKey, defaultDelay);
 
     this.log(`🔄 Reconnecting in ${reconnectDelay}ms...`);
 
@@ -464,6 +462,40 @@ export class BaseModule {
     const storageKey = this._getStorageKey(key);
     const stored = localStorage.getItem(storageKey);
     return stored !== null ? stored : defaultValue;
+  }
+
+  /**
+   * Get a numeric (integer) config value, falling back to defaultValue if
+   * the stored value is missing, empty, or not a valid number.
+   *
+   * localStorage always stores strings, and a cleared type="number" input
+   * stores "" rather than being removed — plain `parseInt(getConfigValue(...))`
+   * turns both into NaN, which then breaks silently and differently
+   * depending on where it flows: setTimeout clamps a NaN delay to 0 (tight
+   * reconnect loops hammering a server), a threshold check like `n < 1` is
+   * always false with NaN (a feature that can never trigger), and
+   * JSON.stringify turns NaN into null inside an API request body.
+   *
+   * @param {string} key - Config key (without module prefix)
+   * @param {number} defaultValue - Fallback when unset/empty/invalid
+   * @returns {number}
+   */
+  getConfigInt(key, defaultValue) {
+    const parsed = parseInt(this.getConfigValue(key, ""), 10);
+    return Number.isNaN(parsed) ? defaultValue : parsed;
+  }
+
+  /**
+   * Same as getConfigInt, but for fields that need fractional values
+   * (e.g. LLM temperature).
+   *
+   * @param {string} key - Config key (without module prefix)
+   * @param {number} defaultValue - Fallback when unset/empty/invalid
+   * @returns {number}
+   */
+  getConfigFloat(key, defaultValue) {
+    const parsed = parseFloat(this.getConfigValue(key, ""));
+    return Number.isNaN(parsed) ? defaultValue : parsed;
   }
 
   /**

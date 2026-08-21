@@ -464,7 +464,7 @@ export class TwitchChatModule extends BaseModule {
    * Add message to chat history buffer
    */
   _addToChatHistory(username, message) {
-    const historySize = parseInt(this.getConfigValue("history_size", "50"));
+    const historySize = this.getConfigInt("history_size", 50);
 
     this.chatHistory.push({
       timestamp: new Date(),

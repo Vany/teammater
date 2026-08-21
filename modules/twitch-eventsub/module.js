@@ -563,7 +563,7 @@ export class TwitchEventSubModule extends BaseModule {
     const enabled = raw === true || raw === "true";
     if (!enabled) return;
 
-    const minRaiders = parseInt(this.getConfigValue("min_raiders", "5"), 10);
+    const minRaiders = this.getConfigInt("min_raiders", 5);
     if (event.viewers < minRaiders) {
       this.log(`ℹ️ Raid from ${event.from_broadcaster_user_login}: ${event.viewers} viewers < threshold ${minRaiders}, skipping shoutout`);
       return;

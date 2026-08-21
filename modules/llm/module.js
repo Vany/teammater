@@ -679,7 +679,7 @@ Disallowed (use mute tool):
 
         // Warn if thinking mode is on but max_tokens is too low
         const thinkingOn = this.getConfigValue("thinking", "false") === "true";
-        const maxTok = parseInt(this.getConfigValue("max_tokens", "512"));
+        const maxTok = this.getConfigInt("max_tokens", 512);
         if (thinkingOn && maxTok < 4096) {
           this.log(`⚠️ Thinking mode is ON but Max Tokens is ${maxTok} — recommended ≥ 4096, responses may be cut off`);
         }
@@ -835,10 +835,10 @@ Disallowed (use mute tool):
     return {
       baseUrl:     this.getConfigValue("base_url", "http://localhost:11434"),
       model:       this.getConfigValue("model_name", ""),
-      temperature: parseFloat(this.getConfigValue("temperature", "0.7")),
-      maxTokens:   parseInt(this.getConfigValue("max_tokens", "512")),
-      numCtx:      parseInt(this.getConfigValue("num_ctx", "8192")),
-      timeout:     parseInt(this.getConfigValue("timeout", "30000")),
+      temperature: this.getConfigFloat("temperature", 0.7),
+      maxTokens:   this.getConfigInt("max_tokens", 512),
+      numCtx:      this.getConfigInt("num_ctx", 8192),
+      timeout:     this.getConfigInt("timeout", 30000),
     };
   }
 

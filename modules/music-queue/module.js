@@ -100,7 +100,7 @@ export class MusicQueueModule extends BaseModule {
 
   async doConnect() {
     this._emptyUrl          = this.getConfigValue("empty_url", "https://music.yandex.ru/");
-    this._voteSkipThreshold = parseInt(this.getConfigValue("vote_skip_threshold", "3"));
+    this._voteSkipThreshold = this.getConfigInt("vote_skip_threshold", 3);
     this.needVoteSkip       = this._voteSkipThreshold;
     this.nowPlaying         = { ...this._parseSongName(this.getConfigValue("initial_song_name", "Silence by silencer")), cover: null, coverFallback: null, source: "", url: "" };
     this.queue              = new PersistentDeck(this.getConfigValue("persistence_key", "toplay"));
