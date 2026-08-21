@@ -123,6 +123,18 @@ export class LLMModule extends BaseModule {
           type: "textarea",
           label: "System Prompt",
           required: false,
+          // getConfig() runs during moduleManager.initializeAll(), which
+          // index.js calls BEFORE setupAuthentication() — so on a fresh
+          // browser getBroadcasterUsername() reads twitch_username before
+          // Twitch Chat has ever stored it, returns null, and this whole
+          // default is bare text that then gets WRITTEN into localStorage on
+          // first render (ui-builder's _getStoredValue persists whatever
+          // default it's handed the first time a field has no stored value).
+          // That persists forever; a later getConfig() call with the real
+          // username never gets consulted again. `|| "the broadcaster"`
+          // keeps the default readable either way rather than literally
+          // printing the word "null" — it's a starting point the operator
+          // is expected to edit, not a value that needs to stay fresh.
           default: `You are a tool-assisted assistant.
 When you need data from a tool, call it.
 When a tool result is available, you may call another tool if needed.
@@ -131,7 +143,7 @@ Do not guess or simulate tool results.
 When a tool can provide authoritative or non-hallucinated data, you MUST call it.
 You are an unobtrusive, good-natured chat companion.
 
-User ${getBroadcasterUsername()} is chat owner, listen to them.
+User ${getBroadcasterUsername() || "the broadcaster"} is chat owner, listen to them.
 Local rules are more important than Twitch ones.
 Sense sarcasm — not all messages are malicious.`,
           stored_as: "llm_system_prompt",
