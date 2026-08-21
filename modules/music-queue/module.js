@@ -603,22 +603,60 @@ export class MusicQueueModule extends BaseModule {
     return btn;
   }
 
+  // Both render functions below build DOM via textContent rather than
+  // innerHTML template strings. currentlyPlaying/currentSongName/queued URLs
+  // are all attacker-reachable: YOUTUBE_RE/YANDEX_RE (actions.js) validate
+  // only a URL PREFIX with no trailing `$` anchor, so
+  // "https://youtu.be/ID<img src=x onerror=...>" passes validation intact
+  // and used to be interpolated straight into innerHTML here — script
+  // execution in the localhost control-panel origin, which holds the Twitch
+  // OAuth token and the /obs bus token in localStorage. A YouTube video
+  // TITLE is equally attacker-controlled (upload one, or use an existing
+  // video) and reaches currentSongName the same unescaped way. textContent
+  // never parses its input as markup, so this closes the class outright
+  // rather than trying to escape each interpolation site correctly.
   _updateStatusDisplay(el) {
     const s = this.getStatus();
-    const yt = s.ytPlayerActive ? ' <span style="color:#f00">▶ YT</span>' : "";
-    el.innerHTML = `
-      <div class="status-item"><strong>Playing:</strong><span>${s.currentlyPlaying || "Nothing"}${yt}</span></div>
-      <div class="status-item"><strong>Song:</strong><span>${s.currentSongName}</span></div>
-      <div class="status-item"><strong>Queue:</strong><span>${s.queueLength}</span></div>
-      <div class="status-item"><strong>Votes needed:</strong><span>${s.votesNeeded}</span></div>
-    `;
+    el.innerHTML = "";
+    const addRow = (label, valueText, extraNode) => {
+      const row = document.createElement("div");
+      row.className = "status-item";
+      const strong = document.createElement("strong");
+      strong.textContent = label;
+      const span = document.createElement("span");
+      span.textContent = valueText;
+      if (extraNode) span.appendChild(extraNode);
+      row.append(strong, span);
+      el.appendChild(row);
+    };
+    let ytBadge = null;
+    if (s.ytPlayerActive) {
+      ytBadge = document.createElement("span");
+      ytBadge.style.color = "#f00";
+      ytBadge.textContent = " ▶ YT";
+    }
+    addRow("Playing:", s.currentlyPlaying || "Nothing", ytBadge);
+    addRow("Song:", s.currentSongName);
+    addRow("Queue:", String(s.queueLength));
+    addRow("Votes needed:", String(s.votesNeeded));
   }
 
   _updateQueueList(el) {
     const songs = this.queue?.all() ?? [];
-    el.innerHTML = songs.length
-      ? songs.map((url, i) => `<div class="queued-song-item">${i + 1}. ${url}</div>`).join("")
-      : '<p class="empty-state">No songs in queue</p>';
+    el.innerHTML = "";
+    if (!songs.length) {
+      const p = document.createElement("p");
+      p.className = "empty-state";
+      p.textContent = "No songs in queue";
+      el.appendChild(p);
+      return;
+    }
+    songs.forEach((url, i) => {
+      const div = document.createElement("div");
+      div.className = "queued-song-item";
+      div.textContent = `${i + 1}. ${url}`;
+      el.appendChild(div);
+    });
   }
 
   // ── Context ──────────────────────────────────────────────
