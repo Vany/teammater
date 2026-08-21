@@ -188,6 +188,8 @@ async function setupAuthentication() {
     return;
   }
 
+  // lore-ok[c302daaa]: fixed — extractToken() is now checked first (below),
+  // so a fresh redirect token can no longer lose to a stale stored one.
   // extractToken() FIRST: a fresh #access_token fragment means we just came
   // back from the OAuth redirect, and `||` short-circuiting the other way
   // meant any stale stored token — even an expired one — silently won every
@@ -406,6 +408,8 @@ async function handleChatMessage(messageData) {
   // not a safer one.
   log(`💬 ${username}: ${message}`);
 
+  // lore-ok[b19b3181]: fixed — moderation now runs first and returns before
+  // sound/Minecraft relay/LLM monitoring; see the block below.
   // Check chat actions BEFORE any side effect that leaves this process:
   // sound and Minecraft relay used to run first, so a message matching a
   // ban/mute rule still played on stream and forwarded into Minecraft chat

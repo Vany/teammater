@@ -211,6 +211,10 @@ Each module has its own config panel (gear icon) with schema-based UI generation
 
 ### LLM Actions System
 
+<!-- lore-ok[bc50468f]: fixed — example and explanation below now match the
+     real double-space split in LLMModule._getActionsMap(), not the old
+     single-space "first word matching" description that produced
+     space-containing tool names most endpoints reject. -->
 Define custom actions the LLM can trigger in `config.js`:
 
 ```javascript
