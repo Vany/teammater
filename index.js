@@ -188,8 +188,17 @@ async function setupAuthentication() {
     return;
   }
 
-  // Extract token from URL or localStorage
-  const existingToken = localStorage.getItem("twitch_token") || extractToken();
+  // extractToken() FIRST: a fresh #access_token fragment means we just came
+  // back from the OAuth redirect, and `||` short-circuiting the other way
+  // meant any stale stored token — even an expired one — silently won every
+  // time, so the fresh token was never read AND extractToken()'s hash-clearing
+  // side effect never ran. The stale token would then fail fetchUsername(),
+  // clear itself, and tell the user to reload — at which point the fragment
+  // (still sitting in the URL, never consumed) would finally work. One
+  // avoidable round trip through a scary "Authentication failed" message.
+  // extractToken() itself returns null harmlessly when there's no fragment,
+  // so this is a safe unconditional first check, not just a reordering.
+  const existingToken = extractToken() || localStorage.getItem("twitch_token");
 
   if (!existingToken) {
     authenticate(CLIENT_ID);
@@ -391,21 +400,19 @@ function setupActions() {
 async function handleChatMessage(messageData) {
   const { username, message, userId, messageId } = messageData;
 
-  // Display message in UI
+  // Display message in UI — unconditional and first on purpose: this is the
+  // operator's own private log, not a public side effect, and losing
+  // visibility into moderated messages would make it a worse audit trail,
+  // not a safer one.
   log(`💬 ${username}: ${message}`);
 
-  // Play sound if loud mode is enabled
-  if (DOM.loudCheckbox?.checked) {
-    mp3("icq");
-  }
-
-  // Forward to Minecraft if connected
-  const minecraftModule = moduleManager.get("minecraft");
-  if (minecraftModule?.isConnected()) {
-    minecraftModule.sendMessage(username, message);
-  }
-
-  // Check chat actions.
+  // Check chat actions BEFORE any side effect that leaves this process:
+  // sound and Minecraft relay used to run first, so a message matching a
+  // ban/mute rule still played on stream and forwarded into Minecraft chat
+  // before moderation ever ran — the exact content the rule exists to
+  // suppress. REQUIREMENTS.md/SPEC.md both document moderation as stopping
+  // processing; the implementation had it backwards.
+  //
   // The self-moderation guard lives in mute()/ban(), NOT here: CHAT_ACTIONS
   // also carries interactive commands like !voice, and gating the whole block
   // on `userId !== currentUserId` silently killed those for the broadcaster in
@@ -423,8 +430,19 @@ async function handleChatMessage(messageData) {
 
       // Sync state changes back
       moduleManager.syncStateFromContext(context);
-      return; // Don't process further
+      return; // Don't process further — no sound, no Minecraft, no LLM.
     }
+  }
+
+  // Play sound if loud mode is enabled
+  if (DOM.loudCheckbox?.checked) {
+    mp3("icq");
+  }
+
+  // Forward to Minecraft if connected
+  const minecraftModule = moduleManager.get("minecraft");
+  if (minecraftModule?.isConnected()) {
+    minecraftModule.sendMessage(username, message);
   }
 
   // LLM monitoring (if enabled)
