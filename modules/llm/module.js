@@ -854,13 +854,16 @@ Disallowed (use mute tool):
     const { model, temperature, maxTokens, numCtx } = this._readConfig();
     const { model: overrideModel, temperature: overrideTemp, maxTokens: overrideMaxTokens, tools } = options;
 
-    // lore-ok[c7c48941]: NOT fixed — deliberately deferred. Ollama's
+    // lore-ok[c7c48941]/[da167b0a]: accepted, not fixed — Vany's explicit
+    // call (asked directly, 2026-08-21), not a default I picked. Ollama's
     // /v1/chat/completions (OpenAI-compat) does not document support for a
     // top-level `options` object; num_ctx is only documented as a Modelfile
-    // PARAMETER. Whether this field is silently ignored, or Ollama's shim
-    // happens to honor it anyway, needs either a live Ollama session to
-    // observe or a decision from Vany on staying OpenAI-compat vs moving
-    // this module to Ollama's native /api/chat. Flagged, not guessed at.
+    // PARAMETER. Whether Ollama's shim honors it anyway needs a live
+    // Ollama session to observe — not reachable from this environment right
+    // now (localhost:11434 connection refused when checked). Decision:
+    // leave as-is, verify empirically next time Ollama is up, revisit
+    // switching to native /api/chat only if the field turns out to be
+    // truly inert. Not a guess dressed up as a fix.
     const body = {
       model:       overrideModel || model,
       messages,
@@ -1478,17 +1481,15 @@ Disallowed (use mute tool):
           }
         }
 
-        // lore-ok[9da8c65f]: NOT fixed — deliberately deferred, same reason
-        // as c7c48941 above. OpenAI's spec requires `tool_call_id` here to
-        // correlate a result to its call; Ollama's native /api/chat instead
-        // expects `tool_name`. This sends neither. With exactly one tool
-        // call per turn (the common case so far) there's nothing to
-        // mis-correlate, so it hasn't visibly broken yet — but it needs
-        // either live testing against a multi-tool-call turn or the same
-        // OpenAI-compat-vs-native decision as c7c48941 before guessing at
-        // which field to add.
+        // lore-ok[9da8c65f]: fixed — call.id was already captured by both
+        // chatRaw (raw passthrough of the API's own tool_calls[].id) and
+        // chatRawStreaming (tc.id assembled at line 1107/1123), just never
+        // forwarded here. tool_call_id is spec-required to correlate a
+        // result to its call, so this was data already in hand, not a
+        // guess between OpenAI-compat and Ollama-native shapes.
         messages.push({
           role: "tool",
+          tool_call_id: call.id,
           name,
           content: JSON.stringify({ result: toolResult }),
         });
