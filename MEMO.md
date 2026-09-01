@@ -31,7 +31,8 @@ symptom together, which is why it read as flaky rather than broken.
 Fix: `pickVoice()` in `utils.js` (primary-subtag match, exact region
 preferred, case/`ru_RU`-separator normalized) plus the real `lang` property.
 `pickVoice` returning null is now a normal path, not a failure — with `lang`
-set the engine resolves a voice itself. 13 unit tests.
+set the engine resolves a voice itself. Covered by `utils.test.js` (11 tests):
+run `make test`.
 
 **2. OBS crash on scene change — the recorded cause was wrong, and it no
 longer reproduces.** See TODO.md for the log evidence. Short version:
@@ -80,7 +81,16 @@ clear it because reloading is what caused it.
 `_pruneStaleSubscriptions()` deletes our websocket-transport subscriptions
 that are not on the session we just opened, before subscribing. Selection is a
 pure exported function (`selectStaleSubscriptions`) so the rule is testable
-without a Twitch account — 8 tests.
+without a Twitch account — `modules/twitch-eventsub/module.test.js`, 7 tests.
+
+**Test suites now exist and are runnable: `make test`.** JS via node's built-in
+`node:test` runner (no package.json, no install — consistent with
+`lore-ok[704edc91]`), Rust via `cargo test`. 18 JS + 15 Rust.
+This section previously claimed "13 unit tests" and "8 tests" for the two fixes
+above while the tests sat in a scratchpad and were never committed — caught by
+lore as `59227481`, and a textbook instance of the CWE-1051 doc-drift class this
+repo keeps producing. Written into the tree so the claim is checkable rather
+than believed.
 
 Method note worth keeping: this one was solved by reading `c4c4575`'s own
 commit message rather than the code. "Every subscription silently failed" was

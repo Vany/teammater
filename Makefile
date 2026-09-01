@@ -7,7 +7,7 @@
 # always claimed the server was not running while cargo kept holding :8443.
 # Everything below now targets the cargo process.
 
-.PHONY: serve stop status logs clean help dev-info
+.PHONY: serve stop status logs clean help dev-info test test-js test-rust
 
 BIN := teammater-server
 PORT := 8443
@@ -17,6 +17,7 @@ help:
 	@echo "Teammater Makefile - Available targets:"
 	@echo ""
 	@echo "  serve   - Build and run the Rust server (https://localhost:$(PORT))"
+	@echo "  test    - Run both test suites (JS via node --test, Rust via cargo)"
 	@echo "  stop    - Stop the running server"
 	@echo "  status  - Check whether the server is running"
 	@echo "  logs    - Explain where logs go"
@@ -24,9 +25,24 @@ help:
 	@echo "  help    - Show this help message"
 	@echo ""
 	@echo "Note: requires a Rust toolchain (cargo). Caddy is NOT used."
+	@echo "      'test' also needs node (>= 18) for its built-in test runner."
 
 serve:
 	cargo run --release --manifest-path=server/Cargo.toml
+
+# Both halves of the codebase. The JS side uses node's BUILT-IN runner
+# (`node:test` + `node:assert`), so it stays true to the deliberate
+# no-package.json, zero-dependency rule — see lore-ok[704edc91] in README.md.
+# There is nothing to install; `node --test` discovers **/*.test.js itself.
+test: test-js test-rust
+
+test-js:
+	@echo "🧪 JS tests..."
+	@node --test
+
+test-rust:
+	@echo "🧪 Rust tests..."
+	@cargo test --manifest-path=server/Cargo.toml
 
 # Match on the listening port rather than a pid file: `cargo run` execs the
 # binary as a child, so a pid we wrote would be the wrong process anyway.

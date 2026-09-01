@@ -36,13 +36,16 @@ give `pinMessageById()` an id to pin — does not exist in the modular codebase.
 
 ## Channel Point Rewards System
 - [x] Custom Reward Creation: Automated setup of 7 default interactive rewards
-- [x] Lightning Strike (500 points): Summons lightning bolt in Minecraft + sound effect
-- [x] Heal Streamer (200 points): Gives health boost + confirmation message
-- [x] Song Request (300 points): User input for Yandex Music URLs + queue integration
-- [x] Robot Voice (150 points): Text-to-speech with robotic voice effect
-- [x] Ask Neuro (100 points): Send message to LLM and get AI response in chat
-- [x] Vote Skip (30 points): Vote to skip current song
-- [x] What's Playing (30 points): Display current track information
+  * Costs below are `getDefaultRewards()` in config.js, which is the only
+    authority — three of them were wrong here (500/300/150 for hate/music/voice)
+    and disagreed with both README.md and SPEC.md. Change the cost there, not here.
+- [x] Hate ⚡ (300 points, key `hate`): Minecraft lightning + sound effect
+- [x] Love 💚 (200 points, key `love`): Health boost + 60s protection from hate
+- [x] Music Request (150 points, key `music`): Yandex Music or YouTube URL + queue
+- [x] Voice 🤖 (50 points, key `voice`): Text-to-speech with language auto-detection
+- [x] Ask Neuro (100 points, key `neuro`): Send message to LLM and get AI response in chat
+- [x] Skip song (30 points, key `vote_skip`): Vote to skip current song
+- [x] What is playing? (30 points, key `playing`): Display current track information
 - [x] Reward Management UI: Automatic initialization and display on websocket connection
 - [x] Automatic Redemption Handling: Real-time execution of reward actions
 - [x] Status Management: Automatic fulfillment/cancellation of redemptions
