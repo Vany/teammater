@@ -58,52 +58,75 @@ Estimated reduction: ~950 lines (from ~4500 to ~3500 LOC), zero functionality lo
       Twitch's real status and body.
 
 
-## OPEN LORE REVIEW — collect it (2026-09-01)
+## Lore review 2026-09-01 — CLOSED, `passed_partial` (read the caveats)
 
-- [ ] **`rev_9HMnzyqCBr6f4BUEQWO4YhtW` — whole-tree folder review, left running.**
-      `review_inbox` FIRST in the next session; that call is the only thing that
-      closes the loop, because a review outlives the session that started it and
-      is abandoned after a week having concluded nothing.
-      - Scope: `mode: "folder", path: "."` — every file as it stands, no base.
-        A folder review's attestation is `reviewed tree <hash> (scoped to .)`;
-        quote the scope when relaying it.
-      - **Status at last poll: 3 findings raised, all 3 fixed and settled
-        (`open_count: 0`), review still `running` on its deeper tiers.**
-        Pinned at tree `d0889c88` (commit `a49724f`). Nothing is waiting on us;
-        the remaining step is to collect the verdict and, if it reaches
-        `passed`/`passed_partial`, `review_attest` and record the line.
-        - `59227481` (med, CWE-1051) — MEMO.md claimed "13 unit tests"/"8 tests"
-          that were never committed. Fixed by making it true: `utils.test.js`
-          (11) + `modules/twitch-eventsub/module.test.js` (7), `make test`.
-        - `3fa41fec` (low, CWE-400) — `index.js log()` appended a DOM node per
-          message with no cap while mobile.html capped at 200. Now capped to
-          match. NOTE: the finding was anchored at index.js:645, unrelated code;
-          the fix is at `log()`, marked `lore-ok[3fa41fec]` so it could settle.
-        - `8908be44` (low, CWE-1051) — REQUIREMENTS.md reward costs
-          (500/300/150) contradicted config.js (300/150/50). Corrected.
-      - Watch for the size ceiling: lore's docs say an unscoped whole-repo
-        review usually exceeds it and reads a truncated prefix. This tree is
-        ~180KB of prose (MEMO 81KB, SPEC 44KB, mobile.html 50KB) competing with
-        the code. Three findings, all in docs or one UI helper, is consistent
-        with a thorough read OR with a truncated one — so if the verdict lands
-        with nothing further, re-run scoped per directory rather than reading
-        sparse as clean.
-      - `checks_skipped`: **cargo-check and cargo-clippy did not run** ("cargo is
-        not available in the sandbox image"), so the whole Rust half is
-        unexamined by the deterministic tier — the same shape of gap as the
-        missing `package.json` below, now on both halves of the codebase. Run
-        locally instead: clean as of `f8ffbe1` (check, clippy pedantic, 15 tests).
+`rev_9HMnzyqCBr6f4BUEQWO4YhtW`, whole-tree folder review (`mode: "folder"`,
+`path: "."`). Attestation, verbatim:
 
-- [ ] **Two diff reviews of the same work DID NOT RUN** —
-      `rev_HuTfMYyVYhj1vzxnWGIfxJc4` and `rev_9XeS6LGlbISnBwHSL8x7NnvD`, both
-      `failed`: *"the base branch 'pre-bugsweep' does not exist in this
-      repository ... Branches lore can see: master."* It does exist on origin
-      (`git ls-remote --heads origin` shows it) — lore's mirror had not picked
-      it up. `pre-bugsweep` (at `ae98ce9`, the commit before the bug sweep) is
-      still pushed for a retry; delete it once it is not wanted.
-      Worth knowing generally: **only `master` exists on origin**, so any diff
-      review here needs a base branch pushed first, and lore may not see it
-      immediately.
+> lore: reviewed tree `ca612b6142b149bcf860a8001abc8dd2cfa3785c` (scoped to .)
+> against this repo's rules and lore's own — 3 tiers (t0, t2, t3) — every tier
+> that ran was z-ai, so these are not independent opinions; 1 tier(s) never left
+> a trusted read of this tree, so this is PARTIAL, 13 findings, 7 fixed,
+> 5 justified. `[ed25519:+yu8NOORV89W+RTt2dOI5pvqu/kDv/odWzKvnDn/RT/MuRiKdu+WZ+dMKD4vSKBxuD0wvWvH20z2oGCMaBN2Dg==]`
+
+**Weigh it as PARTIAL, and read the vendor line first.** "Every tier that ran
+was z-ai" means the multi-vendor independence that is the whole point of the
+tier ladder did not happen — three reads, one vendor, correlated blind spots.
+It is not a clean bill from three independent reviewers.
+
+Also did NOT run: `cargo-check` and `cargo-clippy` ("cargo is not available in
+the sandbox image"), so the Rust half had no deterministic checking here — run
+locally instead; clean at every commit in this round. t2 and t3 were answered by
+stand-in models, and t3 was at one point refused for lack of quota.
+
+The attested tree `ca612b6` is commit `cc91521`. `a37bb6a` (a lore-ok marker
+comment) came after and is NOT covered by the signature.
+
+### Findings and where they went
+
+Medium:
+- `42b76d86` — `hate()`/`love()` had no `isConnected()` guard and no
+  `return false`; a 300-pt ⚡Hate with Minaret down was marked FULFILLED having
+  done nothing, and the throttle was already stamped so the retry was refused
+  for 60s. Third instance of this class. Fixed `d126c21`.
+- `5f38687a` — LLM `monitorChat` snapshotted an absolute index into a buffer
+  that slides at its cap, so messages arriving mid-cycle were marked processed
+  unseen. The snapshot's own comment claimed to have fixed this; it fixed the
+  length race and left the shift race. Fixed via `getChatHistoryShifts()`.
+- `7b37ae12` — `bus.rs` published every `obs_config` through `watch::send`,
+  which marks changed regardless of equality, while the browser re-sends on
+  every `/obs` open — so every page reload tore down a healthy OBS session.
+  **This is manufactured reconnect churn, the one correlate the OBS-crash
+  investigation found.** Fixed with `send_if_modified` + `PartialEq`.
+
+Low: `59227481` (MEMO claimed uncommitted tests — see below), `3fa41fec`
+(unbounded log DOM growth), `8908be44` (REQUIREMENTS reward costs),
+`8bc77981`/`83017a11` (/me documented as never sent, three live paths send it),
+`aaf4f049` (`vote_skip(threshold)` ignored its argument), `44ec6249`
+(`.checked` set on a `<label>`, not the input), `c6483cdc` (music-queue SPEC's
+`now_playing` shape matched no consumer), `5635d6c5` (one `parseInt` survived
+the NaN sweep, disabling LLM health checks), `4744c348` (OBS config edits
+ignored until reload, contradicting SPEC).
+
+### The lesson worth keeping
+
+**Two false completeness claims in MEMO.md, both found by this review.** "13
+unit tests"/"8 tests" for tests that were never committed, and "all 9 call
+sites" for a sweep that covered 9 of 10. In both cases the claim is what hid
+the gap: nobody greps a thing the memo says is done. A sweep that reports
+itself complete is worth one grep. Both corrected; the tests now exist and
+`make test` runs 18 JS + 15 Rust.
+
+### If reviewing again
+
+Anchor drift cost two extra rounds: findings anchored at a line number cannot
+settle when the fix shifts that line, and the remedy is a `lore-ok[<fp>]`
+comment at the real site (see `3fa41fec` and `5635d6c5` in the code). Also,
+only `master` exists on origin, so a diff review needs a base branch pushed
+first — and lore's mirror lagged behind both a fresh branch and a fresh commit
+during this round, which killed two diff reviews outright
+(`rev_HuTfMYyVYhj1vzxnWGIfxJc4`, `rev_9XeS6LGlbISnBwHSL8x7NnvD`, both `failed`
+= did not run). `pre-bugsweep` is still on origin; delete it when unwanted.
 
 ## From the 2026-08-14 lore review (see MEMO.md)
 

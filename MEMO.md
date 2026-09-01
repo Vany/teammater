@@ -8,6 +8,39 @@ live confirmation run.)
 
 ## Recent Improvements (2026-09)
 
+### Whole-tree lore review (2026-09-01) — 13 findings, `passed_partial`
+
+`rev_9HMnzyqCBr6f4BUEQWO4YhtW`, folder mode over `.`. Full attestation, findings
+list and caveats are in TODO.md. Three things worth carrying forward here:
+
+**1. Weigh the pass as PARTIAL, and read the vendor line.** The signed line says
+"every tier that ran was z-ai, so these are not independent opinions". The tier
+ladder's value is multi-vendor cross-checking; this round had none, plus
+`cargo-check`/`cargo-clippy` could not run (no cargo in the sandbox), so the
+Rust half had no deterministic tier at all. Verified locally instead.
+
+**2. The review found the OBS-crash lead in our own code.** `7b37ae12`:
+`bus.rs` published every `obs_config` through `watch::send`, which marks the
+value changed whether or not it differs, while the browser re-sends it on every
+`/obs` open. So each page reload tore down and re-authenticated a healthy OBS
+session — manufacturing exactly the reconnect churn the crash investigation had
+identified as its only correlate (4 client connects in the one dead session vs
+1 in every clean one, dying a second after a reconnect). Now `send_if_modified`
+with `PartialEq` on `ObsConfig`. Paired with `4744c348`, which made the module
+actually re-push on a config edit — the two only work together: the equality
+check is what makes re-pushing safe.
+
+**3. Two false completeness claims in this very file, both caught here.**
+"13 unit tests"/"8 tests" for tests that were never committed (`59227481`, mine,
+written in the same sweep where I was correcting someone else's stale claim),
+and "all 9 call sites" for a NaN sweep that covered 9 of 10 (`5635d6c5` — the
+survivor silently disabled LLM health checks). Both times the claim is what hid
+the gap, because nobody greps what the memo says is done.
+**Rule: a sweep that reports itself complete is worth one grep.**
+The repo now has real JS tests — `make test`, 18 JS + 15 Rust, node's built-in
+runner, still no package.json and no build step.
+
+
 ### Bug sweep (2026-09-01): all three open bugs worked
 
 **1. "Sometimes Russian voice is not working and text is played in English"
