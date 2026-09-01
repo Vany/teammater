@@ -16,6 +16,25 @@
 import { BaseModule } from "../base-module.js";
 import { request } from "../../utils.js";
 
+/**
+ * Pick the EventSub subscriptions that belong to a dead WebSocket session.
+ *
+ * Pure so the rule is testable without a Twitch account: keep websocket-transport
+ * subscriptions whose session is NOT the one we just opened. Webhook
+ * subscriptions and our own live session are never selected.
+ *
+ * @param {Array<object>} subscriptions - `data` from GET /helix/eventsub/subscriptions
+ * @param {string} currentSessionId - session id of the socket we are on now
+ * @returns {Array<object>} subscriptions safe to delete
+ */
+export function selectStaleSubscriptions(subscriptions, currentSessionId) {
+  return (subscriptions ?? []).filter(
+    (sub) =>
+      sub?.transport?.method === "websocket" &&
+      sub.transport.session_id !== currentSessionId,
+  );
+}
+
 export class TwitchEventSubModule extends BaseModule {
   constructor() {
     super();
@@ -445,6 +464,11 @@ export class TwitchEventSubModule extends BaseModule {
       this.sessionId = msg.payload.session.id;
       this.log(`✅ EventSub session: ${this.sessionId}`);
 
+      // Clear leftovers from previous sessions BEFORE subscribing — Twitch
+      // refuses a duplicate (type + condition) with 409, and a subscription
+      // from a dead session still occupies that slot.
+      await this._pruneStaleSubscriptions();
+
       // No updateStatus(true) here — connect() sets it after doConnect()
       // resolves, which happens only if every subscription below succeeded.
       await this._subscribeAll();
@@ -515,6 +539,67 @@ export class TwitchEventSubModule extends BaseModule {
       scope: "none",
     },
   ];
+
+  /**
+   * Delete EventSub subscriptions belonging to OUR earlier WebSocket sessions.
+   *
+   * Twitch answers a create request that duplicates an existing subscription
+   * (same type + condition) with `409 subscription already exists`, and a
+   * session's subscriptions are only *disabled* when its socket dies — they
+   * keep occupying that slot. Every page reload, every dropped socket and every
+   * uncheck/recheck of this module therefore leaves a mine behind: the next
+   * connect gets 409 on ALL THREE subscriptions at once, the module goes red,
+   * and reloading does not help because reloading is what caused it.
+   *
+   * Scoped deliberately narrowly: websocket transport only, and never the
+   * session we just opened. Anything else under this client id is left alone.
+   *
+   * Consequence accepted: with two control panels open at once, the one that
+   * connects last takes the subscriptions from the other. That is last-writer-
+   * wins instead of today's second-tab-is-permanently-dead-and-says-nothing,
+   * and this app is single-instance by design — one bot, one channel.
+   *
+   * Non-fatal by design — if the listing fails we still try to subscribe, and
+   * _subscribeAll() reports the real error rather than this one masking it.
+   * @private
+   */
+  async _pruneStaleSubscriptions() {
+    try {
+      const stale = [];
+      let cursor = null;
+
+      do {
+        const url = new URL("https://api.twitch.tv/helix/eventsub/subscriptions");
+        if (cursor) url.searchParams.set("after", cursor);
+
+        const body = await (await request(url.toString())).json();
+
+        stale.push(...selectStaleSubscriptions(body.data, this.sessionId));
+        cursor = body.pagination?.cursor ?? null;
+      } while (cursor);
+
+      if (stale.length === 0) return;
+
+      // Sequential: this runs on the connect path and a burst of DELETEs is the
+      // fastest way to meet Twitch's rate limiter instead of its API.
+      let deleted = 0;
+      for (const sub of stale) {
+        try {
+          await request(
+            `https://api.twitch.tv/helix/eventsub/subscriptions?id=${encodeURIComponent(sub.id)}`,
+            { method: "DELETE" },
+          );
+          deleted++;
+        } catch (error) {
+          this.log(`⚠️ Could not delete stale subscription ${sub.type}: ${error.message}`);
+        }
+      }
+
+      this.log(`🧹 Cleared ${deleted}/${stale.length} stale EventSub subscription(s)`);
+    } catch (error) {
+      this.log(`⚠️ Stale subscription cleanup skipped: ${error.message}`);
+    }
+  }
 
   /**
    * Create every subscription, then report ALL failures together — one bad
