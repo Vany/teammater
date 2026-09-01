@@ -5,13 +5,47 @@ Estimated reduction: ~950 lines (from ~4500 to ~3500 LOC), zero functionality lo
 
 
 ## BUG
-- OBS crash when scene changed.
-  (obs-websocket 5.7.2 `strlen(NULL)` in the CurrentProgramSceneChanged broadcast.
-  Now the SERVER owns the OBS socket and its own reconnect, so the browser no
-  longer needs the wait-for-reconnect workaround — but OBS still crashes.)
-- Twitch EventSub subscription failure — ROOT CAUSE STILL UNKNOWN. The
-  false-green that hid it is fixed; the real Twitch error now prints to the
-  console on connect. Reload, re-enable EventSub, read the error.
+
+- [x] **Russian TTS spoken by an English voice** — fixed `9b9cbe4`. Both TTS
+      call sites assigned `utterance.language`; the Web Speech API property is
+      `lang`, so the utterance carried no language at all. Only visible when the
+      explicit voice lookup ALSO missed, which it does until the engine's async
+      `voiceschanged` populates `getVoices()` — hence "sometimes".
+
+- [ ] **OBS crash when scene changed — NOT REPRODUCING, and the old note was
+      wrong.** Checked against `~/Library/Application Support/obs-studio/logs/`
+      on 2026-09-01 (10 retained sessions, 2026-07-12 → 2026-08-28):
+      - obs-websocket is **5.7.4 in every retained log**, including the crashed
+        one. The "5.7.2 `strlen(NULL)`" attribution was never true here.
+      - Exactly ONE session ever ended abnormally: `2026-08-14 19-31-03.txt`,
+        which stops mid-log with no shutdown block, and there is no crash
+        report in `~/Library/Logs/DiagnosticReports/`.
+      - All 8 sessions since ended cleanly, across 29 scene switches.
+      - The correlation in the data is reconnect churn, not scene count: the
+        crashed session is the only one with 4 obs-websocket client connects
+        (clean sessions have 1, two have 3), and it died one second after a
+        reconnect — not on a scene switch.
+      Acted on what is ours: the server now closes the OBS WebSocket with a
+      Close frame instead of dropping it (`38d5bb4`) — every disconnect used to
+      reach OBS as an abrupt `1006 End of File`. Correctness, not a proven fix.
+      If it recurs: capture the OBS log tail and the server log for the same
+      minute, and check the reconnect count first.
+
+- [ ] **Twitch EventSub subscription failure — likely fixed, UNCONFIRMED.**
+      Stays open until read from a live console.
+      Best-supported cause: Twitch answers a duplicate subscription (same type
+      + condition) with `409 subscription already exists`, and a WebSocket
+      session's subscriptions are only *disabled* when its socket dies — they
+      keep the slot. Every reload/drop/recheck therefore poisoned the next
+      connect, and all three subscriptions failed together. That fits every
+      observed detail: raid and stream.online need no scope, so a scope problem
+      could never explain them failing too, and reloading never helped because
+      reloading is what armed it. `_pruneStaleSubscriptions()` now clears them
+      before subscribing (`0aa0391`).
+      **To close this: connect once and read the console.** Expect
+      `🧹 Cleared N stale EventSub subscription(s)` followed by three
+      `✅ Subscribed:` lines. If one still fails, the message now carries the
+      real Twitch status and body — record it here.
 
 
 ## From the 2026-08-14 lore review (see MEMO.md)

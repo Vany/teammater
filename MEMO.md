@@ -2,9 +2,74 @@
 
 # BUGS
 
-- some time russian detector for voice is not working and text played in english
+(none open in code — the three that were here are resolved or reclassified;
+see "Bug sweep (2026-09-01)" below and TODO.md for the two that still need one
+live confirmation run.)
 
+## Recent Improvements (2026-09)
 
+### Bug sweep (2026-09-01): all three open bugs worked
+
+**1. "Sometimes Russian voice is not working and text is played in English"
+— root-caused and fixed (`9b9cbe4`).**
+
+One typo, two call sites: `utterance.language = targetLanguage` in
+`actions.js` `voice()` and `index.js` `speak()`. `SpeechSynthesisUtterance`
+has no `language` property — the API name is `lang` — so the assignment made a
+dead expando and the utterance went out with `lang === ""`, i.e. no language at
+all, and the engine used its default voice: English.
+
+Why "sometimes" and not "always": the bug was masked whenever the explicit
+voice lookup succeeded, and that lookup is a race. It did
+`voices.find(v => v.lang === "ru-RU")` over `speechSynthesis.getVoices()`,
+which returns an **empty array** until the engine asynchronously fires
+`voiceschanged`. Utterance before that -> no voice AND no lang -> English.
+Utterance after -> voice found -> Russian. Identical input, different output,
+decided purely by timing. Two independent weaknesses that only produced a
+symptom together, which is why it read as flaky rather than broken.
+
+Fix: `pickVoice()` in `utils.js` (primary-subtag match, exact region
+preferred, case/`ru_RU`-separator normalized) plus the real `lang` property.
+`pickVoice` returning null is now a normal path, not a failure — with `lang`
+set the engine resolves a voice itself. 13 unit tests.
+
+**2. OBS crash on scene change — the recorded cause was wrong, and it no
+longer reproduces.** See TODO.md for the log evidence. Short version:
+obs-websocket has been **5.7.4** in every retained OBS log, so the
+"5.7.2 `strlen(NULL)`" attribution never applied to this machine; exactly one
+session ever died (2026-08-14) and 8 clean sessions with 29 scene switches
+have followed. The only correlate is obs-websocket client reconnect churn (4
+connects in the dead session vs 1 in the clean ones), and it died one second
+after a reconnect rather than on a scene switch. Ours to fix on that path: the
+server dropped the OBS socket without a close handshake on every exit, so OBS
+logged every disconnect as `1006 End of File`; it now sends a Close frame
+(`38d5bb4`). Correctness, explicitly NOT claimed as the crash fix.
+
+Lesson worth keeping: the bug note asserted a version and a stack frame that
+the machine's own logs contradict. OBS logs (`~/Library/Application Support/
+obs-studio/logs/`) and `~/Library/Logs/DiagnosticReports/` are ground truth and
+were never consulted. Check them before theorising next time.
+
+**3. EventSub subscription failure — cause identified, fix shipped, one live
+run still needed to confirm (`0aa0391`).**
+
+The decisive clue was in `c4c4575`'s own message: *every* subscription failed.
+`channel.raid` and `stream.online` require no scope, so no scope or
+affiliate-status theory can explain all three failing together — the cause had
+to be common to the request itself. Twitch rejects a subscription that
+duplicates an existing one (same type + condition) with
+`409 subscription already exists`, and per Twitch's docs a WebSocket session's
+subscriptions are only *disabled* when the socket dies — they keep occupying
+that slot. So each page reload, dropped socket, or module uncheck/recheck
+armed the next connect to fail on all three at once, and reloading could not
+clear it because reloading is what caused it.
+
+`_pruneStaleSubscriptions()` deletes our websocket-transport subscriptions
+that are not on the session we just opened, before subscribing. Selection is a
+pure exported function (`selectStaleSubscriptions`) so the rule is testable
+without a Twitch account — 8 tests. Still unconfirmed against live Twitch; if
+409 turns out not to be it, the next connect prints the real error with this
+one no longer stacked on top.
 
 ## Recent Improvements (2026-08)
 
