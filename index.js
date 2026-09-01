@@ -682,6 +682,10 @@ function setupUIListeners() {
 // UTILITY FUNCTIONS
 // ============================
 
+// lore-ok[3fa41fec]: fixed here, in log() below. The finding was anchored at
+// index.js:645 (inside the voice-actions menu, unrelated code) while the
+// unbounded append it describes is in log(), so the trim landed here instead
+// of at the anchor line.
 /** Log lines kept in the panel. Matches mobile.html's MAX_LINES — this page is
  *  the one that stays open for a whole stream, so it needs the cap MORE than
  *  the phone does, not less. Without it #output grew a DOM node per chat
