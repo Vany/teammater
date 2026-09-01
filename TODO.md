@@ -58,6 +58,37 @@ Estimated reduction: ~950 lines (from ~4500 to ~3500 LOC), zero functionality lo
       Twitch's real status and body.
 
 
+## OPEN LORE REVIEW — collect it (2026-09-01)
+
+- [ ] **`rev_9HMnzyqCBr6f4BUEQWO4YhtW` — whole-tree folder review, left running.**
+      `review_inbox` FIRST in the next session; that call is the only thing that
+      closes the loop, because a review outlives the session that started it and
+      is abandoned after a week having concluded nothing.
+      - Scope: `mode: "folder", path: "."` — every file as it stands, no base.
+        A folder review's attestation is `reviewed tree <hash> (scoped to .)`;
+        quote the scope when relaying it.
+      - Ran ~2h with `open_count: 0` and no tier emitting anything. Watch for
+        the size ceiling: lore's docs say an unscoped whole-repo review usually
+        exceeds it and reads a truncated prefix. This tree is ~180KB of prose
+        (MEMO 81KB, SPEC 44KB, mobile.html 50KB) competing with the code. If it
+        comes back thin, re-run scoped per directory rather than trusting it.
+      - `checks_skipped`: **cargo-check and cargo-clippy did not run** ("cargo is
+        not available in the sandbox image"), so the whole Rust half is
+        unexamined by the deterministic tier — the same shape of gap as the
+        missing `package.json` below, now on both halves of the codebase. Run
+        locally instead: clean as of `f8ffbe1` (check, clippy pedantic, 15 tests).
+
+- [ ] **Two diff reviews of the same work DID NOT RUN** —
+      `rev_HuTfMYyVYhj1vzxnWGIfxJc4` and `rev_9XeS6LGlbISnBwHSL8x7NnvD`, both
+      `failed`: *"the base branch 'pre-bugsweep' does not exist in this
+      repository ... Branches lore can see: master."* It does exist on origin
+      (`git ls-remote --heads origin` shows it) — lore's mirror had not picked
+      it up. `pre-bugsweep` (at `ae98ce9`, the commit before the bug sweep) is
+      still pushed for a retry; delete it once it is not wanted.
+      Worth knowing generally: **only `master` exists on origin**, so any diff
+      review here needs a base branch pushed first, and lore may not see it
+      immediately.
+
 ## From the 2026-08-14 lore review (see MEMO.md)
 
 - [ ] **Prevent the recurring context-shape bug.** Four findings were the same
