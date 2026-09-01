@@ -67,11 +67,27 @@ Estimated reduction: ~950 lines (from ~4500 to ~3500 LOC), zero functionality lo
       - Scope: `mode: "folder", path: "."` — every file as it stands, no base.
         A folder review's attestation is `reviewed tree <hash> (scoped to .)`;
         quote the scope when relaying it.
-      - Ran ~2h with `open_count: 0` and no tier emitting anything. Watch for
-        the size ceiling: lore's docs say an unscoped whole-repo review usually
-        exceeds it and reads a truncated prefix. This tree is ~180KB of prose
-        (MEMO 81KB, SPEC 44KB, mobile.html 50KB) competing with the code. If it
-        comes back thin, re-run scoped per directory rather than trusting it.
+      - **Status at last poll: 3 findings raised, all 3 fixed and settled
+        (`open_count: 0`), review still `running` on its deeper tiers.**
+        Pinned at tree `d0889c88` (commit `a49724f`). Nothing is waiting on us;
+        the remaining step is to collect the verdict and, if it reaches
+        `passed`/`passed_partial`, `review_attest` and record the line.
+        - `59227481` (med, CWE-1051) — MEMO.md claimed "13 unit tests"/"8 tests"
+          that were never committed. Fixed by making it true: `utils.test.js`
+          (11) + `modules/twitch-eventsub/module.test.js` (7), `make test`.
+        - `3fa41fec` (low, CWE-400) — `index.js log()` appended a DOM node per
+          message with no cap while mobile.html capped at 200. Now capped to
+          match. NOTE: the finding was anchored at index.js:645, unrelated code;
+          the fix is at `log()`, marked `lore-ok[3fa41fec]` so it could settle.
+        - `8908be44` (low, CWE-1051) — REQUIREMENTS.md reward costs
+          (500/300/150) contradicted config.js (300/150/50). Corrected.
+      - Watch for the size ceiling: lore's docs say an unscoped whole-repo
+        review usually exceeds it and reads a truncated prefix. This tree is
+        ~180KB of prose (MEMO 81KB, SPEC 44KB, mobile.html 50KB) competing with
+        the code. Three findings, all in docs or one UI helper, is consistent
+        with a thorough read OR with a truncated one — so if the verdict lands
+        with nothing further, re-run scoped per directory rather than reading
+        sparse as clean.
       - `checks_skipped`: **cargo-check and cargo-clippy did not run** ("cargo is
         not available in the sandbox image"), so the whole Rust half is
         unexamined by the deterministic tier — the same shape of gap as the
