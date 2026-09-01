@@ -267,6 +267,12 @@ The application uses a clean modular architecture with **8 independent modules**
 - [x] Dropped frames tracking and alerts
 - [x] Scene list maintenance and current scene tracking
 - [x] Auto-reconnection with configurable delay; reconnects when config changes
+      — the browser module watches its own `obs_url`/`obs_password` inputs and
+      re-pushes `obs_config` on edit (`_watchConnectionConfig`), and the server
+      only acts on a value that actually differs (`send_if_modified`, bus.rs).
+      This line described intent rather than behaviour until 2026-09-01: the
+      config was sent from `ws.onopen` alone, so a mid-stream edit was ignored
+      until a full page reload
 - [x] Poll-based status updates (2s default)
 - [x] Control API: switch scene, start/stop/pause/resume record
 - [x] State broadcast to all `/obs` bus clients on change

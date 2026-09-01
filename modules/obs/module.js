@@ -98,6 +98,9 @@ export class OBSModule extends BaseModule {
 
     this.updateCustomIndicators();
 
+    // Attach after super.initialize() has built the config panel.
+    this._watchConnectionConfig();
+
     const configPanel = this.ui.container.querySelector(".config-panel");
     const btn = document.createElement("button");
     btn.textContent = "👓 Glasses + Refresh";
@@ -108,6 +111,53 @@ export class OBSModule extends BaseModule {
       obs_scene(scene, source)({ obs: this, log: this.log.bind(this) });
     };
     configPanel.appendChild(btn);
+  }
+
+  /**
+   * Send the OBS Studio url+password to the server over the bus.
+   *
+   * The server owns the OBS connection; this is the only way it learns where to
+   * connect. Safe to call repeatedly — the server compares before publishing
+   * (`send_if_modified` in bus.rs), so an identical push is a no-op rather than
+   * a reconnect.
+   * @private
+   */
+  _pushObsConfig() {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    this.ws.send(
+      JSON.stringify({
+        type: "obs_config",
+        url: this.getConfigValue("url", "ws://localhost:4455"),
+        password: this.getConfigValue("password", ""),
+      }),
+    );
+  }
+
+  /**
+   * Re-push OBS config when the url/password fields are edited.
+   *
+   * SPEC.md has always claimed this module "reconnects when config changes",
+   * but obs_config was only ever sent from ws.onopen — a mid-stream password
+   * edit was written to localStorage and then ignored until a full page reload,
+   * while the server retried the stale credential at a backoff growing to 300s
+   * and the panel showed the new value as saved. UIBuilder's fields only write
+   * localStorage and expose no module callback, so the listener is attached
+   * here, to this module's own two inputs.
+   * @private
+   */
+  _watchConnectionConfig() {
+    for (const key of ["obs_url", "obs_password"]) {
+      const input = this.ui.container?.querySelector(`[stored_as="${key}"]`);
+      // Fail loud rather than silently reinstating the bug this fixes.
+      if (!input) {
+        this.log(`💥 OBS config field ${key} not found — edits will not apply`);
+        continue;
+      }
+      input.addEventListener("change", () => {
+        this.log("📺 OBS connection config changed, pushing to server...");
+        this._pushObsConfig();
+      });
+    }
   }
 
   async doConnect() {
@@ -126,9 +176,7 @@ export class OBSModule extends BaseModule {
         this.updateStatus(true);
         this.log("✅ Connected to OBS bus");
         // Push OBS connection config so server can connect to OBS Studio
-        const obsUrl = this.getConfigValue("url", "ws://localhost:4455");
-        const obsPassword = this.getConfigValue("password", "");
-        this.ws.send(JSON.stringify({ type: "obs_config", url: obsUrl, password: obsPassword }));
+        this._pushObsConfig();
         this._startViewerPoll();
       };
 
