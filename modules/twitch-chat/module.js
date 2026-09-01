@@ -28,6 +28,12 @@ export class TwitchChatModule extends BaseModule {
     this.userIdCache = {};
     this.chatHistory = this._loadChatHistory();
     this.chatMarkerPosition = this.chatHistory.length; // mark all restored as already seen
+    // Monotonic count of messages dropped off the FRONT of chatHistory. Indexes
+    // into chatHistory are only stable relative to this: once the buffer is at
+    // its cap every arrival shifts everything down by one. Anyone holding an
+    // index across an await must subtract the shifts that happened meanwhile —
+    // see getChatHistoryShifts() and LLMModule.monitorChat().
+    this.chatHistoryShifts = 0;
     this.messageHandlers = []; // Array of {priority, handler} objects
     this.followingSet = new Set();    // lowercase logins we follow (friends)
     this.watchingFriends = new Set(); // friends detected via IRC JOIN (watching stream, bold)
@@ -474,6 +480,7 @@ export class TwitchChatModule extends BaseModule {
 
     if (this.chatHistory.length > historySize) {
       this.chatHistory.shift();
+      this.chatHistoryShifts++;
       if (this.chatMarkerPosition > 0) {
         this.chatMarkerPosition--;
       }
@@ -583,6 +590,20 @@ export class TwitchChatModule extends BaseModule {
    */
   setChatMarkerPosition(position) {
     this.chatMarkerPosition = position;
+  }
+
+  /**
+   * Total messages dropped off the front of chatHistory since startup.
+   *
+   * Read this before an await and again after, and subtract the difference from
+   * any chatHistory index you captured: while the buffer sits at its cap — the
+   * normal state on an active stream — every new message shifts all indexes
+   * down by one, so a stale index silently points past the messages that
+   * arrived meanwhile.
+   * @returns {number}
+   */
+  getChatHistoryShifts() {
+    return this.chatHistoryShifts;
   }
 
   /**

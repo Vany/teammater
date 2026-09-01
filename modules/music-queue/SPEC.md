@@ -193,9 +193,16 @@ Watchdog does not run when playing My Vibes (fallback, not queued content).
 
 Module opens its own WebSocket to `/obs` (same broadcast bus as heart rate).
 
-Broadcasts on **every** `music_start` / `youtube_ready`:
+Broadcasts on **every** `music_start` / `youtube_ready`. The message is FLAT and
+carries `type` — every consumer dispatches on `msg.type` (`mobile.html`'s
+`case 'now_playing':`, `obs.js`'s `msg.type === 'now_playing'`), so the nested
+`{ "now_playing": {...} }` shape this file used to document would be silently
+ignored by all of them. Root `SPEC.md`'s bus-protocol section is authoritative
+and already had it right:
 ```json
-{ "now_playing": { "artist": "Artist Name", "title": "Track Title", "queue_size": 3 } }
+{ "type": "now_playing", "title": "Track Title", "artist": "Artist Name",
+  "version": "", "cover": "https://...", "coverFallback": null,
+  "source": "", "url": "", "queue_size": 3, "paused": false }
 ```
 
 Also broadcasts after `smartAdd` (queue size update) and `clear()`.

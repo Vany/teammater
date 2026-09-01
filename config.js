@@ -263,7 +263,7 @@ export function getDefaultRewards() {
       prompt: "Vote for skip current song",
       background_color: "#FF3B3B",
       is_enabled: true,
-      action: vote_skip(3), // Initialize with vote threshold
+      action: vote_skip(), // threshold lives in the Music Queue module config
     },
     playing: {
       title: "What is playing?",

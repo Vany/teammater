@@ -11,8 +11,9 @@
 - [x] Speech synthesis for !voice commands
 - [x] Minecraft server integration via commands
 - [x] Cross-tab communication for music control
-- [x] Regular chat messages. NOT implemented: private whispers, action
-  messages and announcements — no /helix/whispers or /helix/chat/announcements
+- [x] Regular chat messages AND action (/me) messages — see the Enhanced
+  Messaging section below for where /me is sent. NOT implemented: private
+  whispers and announcements — no /helix/whispers or /helix/chat/announcements
   call exists in the modular codebase
 - [x] Automated message moderation with configurable pattern matching
 
@@ -60,8 +61,11 @@ give `pinMessageById()` an id to pin — does not exist in the modular codebase.
   * Uses `is_enabled` flag for complete visibility control (hidden when disabled)
 
 ## Enhanced Messaging System
-- [ ] Action Messages (!me command) — no handler; the IRC ACTION format is only
-      PARSED on incoming messages, never sent
+- [x] Action Messages (/me) — SENT on three live paths: `love()` via
+      `sendAction()`, and `vote_skip()` / `playing()` via literal `/me`
+      PRIVMSGs. There is no `!me` CHAT COMMAND (that handler was dropped in the
+      rewrite) but the bot does emit ACTION messages — the two are different
+      claims and this line used to conflate them into a false one.
 - [ ] Colored Announcements (!announce command) — no handler and no
       /helix/chat/announcements call. Would also need the
       moderator:manage:announcements scope, which is not requested

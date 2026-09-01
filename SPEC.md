@@ -859,8 +859,11 @@ Available rewards:
 - [x] Stream preset management with auto-apply
 - [x] Reward enable/disable based on preset
 - [x] Message moderation with configurable rules (AND/OR logic)
-- [ ] Multiple message types — chat only; whisper, action and announcement
-      were never carried into the modular version
+- [ ] Multiple message types — chat AND action (/me) work; whisper and
+      announcement were never carried into the modular version. /me is sent by
+      `love()` (via `sendAction()`) and by `vote_skip()` / `playing()`; the
+      earlier "action was never carried over" claim here contradicted this
+      file's own live-feature list a few hundred lines up.
 - [x] Minecraft server integration
 - [x] Yandex Music queue with cross-tab control
 - [x] LLM chat monitoring and responses

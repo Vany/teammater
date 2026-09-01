@@ -57,11 +57,23 @@ export function hate(
     const {
       sendCommandMinaret,
       sendMessageMinaret,
+      minecraft,
       throttle,
       love_timer,
       mp3,
       log,
     } = context;
+
+    // Every effect this reward has is a Minecraft command. With the module
+    // unchecked or Minaret down, sendCommandMinaret logs and returns false,
+    // this closure returned undefined, and ActionRegistry reads anything but a
+    // literal `false` as success — so 300 points bought nothing, silently, and
+    // the throttle below would still refuse the viewer's retry for 60s.
+    // Checked BEFORE the throttle is stamped, for that reason.
+    if (!minecraft?.isConnected()) {
+      log(`❌ Hate from ${user} refused: Minecraft not connected`);
+      return false;
+    }
 
     // Get commands dynamically from localStorage
     const commands = getMinecraftCommands();
@@ -119,13 +131,22 @@ export function love(
   chatAction = "dances with joy! 💃✨",
 ) {
   return (context, user, message) => {
-    const { sendMessageMinaret, sendAction } = context;
+    const { sendMessageMinaret, sendAction, minecraft, log } = context;
+
+    // Same reward-fulfilled-on-failure trap as hate() above: the Minecraft
+    // message is half of what 200 points buys, and a disconnected module made
+    // it a no-op that still returned undefined = success.
+    if (!minecraft?.isConnected()) {
+      log(`❌ Love from ${user} refused: Minecraft not connected`);
+      return false;
+    }
 
     sendMessageMinaret(minecraftMessage);
     sendAction(chatAction);
 
     // Update love protection timer
     context.love_timer = Date.now();
+    return true;
   };
 }
 
@@ -232,10 +253,16 @@ export function music() {
 
 /**
  * Vote skip action initializer: creates configured vote skip action
- * @param {number} threshold - Number of votes needed to skip
+ *
+ * Takes NO threshold. It used to accept one and never read it — the closure
+ * delegates to musicQueue.voteSkip(), whose count comes from the Music Queue
+ * module's `vote_skip_threshold` config field. An argument here was a silent
+ * no-op that the JSDoc actively advertised as the control surface, so
+ * `vote_skip(5)` in config.js still skipped at 3. Change it in the module's
+ * gear panel instead.
  * @returns {Function} - closure(context, user, message) => void
  */
-export function vote_skip(threshold = 3) {
+export function vote_skip() {
   return (context, user, message) => {
     const { musicQueue, ws, CHANNEL, log, send_twitch } = context;
 

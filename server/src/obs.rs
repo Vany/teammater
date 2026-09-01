@@ -15,7 +15,12 @@ use tracing::{error, info, warn};
 
 /// OBS connection config pushed by the browser module on connect.
 /// Empty url means "not configured yet — wait".
-#[derive(Clone, Debug, Default)]
+///
+/// `PartialEq` matters: the browser re-sends `obs_config` on EVERY /obs open, and
+/// `watch::Sender::send` marks the value changed whether or not it differs, so
+/// without an equality check each page reload tore down and rebuilt a perfectly
+/// healthy OBS session. See `route_incoming` in bus.rs.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ObsConfig {
     pub url: String,
     pub password: String,

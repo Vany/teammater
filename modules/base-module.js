@@ -266,7 +266,14 @@ export class BaseModule {
         `❌ ${this.getDisplayName()} missing config: ${missing.join(", ")}`,
       );
       this.setEnabled(false);
-      if (this.ui.enableCheckbox) this.ui.enableCheckbox.checked = false;
+      // ui.enableCheckbox is the wrapping <label> that createEnableCheckbox
+      // returns, NOT the input — `label.checked = false` just set a property
+      // nothing reads, so the box stayed visually ticked while the module was
+      // off and `*_enabled=false` was already persisted. Reach the real input.
+      const enableInput = this.ui.enableCheckbox?.querySelector(
+        "input[type=checkbox]",
+      );
+      if (enableInput) enableInput.checked = false;
       if (this.ui.configPanel)
         this.ui.configPanel.classList.remove("collapsed");
       this.updateStatus(false);

@@ -146,8 +146,28 @@ async fn route_incoming(
             let url = v["url"].as_str().unwrap_or_default().to_string();
             let password = v["password"].as_str().unwrap_or_default().to_string();
             if !url.is_empty() {
-                info!("🎬 OBS config: {url}");
-                let _ = state.obs_config_tx.send(ObsConfig { url, password });
+                // Only publish a CHANGE. The browser sends obs_config on every
+                // /obs open, and watch::send marks the value changed even when
+                // it is identical — so a plain send() made every page reload
+                // (and every bus reconnect after a network blip) break the OBS
+                // session and re-authenticate, for config that did not change.
+                // That is manufactured reconnect churn, and churn is the one
+                // correlate the OBS-crash investigation in TODO.md actually
+                // found: the single session that ever died had 4 client
+                // connects against 1 in every clean one, and died a second
+                // after a reconnect.
+                let next = ObsConfig { url, password };
+                let changed = state.obs_config_tx.send_if_modified(|cur| {
+                    if *cur == next {
+                        false
+                    } else {
+                        *cur = next;
+                        true
+                    }
+                });
+                if changed {
+                    info!("🎬 OBS config changed: {}", state.obs_config_tx.borrow().url);
+                }
             }
         }
         t if t.starts_with("cmd_") => {

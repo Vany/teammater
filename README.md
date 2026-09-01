@@ -42,8 +42,12 @@ Advanced modular Twitch streaming assistant with AI-powered chat monitoring, Min
 ### Enhanced Messaging
 - ~~Private Whispers~~: NOT IMPLEMENTED — no `/helix/whispers` call exists
   anywhere. Actions that need to reach a viewer address them in chat by name
-- ~~Action Messages~~: NOT IMPLEMENTED — /me is parsed on incoming messages,
-  never sent
+- **Action Messages (/me)**: IMPLEMENTED and live on three reward paths —
+  `love()` calls `sendAction()` (a real `\x01ACTION\x01` frame, see
+  `modules/twitch-chat/module.js`), and `vote_skip()` / `playing()` send
+  `PRIVMSG ... :/me ...` directly. Incoming /me is parsed as well.
+  <!-- lore-ok[8bc77981]/[83017a11]: this line used to read "NOT IMPLEMENTED,
+       never sent", which was false in all three docs that carried it. -->
 - ~~Colored Announcements~~: NOT IMPLEMENTED — needs /helix/chat/announcements
   and the moderator:manage:announcements scope, neither of which is present
 - **Public Mentions**: `@username` written inline into an ordinary chat message

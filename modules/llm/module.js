@@ -1553,7 +1553,20 @@ Disallowed (use mute tool):
     // re-run then found marker >= length and did nothing. On a busy chat that
     // is the normal case, not an edge. Declared outside the try so the catch
     // path advances to the same boundary.
+    // ...and the snapshot is an index into a buffer that SLIDES. Once
+    // chatHistory is at its cap every arrival shifts it down by one, so the
+    // absolute index above ages out of date at exactly the same rate messages
+    // arrive — marking them processed anyway, which is the bug the snapshot was
+    // meant to prevent, surviving in its second form. Record the shift count so
+    // the boundary can be re-based onto the buffer as it is AFTER the loop.
+    const shiftsAtStart = chatModule.getChatHistoryShifts();
     const processedUpTo = chatHistory.length;
+
+    /** Re-base the snapshot onto the current buffer and commit it. */
+    const commitMarker = () => {
+      const shifted = chatModule.getChatHistoryShifts() - shiftsAtStart;
+      chatModule.setChatMarkerPosition(Math.max(0, processedUpTo - shifted));
+    };
 
     try {
       const chatLog = chatModule.formatChatHistoryForLLM();
@@ -1593,12 +1606,12 @@ ${this.getConfigValue("rules", "") || this.getConfig().features.rules.default}`,
 
       // Advance to the snapshot, NOT the live length — anything that arrived
       // during the loop stays unprocessed and is picked up by the next run.
-      chatModule.setChatMarkerPosition(processedUpTo);
+      commitMarker();
       this._setIndicator("idle");
     } catch (error) {
       // Advance even on failure to avoid retrying the same batch — but only to
       // the snapshot, for the same reason as the success path.
-      chatModule.setChatMarkerPosition(processedUpTo);
+      commitMarker();
       this._setIndicator("error");
       this.log(`💥 LLM processing error: ${error.message}`);
     }
