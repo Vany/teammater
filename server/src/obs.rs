@@ -178,29 +178,43 @@ async fn run_obs_session(
     poll.tick().await; // skip first immediate tick
     let mut last_stream_bytes: Option<u64> = None;
 
-    loop {
-        tokio::select! {
-            msg = ws_rx.next() => match msg {
-                None => break,
-                Some(Err(e)) => { warn!("🎬 WS read error: {e}"); break; }
-                Some(Ok(m)) => handle_ws_msg(m, broadcast_tx, obs_state, &mut last_stream_bytes).await?,
-            },
-            _ = poll.tick() => {
-                send_req(&mut ws_tx, "GetStreamStatus", "GetStreamStatus", json!({})).await?;
-                send_req(&mut ws_tx, "GetRecordStatus", "GetRecordStatus", json!({})).await?;
-            },
-            cmd = cmd_rx.recv() => match cmd {
-                None => return Ok(()), // channel closed = shutdown signal
-                Some(cmd) => exec_cmd(&mut ws_tx, cmd).await?,
-            },
-            Ok(()) = config_rx.changed() => {
-                warn!("🎬 OBS config changed, reconnecting...");
-                break;
-            },
+    // The loop is an async block so that EVERY way out of it — break, the
+    // shutdown return, and the `?` error paths — lands on the close handshake
+    // below instead of dropping the socket where it stands.
+    let outcome: Result<()> = async {
+        loop {
+            tokio::select! {
+                msg = ws_rx.next() => match msg {
+                    None => break,
+                    Some(Err(e)) => { warn!("🎬 WS read error: {e}"); break; }
+                    Some(Ok(m)) => handle_ws_msg(m, broadcast_tx, obs_state, &mut last_stream_bytes).await?,
+                },
+                _ = poll.tick() => {
+                    send_req(&mut ws_tx, "GetStreamStatus", "GetStreamStatus", json!({})).await?;
+                    send_req(&mut ws_tx, "GetRecordStatus", "GetRecordStatus", json!({})).await?;
+                },
+                cmd = cmd_rx.recv() => match cmd {
+                    None => return Ok(()), // channel closed = shutdown signal
+                    Some(cmd) => exec_cmd(&mut ws_tx, cmd).await?,
+                },
+                Ok(()) = config_rx.changed() => {
+                    warn!("🎬 OBS config changed, reconnecting...");
+                    break;
+                },
+            }
         }
+        Ok(())
     }
+    .await;
 
-    Ok(())
+    // Close the WebSocket properly rather than letting the TCP socket die with
+    // the task. Every disconnect this server has ever made shows up in the OBS
+    // log as `code 1006 ... reason: End of File` — an abrupt EOF, even on a
+    // clean config change or shutdown. Best-effort: if the peer is already gone
+    // there is nothing to hand it, and the session outcome is what matters.
+    let _ = ws_tx.send(WsMsg::Close(None)).await;
+
+    outcome
 }
 
 // ──────────────────────────────────────────────────── message handling ──
