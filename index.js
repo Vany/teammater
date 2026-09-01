@@ -682,10 +682,19 @@ function setupUIListeners() {
 // UTILITY FUNCTIONS
 // ============================
 
+/** Log lines kept in the panel. Matches mobile.html's MAX_LINES — this page is
+ *  the one that stays open for a whole stream, so it needs the cap MORE than
+ *  the phone does, not less. Without it #output grew a DOM node per chat
+ *  message for the life of the tab. */
+const MAX_LOG_LINES = 200;
+
 function log(msg) {
   const div = document.createElement("div");
   div.textContent = msg;
   DOM.output.appendChild(div);
+  while (DOM.output.children.length > MAX_LOG_LINES) {
+    DOM.output.removeChild(DOM.output.firstChild);
+  }
   DOM.output.scrollTop = DOM.output.scrollHeight;
   console.log(msg);
 }
