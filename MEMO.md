@@ -50,8 +50,21 @@ the machine's own logs contradict. OBS logs (`~/Library/Application Support/
 obs-studio/logs/`) and `~/Library/Logs/DiagnosticReports/` are ground truth and
 were never consulted. Check them before theorising next time.
 
-**3. EventSub subscription failure — cause identified, fix shipped, one live
-run still needed to confirm (`0aa0391`).**
+**3. EventSub subscription failure — root-caused, fixed and CONFIRMED live
+(`0aa0391`).**
+
+Confirming run, 2026-09-01:
+```
+✅ EventSub session: <session-id>
+🧹 Cleared 3/3 stale EventSub subscription(s)
+✅ Subscribed: channel.channel_points_custom_reward_redemption.add
+✅ Subscribed: channel.raid
+✅ Subscribed: stream.online
+```
+The count is the evidence. **3** stale subscriptions is exactly one previous
+session's worth, holding exactly the three type+condition slots the new ones
+needed — the 409 collision caught in the act rather than inferred. With them
+cleared, all three subscribed on the first attempt.
 
 The decisive clue was in `c4c4575`'s own message: *every* subscription failed.
 `channel.raid` and `stream.online` require no scope, so no scope or
@@ -67,9 +80,14 @@ clear it because reloading is what caused it.
 `_pruneStaleSubscriptions()` deletes our websocket-transport subscriptions
 that are not on the session we just opened, before subscribing. Selection is a
 pure exported function (`selectStaleSubscriptions`) so the rule is testable
-without a Twitch account — 8 tests. Still unconfirmed against live Twitch; if
-409 turns out not to be it, the next connect prints the real error with this
-one no longer stacked on top.
+without a Twitch account — 8 tests.
+
+Method note worth keeping: this one was solved by reading `c4c4575`'s own
+commit message rather than the code. "Every subscription silently failed" was
+the whole answer — `channel.raid` and `stream.online` need no scope, so every
+scope- and affiliate-status theory was dead on arrival, and the cause had to be
+something common to the request itself. The bug had been "root cause unknown"
+for two weeks while the message describing it sat in git.
 
 ## Recent Improvements (2026-08)
 

@@ -31,9 +31,20 @@ Estimated reduction: ~950 lines (from ~4500 to ~3500 LOC), zero functionality lo
       If it recurs: capture the OBS log tail and the server log for the same
       minute, and check the reconnect count first.
 
-- [ ] **Twitch EventSub subscription failure — likely fixed, UNCONFIRMED.**
-      Stays open until read from a live console.
-      Best-supported cause: Twitch answers a duplicate subscription (same type
+- [x] **Twitch EventSub subscription failure — FIXED and CONFIRMED live
+      (2026-09-01).** Console on the confirming connect:
+      ```
+      ✅ EventSub session: <session-id>
+      🧹 Cleared 3/3 stale EventSub subscription(s)
+      ✅ Subscribed: channel.channel_points_custom_reward_redemption.add
+      ✅ Subscribed: channel.raid
+      ✅ Subscribed: stream.online
+      ```
+      **3/3** is the proof, not just a green light: exactly one previous
+      session's worth of subscriptions was still holding exactly the three
+      type+condition slots the new ones needed. That is the 409 collision
+      caught in the act, and with them cleared all three subscribed first try.
+      Cause: Twitch answers a duplicate subscription (same type
       + condition) with `409 subscription already exists`, and a WebSocket
       session's subscriptions are only *disabled* when its socket dies — they
       keep the slot. Every reload/drop/recheck therefore poisoned the next
@@ -42,10 +53,9 @@ Estimated reduction: ~950 lines (from ~4500 to ~3500 LOC), zero functionality lo
       could never explain them failing too, and reloading never helped because
       reloading is what armed it. `_pruneStaleSubscriptions()` now clears them
       before subscribing (`0aa0391`).
-      **To close this: connect once and read the console.** Expect
-      `🧹 Cleared N stale EventSub subscription(s)` followed by three
-      `✅ Subscribed:` lines. If one still fails, the message now carries the
-      real Twitch status and body — record it here.
+      If it ever regresses, `🧹 Cleared N/M` is the line to read: N < M means
+      deletes are being refused, and a `❌ Subscribe failed:` line now carries
+      Twitch's real status and body.
 
 
 ## From the 2026-08-14 lore review (see MEMO.md)
