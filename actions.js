@@ -30,7 +30,7 @@ import {
   getBroadcasterUsername,
 } from "./config.js";
 
-import { detectLanguage } from "./utils.js";
+import { detectLanguage, pickVoice } from "./utils.js";
 
 // ============================
 // MINECRAFT ACTIONS
@@ -373,59 +373,45 @@ export function voice(voiceConfig = {}) {
       ? config.language
       : languageMap[detectedLang];
 
-    // Create and configure speech synthesis
+    // Create and configure speech synthesis.
+    // `lang` is the ONLY property the API defines for this — an assignment to
+    // `.language` (what this used to do) silently creates a dead expando and
+    // leaves lang "", which is why Russian text was read out by an English
+    // voice whenever the voice lookup below also came up empty.
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.language = targetLanguage;
+    utterance.lang = targetLanguage;
     utterance.rate = config.rate;
     utterance.pitch = config.pitch;
     utterance.volume = config.volume;
 
-    // Select voice based on configuration
-    const voices = speechSynthesis.getVoices();
-
+    // Pick a voice explicitly where we can. Leaving `voice` unset is safe:
+    // with `lang` set the engine resolves a matching voice on its own, which
+    // is the path taken before getVoices() is populated (empty until the
+    // engine's async `voiceschanged`, i.e. for every early utterance).
     if (config.voiceName) {
-      // Use specific voice name if provided
-      const voice = voices.find((v) => v.name === config.voiceName);
+      // Specific voice name wins over language detection
+      const voice = speechSynthesis
+        .getVoices()
+        .find((v) => v.name === config.voiceName);
       if (voice) {
         utterance.voice = voice;
         if (log) log(`🎤 Using specific voice: ${config.voiceName}`);
       } else {
         if (log) log(`⚠️ Voice "${config.voiceName}" not found, using default`);
       }
-    } else if (config.type !== "default") {
-      // Match voice by type and language
-      const voice = voices.find(
-        (v) =>
-          v.lang.startsWith(targetLanguage.split("-")[0]) &&
-          v.name.toLowerCase().includes(config.type.toLowerCase()),
-      );
-
-      if (voice) {
-        utterance.voice = voice;
-        if (log)
-          log(
-            `🎤 Using ${config.type} voice: ${voice.name} (detected: ${detectedLang})`,
-          );
-      } else {
-        // Fallback to any voice matching language
-        const fallbackVoice = voices.find((v) => v.lang === targetLanguage);
-        if (fallbackVoice) {
-          utterance.voice = fallbackVoice;
-          if (log)
-            log(
-              `🎤 Using fallback voice for ${targetLanguage}: ${fallbackVoice.name} (detected: ${detectedLang})`,
-            );
-        }
-      }
     } else {
-      // Use default voice for language
-      const voice = voices.find((v) => v.lang === targetLanguage);
+      const hint = config.type === "default" ? null : config.type;
+      const voice = pickVoice(targetLanguage, hint);
       if (voice) {
         utterance.voice = voice;
         if (log)
           log(
             `🎤 Using voice for ${targetLanguage}: ${voice.name} (detected: ${detectedLang})`,
           );
+      } else if (log) {
+        log(
+          `🎤 No voice loaded for ${targetLanguage} yet — engine picks from lang (detected: ${detectedLang})`,
+        );
       }
     }
 

@@ -254,3 +254,46 @@ export function detectLanguage(text) {
   if (latinCount > cyrillicCount) return "en";
   return "unknown";
 }
+
+// ============================
+// SPEECH SYNTHESIS
+// ============================
+
+/** BCP 47 tags are case-insensitive, and the underscore form ("ru_RU") turns up
+ *  in voice lists even though the spec says hyphen — normalize both away. */
+const normalizeLangTag = (tag) => tag.replace("_", "-").toLowerCase();
+
+/**
+ * Pick the best available SpeechSynthesis voice for a language tag.
+ *
+ * Matches on the PRIMARY subtag ("ru"), then prefers an exact region match.
+ * The old exact `v.lang === "ru-RU"` test found nothing whenever the installed
+ * voice was tagged "ru" or "ru_RU", and a missing voice used to mean English.
+ *
+ * Returns null when the voice list is not populated yet: getVoices() is empty
+ * until the engine fires `voiceschanged`, which is well after page load. That
+ * is NOT an error - callers must leave `utterance.voice` unset and let the
+ * engine choose from `utterance.lang`, which it does correctly.
+ *
+ * @param {string} languageTag - BCP 47 tag, e.g. "ru-RU"
+ * @param {string|null} nameHint - substring of a preferred voice name (voice "type")
+ * @returns {SpeechSynthesisVoice|null}
+ */
+export function pickVoice(languageTag, nameHint = null) {
+  const want = normalizeLangTag(languageTag);
+  const primary = want.split("-")[0];
+
+  const candidates = speechSynthesis
+    .getVoices()
+    .filter((v) => normalizeLangTag(v.lang).split("-")[0] === primary);
+
+  if (candidates.length === 0) return null;
+
+  if (nameHint) {
+    const hint = nameHint.toLowerCase();
+    const hinted = candidates.find((v) => v.name.toLowerCase().includes(hint));
+    if (hinted) return hinted;
+  }
+
+  return candidates.find((v) => normalizeLangTag(v.lang) === want) || candidates[0];
+}

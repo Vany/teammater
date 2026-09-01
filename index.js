@@ -29,7 +29,7 @@ import {
 } from "./config.js";
 
 // Import utilities
-import { request } from "./utils.js";
+import { request, pickVoice } from "./utils.js";
 
 // Import actions for test button
 import { voice, minaret_use } from "./actions.js";
@@ -705,10 +705,15 @@ function mp3(name, volume = null) {
 
 function speak(str) {
   const x = new SpeechSynthesisUtterance(str);
-  x.language = "en-US";
+  // `lang`, not `language` — see the note in actions.js voice(). Assigning the
+  // wrong name left lang "" and handed the utterance to whatever the engine
+  // default was.
+  x.lang = "en-US";
   x.rate = 1;
   x.pitch = 1;
-  x.voice = speechSynthesis.getVoices().find((v) => v.lang === "en-US");
+  // May be null before the voice list loads; the engine then resolves from lang.
+  const voice = pickVoice("en-US");
+  if (voice) x.voice = voice;
   speechSynthesis.speak(x);
 }
 
