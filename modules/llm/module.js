@@ -664,9 +664,12 @@ Disallowed (use mute tool):
    */
   async doConnect() {
     const baseUrl = this.getConfigValue("base_url", "http://localhost:11434");
-    const healthCheckInterval = parseInt(
-      this.getConfigValue("health_check_interval", "30000"),
-    );
+    // getConfigInt, not bare parseInt: a cleared number input stores "" rather
+    // than being removed, so parseInt gave NaN and `NaN > 0` is false — health
+    // checks were silently never started, and the module then had no way to
+    // notice Ollama going away. This is the one field the earlier NaN sweep
+    // missed, which is why MEMO's "all 9 call sites" was one short.
+    const healthCheckInterval = this.getConfigInt("health_check_interval", 30000);
 
     this.log(`🤖 Connecting to Ollama at ${baseUrl}...`);
 

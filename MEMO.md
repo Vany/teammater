@@ -130,8 +130,13 @@ so this is `passed`, not an unqualified clean bill).
   never trigger (`NaN < 1` / `x < NaN` always false), unbounded chat-history
   growth, NaN silently serialized to `null` in LLM API requests. Added
   `getConfigInt`/`getConfigFloat` to BaseModule (fallback to default on
-  missing/empty/invalid) and migrated all 9 call sites — one shared fix
+  missing/empty/invalid) and migrated the call sites — one shared fix
   instead of patching each field.
+  (This said "all 9 call sites" until 2026-09-01. It was 9 of 10:
+  `llm/module.js` `health_check_interval` kept its bare parseInt, so a cleared
+  field made `NaN > 0` false and the health-check timer was never started —
+  the module then had no way to notice Ollama going away. Found by lore as
+  `5635d6c5`. A sweep that reports itself complete is worth one grep.)
 - **LLM protocol correctness** (`modules/llm/module.js`): `tool_call_id`
   wired through to tool-result messages — `call.id` was already captured by
   both `chatRaw` and `chatRawStreaming`, just never forwarded, so this was
