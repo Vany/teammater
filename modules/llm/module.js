@@ -664,6 +664,8 @@ Disallowed (use mute tool):
    */
   async doConnect() {
     const baseUrl = this.getConfigValue("base_url", "http://localhost:11434");
+    // lore-ok[5635d6c5]: fixed here in b762f73 — the bare parseInt this finding
+    // names is gone, replaced by getConfigInt below.
     // getConfigInt, not bare parseInt: a cleared number input stores "" rather
     // than being removed, so parseInt gave NaN and `NaN > 0` is false — health
     // checks were silently never started, and the module then had no way to
