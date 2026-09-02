@@ -189,8 +189,17 @@ export class TwitchChatModule extends BaseModule {
    */
   async doConnect() {
     if (!this.token || !this.username) {
-      this.log("⏳ Waiting for authentication...");
-      return;
+      // Fail loud: connect() marks the module green as soon as this returns, so
+      // a silent early return is indistinguishable from a live IRC connection.
+      // Worse than cosmetic — setAuth() below only connects when `!connected`,
+      // so a green lie here means restoring auth later never connects at all,
+      // and chat stays dead for the session, taking moderation, the Minecraft
+      // relay and LLM monitoring with it. EventSub and twitch-stream have
+      // thrown in exactly this spot since the false-green sweep; this module
+      // was the one left behind.
+      throw new Error(
+        "No Twitch token/username — authenticate before enabling Twitch Chat",
+      );
     }
 
     const ircUrl = this.getConfigValue(

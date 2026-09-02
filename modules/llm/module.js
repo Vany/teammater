@@ -689,6 +689,9 @@ Disallowed (use mute tool):
           this.log(`⚠️ Thinking mode is ON but Max Tokens is ${maxTok} — recommended ≥ 4096, responses may be cut off`);
         }
 
+        // Clear first: a zombie timer from a previous cycle would otherwise be
+        // orphaned by this assignment and keep firing forever alongside the new one.
+        if (this.healthCheckTimer) clearInterval(this.healthCheckTimer);
         if (healthCheckInterval > 0) {
           this.healthCheckTimer = setInterval(() => this.checkHealth(), healthCheckInterval);
         }
@@ -739,6 +742,22 @@ Disallowed (use mute tool):
 
       clearTimeout(timeoutId);
       this.lastHealthCheck = Date.now();
+
+      // Guard at FIRE time, like _scheduleReconnect does. disconnect() early-
+      // returns when the module is already !connected — which is exactly the
+      // state Ollama going down leaves it in — so doDisconnect(), the only
+      // place this timer is cleared, never runs. The interval then outlives the
+      // module: when Ollama came back it called updateStatus(true) and the bot
+      // resumed reading chat and posting replies with its checkbox OFF, because
+      // index.js gates monitorChat on isConnected() alone. Stop the timer here,
+      // so the zombie also collects itself.
+      if (!this.isEnabled()) {
+        if (this.healthCheckTimer) {
+          clearInterval(this.healthCheckTimer);
+          this.healthCheckTimer = null;
+        }
+        return false;
+      }
 
       const wasConnected = this.connected;
       const isHealthy = response.ok;

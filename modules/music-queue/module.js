@@ -108,9 +108,15 @@ export class MusicQueueModule extends BaseModule {
     this._setupListeners();
     this._connectObs();
 
-    if (this.queue.size() === 0) this._playNext();
+    // Either way we must START something. _playNext() drains the restored deck
+    // when it is non-empty and falls back to My Vibes when it is not — the old
+    // `if (size === 0)` guard did the opposite of what the queue needs: with
+    // songs restored from localStorage nothing played at all, currentlyPlaying
+    // stayed null, and smartAdd reads null as "idle" and plays the NEXT request
+    // immediately — jumping the paid songs it was supposed to be holding.
+    this._playNext();
 
-    this.log("✅ Music Queue initialized");
+    this.log(`✅ Music Queue initialized (${this.queue.size()} queued)`);
   }
 
   async doDisconnect() {

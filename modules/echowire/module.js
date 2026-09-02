@@ -266,8 +266,16 @@ export class EchowireModule extends BaseModule {
   _forwardToLLM(text) {
     const llmModule = this.moduleManager.get("llm");
 
-    // Check if echowire is enabled in LLM config
-    if (llmModule?.isConnected()) {
+    // Check if echowire is enabled in LLM config.
+    //
+    // NOT nested under isConnected(). This gate is the operator's off switch
+    // for an always-on microphone, and it used to be skipped entirely whenever
+    // the LLM module happened to be disabled or disconnected — so with the
+    // toggle OFF and LLM off, speech was still injected into chat and still
+    // fired CHAT_ACTIONS (saying "!voice ..." near the mic spoke it on stream).
+    // An off switch whose effect depends on another module's connection state
+    // is not an off switch. Read the setting whether or not LLM is up.
+    if (llmModule) {
       // Compare against the STRING: ui-builder stores checkbox state as
       // "true"/"false" and getConfigValue returns it verbatim, so the old
       // `!echowireEnabled` test saw the string "false" as truthy and the

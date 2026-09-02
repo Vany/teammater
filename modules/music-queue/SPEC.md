@@ -78,11 +78,17 @@ YouTube URL cleaning: strip all query params except `v=` and `t=` to prevent pla
 
 ### Reply events: CLIENT → MASTER (`target: "master"`)
 
+**Payloads are OBJECTS keyed `artist`, not `author`, and `music_start` is not a
+string.** This table said `"title\nauthor"` and `{title, author, ...}` until
+2026-09-01; the consumer (`module.js`, `info.title ?? ""` / `info.artist ?? ""`)
+reads neither, so a sender built to the old spec produced a blank now-playing on
+the overlay and the mobile remote with nothing logged anywhere.
+
 | Event | Payload | Source | When |
 |-------|---------|--------|------|
-| `music_start` | `"title\nauthor"` | Yandex | Audio `play` fires |
+| `music_start` | `{title, artist, version, cover, coverFallback, source, url}` | Yandex | Audio `play` fires |
 | `music_done` | clean URL | Yandex | Audio `ended` fires |
-| `youtube_ready` | `{title, author, duration, url}` | YouTube | Validated OK, play started |
+| `youtube_ready` | `{title, artist, duration, url, ...}` | YouTube | Validated OK, play started |
 | `youtube_invalid` | `{url, reason}` | YouTube | Validation failed |
 | `music_done` | clean URL | YouTube | Video `ended` fires; MASTER then calls `closeYoutubePlayer()` |
 | `status_reply` | `{type?, playing, currentTime, duration, trackInfo, url}` | Either | Response to `query_status` |
