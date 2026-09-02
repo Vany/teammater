@@ -600,7 +600,7 @@ async function handleRedemption(redemption) {
   const context = moduleManager.buildContext();
 
   // Execute action
-  const success = await actionRegistry.executeRewardAction(
+  const outcome = await actionRegistry.executeRewardAction(
     rewardId,
     userName,
     userInput,
@@ -610,13 +610,19 @@ async function handleRedemption(redemption) {
   // Sync state changes
   moduleManager.syncStateFromContext(context);
 
+  // A reward we do not own must be left UNTOUCHED. EventSub hands us every
+  // redemption on the channel, so PATCHing here at all would cancel and refund
+  // rewards the streamer created by hand — and would do it to ALL rewards if
+  // initializeRewards() had failed and left the registry empty.
+  if (outcome === "UNOWNED") return;
+
   // Update redemption status
   const eventSubModule = moduleManager.get("twitch-eventsub");
   if (eventSubModule) {
     await eventSubModule.updateRedemptionStatus(
       rewardId,
       redemption.id,
-      success ? "FULFILLED" : "CANCELED",
+      outcome,
     );
   }
 }

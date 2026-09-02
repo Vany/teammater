@@ -196,7 +196,13 @@ export class UIBuilder {
     });
     header.appendChild(closeBtn);
 
-    // Close on Escape key — listener removed when modal is hidden
+    // Close on Escape. The listener is document-level and lives for the page
+    // lifetime — it is NOT removed when the modal hides, whatever this comment
+    // used to claim. Correct today because modals are created once per module
+    // (3 of them) and never re-created, so the count is bounded; the guard
+    // inside is what makes a hidden modal ignore the key. If modals ever become
+    // per-item or survive a re-initialize, this must gain a removal path, since
+    // it would then stack one permanent keydown handler per modal created.
     const onKeyDown = (e) => {
       if (e.key === "Escape" && modal.style.display !== "none") {
         modal.style.display = "none";

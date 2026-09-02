@@ -42,7 +42,19 @@ export class ActionRegistry {
    */
   setChatActions(chatActions) {
     this.chatActions = chatActions;
-    this.log(`📋 Registered ${chatActions.length} chat action rules`);
+
+    // Count what can actually FIRE, and name what cannot. Logging the raw
+    // array length confirmed rules that checkChatActions silently skips, so a
+    // rule that lost its regex in an edit reported itself as registered and
+    // then never fired — with no other diagnostic than re-reading the source.
+    const invalid = chatActions.filter((rule) => !Array.isArray(rule) || rule.length < 2);
+    for (const rule of invalid) {
+      this.log(`❌ Chat action rule has no patterns and can never fire: ${JSON.stringify(rule)}`);
+    }
+    this.log(
+      `📋 Registered ${chatActions.length - invalid.length} chat action rules` +
+        (invalid.length ? ` (${invalid.length} INVALID, see above)` : ""),
+    );
   }
 
   /**
@@ -74,7 +86,9 @@ export class ActionRegistry {
    */
   checkChatActions(message) {
     for (const rule of this.chatActions) {
-      if (rule.length < 2) continue; // Invalid rule
+      // Already reported by setChatActions — skip quietly here rather than
+      // logging once per incoming chat message.
+      if (!Array.isArray(rule) || rule.length < 2) continue;
 
       const actionClosure = rule[0];
       const patterns = rule.slice(1);
@@ -143,33 +157,44 @@ export class ActionRegistry {
   }
 
   /**
-   * Execute reward action with context
+   * Execute reward action with context.
+   *
+   * THREE outcomes, not two. "Not ours" and "ours but failed" used to share the
+   * `false` return, and index.js PATCHes `false` to CANCELED — but EventSub
+   * delivers EVERY redemption on the channel (the v1 subscription condition is
+   * `broadcaster_user_id` alone; it cannot filter per reward), so any reward the
+   * streamer created by hand was cancelled and refunded by us the moment a
+   * viewer redeemed it, with no way to fulfil it manually. The severe case was
+   * an empty registry: `initializeRewards()` failure is swallowed as a warning
+   * in index.js, and every redemption on the channel — ours included — would be
+   * auto-cancelled for the whole session.
+   *
    * @param {string} rewardId - Reward ID
    * @param {string} userName - User who redeemed
    * @param {string} userInput - User input (if required)
    * @param {Object} context - Execution context from modules
-   * @returns {Promise<boolean>} - Success status (true = FULFILLED, false = CANCELED)
+   * @returns {Promise<"FULFILLED"|"CANCELED"|"UNOWNED">} - UNOWNED means this
+   *   reward is not ours: the caller must leave the redemption untouched so the
+   *   streamer can still act on it.
    */
   async executeRewardAction(rewardId, userName, userInput, context) {
     const actionClosure = this.rewardActions.get(rewardId);
 
     if (!actionClosure || typeof actionClosure !== 'function') {
-      this.log(`❌ No action found for reward: ${rewardId}`);
-      return false;
+      this.log(`⏭️ Reward ${rewardId} is not ours — leaving redemption alone`);
+      return "UNOWNED";
     }
 
     try {
       // Execute action
       const result = await actionClosure(context, userName, userInput);
 
-      // Check if action explicitly returned false (indicates failure)
-      const failed = result === false;
-
-      return !failed;
+      // Only a literal `false` means failure; undefined is success by contract
+      return result === false ? "CANCELED" : "FULFILLED";
     } catch (error) {
       this.log(`💥 Reward action execution failed: ${error.message}`);
       console.error('Reward action error:', error);
-      return false;
+      return "CANCELED";
     }
   }
 
