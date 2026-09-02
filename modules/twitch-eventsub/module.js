@@ -644,9 +644,7 @@ export class TwitchEventSubModule extends BaseModule {
    * @param {object} event - channel.raid event payload
    */
   _handleRaid(event) {
-    const raw = this.getConfigValue("enabled", "true");
-    const enabled = raw === true || raw === "true";
-    if (!enabled) return;
+    if (!this.getConfigBool("enabled", true)) return;
 
     const minRaiders = this.getConfigInt("min_raiders", 5);
     if (event.viewers < minRaiders) {

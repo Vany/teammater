@@ -683,7 +683,7 @@ Disallowed (use mute tool):
         this._setIndicator("idle");
 
         // Warn if thinking mode is on but max_tokens is too low
-        const thinkingOn = this.getConfigValue("thinking", "false") === "true";
+        const thinkingOn = this.getConfigBool("thinking", false);
         const maxTok = this.getConfigInt("max_tokens", 512);
         if (thinkingOn && maxTok < 4096) {
           this.log(`⚠️ Thinking mode is ON but Max Tokens is ${maxTok} — recommended ≥ 4096, responses may be cut off`);
@@ -1261,7 +1261,7 @@ Disallowed (use mute tool):
     const aliases = this.getBotAliases();
     const nameBlock = `Your names is ${aliases.join(" either ")}.`;
     // Thinking mode soft switch — prepend /no_think to suppress Qwen3/R1 reasoning tokens
-    const thinkingEnabled = this.getConfigValue("thinking", "false") === "true";
+    const thinkingEnabled = this.getConfigBool("thinking", false);
     const thinkPrefix = thinkingEnabled ? "" : "/no_think\n";
     return `${thinkPrefix}${memoryBlock}${nameBlock}\n\n${base}${extra ? `\n\n${extra}` : ""}`;
   }
@@ -1404,7 +1404,7 @@ Disallowed (use mute tool):
    * @param {string}            fallbackUser - Default user when not in args (e.g. last in history)
    */
   async _runToolLoop(messages, tools, chatModule, context, fallbackUser) {
-    const thinkingEnabled = this.getConfigValue("thinking", "false") === "true";
+    const thinkingEnabled = this.getConfigBool("thinking", false);
     const chat = thinkingEnabled
       ? (msgs, opts) => this.chatRawStreaming(msgs, opts)
       : (msgs, opts) => this.chatRaw(msgs, opts);
@@ -1555,7 +1555,7 @@ Disallowed (use mute tool):
     }
 
     const chatMonitoring =
-      this.getConfigValue("chat_monitoring", "false") === "true";
+      this.getConfigBool("chat_monitoring", false);
     if (!chatMonitoring) {
       return;
     }

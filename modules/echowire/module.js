@@ -276,13 +276,11 @@ export class EchowireModule extends BaseModule {
     // An off switch whose effect depends on another module's connection state
     // is not an off switch. Read the setting whether or not LLM is up.
     if (llmModule) {
-      // Compare against the STRING: ui-builder stores checkbox state as
-      // "true"/"false" and getConfigValue returns it verbatim, so the old
-      // `!echowireEnabled` test saw the string "false" as truthy and the
-      // toggle never disabled anything. Same shape as llm:1427 / eventsub:478.
-      const raw = llmModule.getConfigValue("echowire_enabled", "true");
-      const echowireEnabled = raw === true || raw === "true";
-      if (!echowireEnabled) {
+      // getConfigBool, not a hand-rolled string compare: ui-builder stores
+      // checkbox state as "true"/"false" and getConfigValue returns it
+      // verbatim, so the original `!echowireEnabled` test saw the string
+      // "false" as truthy and this toggle disabled nothing for months.
+      if (!llmModule.getConfigBool("echowire_enabled", true)) {
         this.log("⚠️ Echowire forwarding disabled in LLM config");
         return;
       }

@@ -41,6 +41,29 @@ The repo now has real JS tests — `make test`, 18 JS + 15 Rust, node's built-in
 runner, still no package.json and no build step.
 
 
+### getConfigBool: closing the string-boolean class for good (2026-09-01)
+
+Third and last of the untyped-config traps. localStorage stores only STRINGS,
+so an UNCHECKED checkbox reads back as the string `"false"` — and `!"false"` is
+`false`, i.e. an off switch that reads as on. It shipped twice: the "Enable
+Echowire" toggle was a no-op for months, and index.html's announce hook broke
+the same way. Every call site had to remember `=== "true"` by hand, in two
+different idioms, which is a convention rather than a guarantee.
+
+`BaseModule.getConfigBool(key, default)` now mirrors `getConfigInt`/
+`getConfigFloat`, and all 6 hand-rolled sites are migrated (llm ×4, eventsub,
+echowire). `modules/base-module.test.js` pins all three helpers — including
+that `""` falls back rather than reading as false (a never-written field is not
+a field set to OFF), and that `0` survives, since `|| default` would eat a
+deliberate zero such as "health checks disabled".
+
+The general shape, worth reusing: **when the same defect recurs, the fix is a
+chokepoint every call site already goes through — not another patch at the
+site.** All three numeric/boolean classes are now closed this way. The one
+still open is the reward contract (`return false` = failure), which forgot
+itself three times; the registry side is explicit now
+(`FULFILLED|CANCELED|UNOWNED`), the closure side is still convention.
+
 ### Bug sweep (2026-09-01): all three open bugs worked
 
 **1. "Sometimes Russian voice is not working and text is played in English"

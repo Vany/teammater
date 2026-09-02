@@ -506,6 +506,32 @@ export class BaseModule {
   }
 
   /**
+   * Read a checkbox config field as a real boolean.
+   *
+   * THE TRAP THIS EXISTS TO CLOSE: localStorage stores strings, so a checkbox
+   * that is OFF comes back as the STRING "false" — and `!"false"` is `false`,
+   * i.e. an off switch that reads as on. That has shipped twice: the "Enable
+   * Echowire" toggle was a no-op for months, and index.html's announce hook
+   * broke the same way. Every site had to remember to write `=== "true"` by
+   * hand, in two different idioms, which is a convention rather than a
+   * guarantee — the same shape of problem `getConfigInt`/`getConfigFloat`
+   * already solved for NaN.
+   *
+   * Accepts a real boolean too, since a caller may pass a default of `true`.
+   *
+   * @param {string} key - Config key (without module prefix)
+   * @param {boolean} defaultValue - Fallback when unset or empty
+   * @returns {boolean}
+   */
+  getConfigBool(key, defaultValue) {
+    const raw = this.getConfigValue(key, "");
+    if (raw === true || raw === false) return raw;
+    if (raw === "true") return true;
+    if (raw === "false") return false;
+    return defaultValue;
+  }
+
+  /**
    * Set config value in localStorage
    * @param {string} key - Config key (without module prefix)
    * @param {*} value - Value to store
