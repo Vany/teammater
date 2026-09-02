@@ -1119,10 +1119,17 @@ const _noSleepVideo = (() => {
   // base64 cannot even have (1 mod 4), and the decoded bytes had no moov box.
   // The fallback therefore never worked on a single device, and nothing said
   // so, because the only error path was `play().catch(() => {})`.
-  v.addEventListener('error', () => {
-    wakeErr = 'videoDecodeError';
-    renderWakeDot();
-  });
+  //
+  // The listener goes on each <source>, NOT on the <video>: with <source>
+  // children the media error event fires on the failing source element and
+  // does not bubble, so a listener on the video itself never runs — which is
+  // how the first version of this very fix managed to be dead code.
+  for (const src of [webm, mp4]) {
+    src.addEventListener('error', () => {
+      wakeErr = 'videoDecodeError';
+      renderWakeDot();
+    });
+  }
 
   v.appendChild(webm);
   v.appendChild(mp4);

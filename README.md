@@ -290,7 +290,10 @@ const DEFAULT_REWARDS = {
     prompt: "What this reward does",
     background_color: "#FF6B6B",
     is_enabled: true,
-    action: "reward_key"  // Must match key
+    // A CALLABLE action closure from actions.js — not a string. A string here
+    // is dropped by ActionRegistry.setRewardActions (it now logs when that
+    // happens); the reward would exist on Twitch and never be handled.
+    action: voice(),
   }
 };
 ```

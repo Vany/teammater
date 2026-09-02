@@ -67,6 +67,17 @@ export class ActionRegistry {
     for (const [rewardId, config] of Object.entries(rewardConfigs)) {
       if (config.action && typeof config.action === 'function') {
         this.rewardActions.set(rewardId, config.action);
+      } else {
+        // Fail loud. A reward whose action is not a function is silently absent
+        // from the registry, and executeRewardAction then reports it as UNOWNED
+        // — "not ours" — which is a lie about OUR OWN misconfigured reward, and
+        // leaves the redemption in unfulfilled limbo with the viewer's points
+        // spent. README documented exactly this broken form (action: "key", a
+        // string) for a long time, so it is a shape that gets written.
+        this.log(
+          `❌ Reward "${rewardId}" has no callable action (got ${typeof config.action}) — ` +
+            `it will NOT be handled. The action must be a closure, e.g. action: voice().`,
+        );
       }
     }
 
@@ -77,6 +88,10 @@ export class ActionRegistry {
    * Register a single reward action
    */
   registerRewardAction(rewardId, actionClosure) {
+    if (typeof actionClosure !== 'function') {
+      this.log(`❌ registerRewardAction("${rewardId}") ignored: not a function`);
+      return;
+    }
     this.rewardActions.set(rewardId, actionClosure);
   }
 

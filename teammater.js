@@ -123,8 +123,13 @@
       // youtube.com page that happened to load next — including one the
       // streamer opened themselves — which then drove the queue with the wrong
       // video while closeYoutubePlayer() closed the innocent tab.
+      // Via cleanYoutubeUrl so the short form is covered: youtu.be/ID carries
+      // the id in the PATH and has no ?v= at all, so reading searchParams
+      // directly returned null for a first-class input — and a null id makes
+      // the claim unscoped again, which is the whole defect this scoping was
+      // added to close.
       let videoId = null;
-      try { videoId = new URL(url).searchParams.get("v"); } catch { /* keep null */ }
+      try { videoId = new URL(cleanYoutubeUrl(url)).searchParams.get("v"); } catch { /* keep null */ }
       GM_setValue("yt_next_is_player", { videoId, at: Date.now() });
       _ytTab = GM_openInTab(url, { active: true });
     };
@@ -625,7 +630,9 @@
     const thisId = new URL(location.href).searchParams.get("v");
     log(`YouTube tab — claim=${JSON.stringify(claim)} thisVideo=${thisId}`);
 
-    if (claim && (!wantId || wantId === thisId)) {
+    // Require a MATCH. `!wantId` used to mean "unscoped, anyone may take it",
+    // which reopened the steal for every URL form that yielded no id.
+    if (claim && wantId && wantId === thisId) {
       GM_deleteValue("yt_next_is_player");
       sessionStorage.setItem("yt_player", "1");
       log(`designated as PLAYER (claim${wantId ? " for " + wantId : ""})`);

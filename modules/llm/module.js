@@ -1096,7 +1096,20 @@ Disallowed (use mute tool):
               if (inThinkTag) {
                 const end = raw.indexOf("</think>");
                 if (end === -1) {
-                  this._streamThinking(raw);
+                  // Hold back a possible PARTIAL closing tag, exactly as the
+                  // opening-tag branch below already does. Streaming the whole
+                  // remainder consumed it, so a `</think>` split across two
+                  // deltas (`</thi` + `nk>`) never matched: inThinkTag stayed
+                  // true for the rest of the stream, every later token was
+                  // routed into the thinking block, and the assembled message
+                  // came back with empty content and no error anywhere.
+                  const partialEnd = raw.lastIndexOf("<");
+                  if (partialEnd !== -1 && "</think>".startsWith(raw.slice(partialEnd))) {
+                    this._streamThinking(raw.slice(0, partialEnd));
+                    thinkBuf = raw.slice(partialEnd);
+                  } else {
+                    this._streamThinking(raw);
+                  }
                   raw = "";
                 } else {
                   this._streamThinking(raw.slice(0, end));
@@ -1449,6 +1462,15 @@ Disallowed (use mute tool):
                 : `💥 Failed to send LLM response`,
             );
             if (sent) {
+              // lore-ok[101f1fc8]: NOT a duplicate. That finding assumed Twitch
+              // echoes the bot's own PRIVMSG back into _handleIrcLine, giving a
+              // second add. It does not: echoing requires the
+              // twitch.tv/echo-message capability, and doConnect requests only
+              // `twitch.tv/tags twitch.tv/commands twitch.tv/membership`
+              // (twitch-chat/module.js). So this optimistic add is the ONLY
+              // add, and removing it would erase the bot's own replies from its
+              // context entirely. Co-reviewer finding 71b2c9de reached the same
+              // conclusion independently and is the correct one.
               chatModule._addToChatHistory(this.getBotName(), msg);
               this._refreshChatLog();
             }
@@ -1589,7 +1611,14 @@ Disallowed (use mute tool):
     /** Re-base the snapshot onto the current buffer and commit it. */
     const commitMarker = () => {
       const shifted = chatModule.getChatHistoryShifts() - shiftsAtStart;
-      chatModule.setChatMarkerPosition(Math.max(0, processedUpTo - shifted));
+      // Never past the end. A Clear during the cycle empties the buffer, and
+      // writing the pre-Clear length back made marker >= length hold on an
+      // empty history — LLM monitoring then went silently quiet until
+      // history_size+1 new messages had arrived.
+      const live = chatModule.getChatHistory().length;
+      chatModule.setChatMarkerPosition(
+        Math.min(live, Math.max(0, processedUpTo - shifted)),
+      );
     };
 
     try {

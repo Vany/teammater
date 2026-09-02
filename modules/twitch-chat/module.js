@@ -533,6 +533,22 @@ export class TwitchChatModule extends BaseModule {
   /**
    * Send message to chat
    */
+  /**
+   * Strip anything that would end the IRC frame early.
+   *
+   * `.trim()` only removes LEADING and TRAILING whitespace; a CR or LF in the
+   * MIDDLE survived into `PRIVMSG ... :text`, and per IRC framing everything
+   * after that newline is parsed as a separate command issued by the
+   * authenticated bot session. This module splits INBOUND frames on \r\n for
+   * exactly that reason. LLM replies, STT transcriptions and viewer-supplied
+   * reward text all reach these senders, and a model emitting a newline is
+   * entirely ordinary.
+   * @private
+   */
+  _sanitizeOutgoing(message) {
+    return message.toString().replace(/[\r\n]+/g, " ").trim();
+  }
+
   send(message) {
     if (!this.isConnected() || !this.ws || !message) {
       this.log("💥 Not connected to Twitch!");
@@ -540,7 +556,7 @@ export class TwitchChatModule extends BaseModule {
     }
 
     try {
-      const sanitized = message.toString().trim();
+      const sanitized = this._sanitizeOutgoing(message);
       if (sanitized.length === 0) {
         this.log("💥 Empty message!");
         return false;
@@ -565,7 +581,7 @@ export class TwitchChatModule extends BaseModule {
     }
 
     try {
-      const sanitized = message.toString().trim();
+      const sanitized = this._sanitizeOutgoing(message);
       if (sanitized.length === 0) {
         this.log("💥 Empty message!");
         return false;

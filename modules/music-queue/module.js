@@ -108,15 +108,42 @@ export class MusicQueueModule extends BaseModule {
     this._setupListeners();
     this._connectObs();
 
-    // Either way we must START something. _playNext() drains the restored deck
-    // when it is non-empty and falls back to My Vibes when it is not — the old
-    // `if (size === 0)` guard did the opposite of what the queue needs: with
-    // songs restored from localStorage nothing played at all, currentlyPlaying
-    // stayed null, and smartAdd reads null as "idle" and plays the NEXT request
-    // immediately — jumping the paid songs it was supposed to be holding.
-    this._playNext();
+    if (this.queue.size() === 0) {
+      // My Vibes fallback consumes nothing, so it is always safe to start.
+      this._playNext();
+    } else {
+      // NEVER consume a restored deck on faith. Calling _playNext() here
+      // unconditionally (which is what the first attempt at this fix did) arms
+      // the watchdog against a player tab that may not be open at all — and the
+      // watchdog reads "no pong" as "track ended", so it shifted and PERSISTED
+      // away one paid request every ~65s until the deck was empty, having
+      // played nothing. Strictly worse than the stall it was meant to fix.
+      // Probe first; start only if something is actually listening.
+      this._resumeRestoredQueue();
+    }
 
     this.log(`✅ Music Queue initialized (${this.queue.size()} queued)`);
+  }
+
+  /**
+   * Start a deck restored from localStorage, but only once a player tab has
+   * answered. Silence here is not an error — it usually just means the
+   * streamer has not opened music.yandex.ru yet — so the deck is left intact
+   * and the next request will queue behind it rather than jumping it.
+   * @private
+   */
+  _resumeRestoredQueue() {
+    this.log(`🎵 ${this.queue.size()} song(s) restored — probing for a player tab...`);
+    this._pongReceived = false;
+    bridge.send("ping", null, "yandex");
+    setTimeout(() => {
+      if (this._pongReceived) {
+        this.log("🎵 Player tab found — resuming restored queue");
+        this._playNext();
+      } else {
+        this.log("⏸️ No player tab answered — restored queue held (open music.yandex.ru to start it)");
+      }
+    }, 5000);
   }
 
   async doDisconnect() {
@@ -140,6 +167,12 @@ export class MusicQueueModule extends BaseModule {
     bridge.listen("music_done", (url) => {
       // Ignore My Vibes endings — Yandex auto-advances internally
       if (this.currentlyPlaying === this._emptyUrl || this.currentlyPlaying === null) return;
+      // A skipped-but-still-loading YouTube tab eventually ends too. Advancing
+      // on that would skip a second song that never played.
+      if (this._isYoutube(url) && !this._isCurrentYoutube(url)) {
+        this.log(`🚫 Ignoring music_done for a track we are not on: ${url}`);
+        return;
+      }
       this.log(`🎵 Track finished: ${url}`);
       if (this._ytPlayerActive) bridge.closeYoutube();
       this._resetTrack();
@@ -162,6 +195,16 @@ export class MusicQueueModule extends BaseModule {
     });
 
     bridge.listen("youtube_ready", (info) => {
+      // A tab opened for a track that has since been skipped finishes loading
+      // and reports in anyway — 1-12s later. Acting on it paused whatever is
+      // now playing, hijacked nowPlaying, and its eventual music_done advanced
+      // the queue past a song that never finished. Only the track we are
+      // currently on may speak.
+      if (!this._isCurrentYoutube(info?.url)) {
+        this.log(`🚫 Ignoring late youtube_ready for a skipped track: ${info?.url}`);
+        bridge.closeYoutube();
+        return;
+      }
       bridge.send("pause", null, "yandex");
       this.nowPlaying = {
         title:         this._stripArtistFromTitle(info.title ?? "Unknown", info.artist ?? ""),
@@ -323,6 +366,15 @@ export class MusicQueueModule extends BaseModule {
 
   _playNext() {
     this._stopWatchdog();
+    // A `song` command reloads the Yandex tab, which wipes the pause the tab
+    // was holding — so skipping while the stream is remotely paused used to
+    // start the next track audibly. The remote's paused state is the operator's
+    // intent and outlives one track, so clear it explicitly rather than letting
+    // a reload silently override it.
+    if (this._musicPaused) {
+      this.log("▶️ Paused state cleared by track change");
+      this._musicPaused = false;
+    }
     if (this.queue.size() > 0) {
       const url = this.queue.shift();
       this.log(`▶️ Playing next (${this.queue.size()} remaining): ${url}`);
@@ -345,7 +397,13 @@ export class MusicQueueModule extends BaseModule {
 
   /** Play immediately if idle, otherwise enqueue. */
   smartAdd(url) {
-    const idle = this.currentlyPlaying === null || this.currentlyPlaying === this._emptyUrl;
+    // A non-empty deck is NOT idle even when nothing is playing yet: that is
+    // exactly the restored-queue state above, and playing immediately there
+    // would jump the paid songs being held. This is the ordering half of the
+    // original bug; _resumeRestoredQueue is the starting half.
+    const idle =
+      (this.currentlyPlaying === null || this.currentlyPlaying === this._emptyUrl) &&
+      this.queue.size() === 0;
     if (idle) {
       this.log(`▶️ Idle — playing immediately: ${url}`);
       this.currentlyPlaying = url;
@@ -367,10 +425,16 @@ export class MusicQueueModule extends BaseModule {
 
   skip() {
     this.log("⏭️ Skipping");
+    const wasYoutube = this._ytPlayerActive || this._isYoutube(this.currentlyPlaying);
     if (this._ytPlayerActive) {
       bridge.send("pause", null, "youtube");
       this._ytPlayerActive = false;
     }
+    // A YouTube tab opened for a track we are now skipping is still LOADING,
+    // and _ytPlayerActive stays false for the whole 1-12s before its
+    // youtube_ready arrives — so the pause above misses it entirely. The
+    // youtube_ready and music_done listeners therefore check the event against
+    // the current track (_isCurrentYoutube) rather than trusting the flag.
     if (this.queue.size() === 0) {
       this._stopWatchdog();
       // Reset BEFORE handing back to My Vibes. Skipping the last queued track
@@ -379,6 +443,15 @@ export class MusicQueueModule extends BaseModule {
       // smartAdd saw the stale value as "busy" and queued every later request
       // behind a phantom track until a reload.
       this._resetTrack();
+      // Hand back to My Vibes properly. `next` alone was sent to a Yandex tab
+      // that THIS MODULE had put into a persistent 200ms re-pause loop when the
+      // YouTube song started, and nothing ever lifted it — so skipping the last
+      // queued track when it was a YouTube one advanced a paused tab and left
+      // the stream in silence, with the YouTube tab still open.
+      if (wasYoutube) {
+        bridge.closeYoutube();
+        bridge.send("resume", null, "yandex");
+      }
       bridge.send("next", null, "yandex");
       return;
     }
@@ -413,7 +486,25 @@ export class MusicQueueModule extends BaseModule {
       this._obsWs.send(JSON.stringify(obj));
   }
 
+  /**
+   * True when `url` is the YouTube track currently playing.
+   * Compared by video id — the module stores the URL as requested while the tab
+   * reports location.href after navigating to the cleaned form.
+   * @private
+   */
+  _isCurrentYoutube(url) {
+    const id = this._youtubeVideoId(url);
+    return Boolean(id) && id === this._youtubeVideoId(this.currentlyPlaying);
+  }
+
   prevSong() {
+    // Mirror the ACTIVE player, as pauseMusic()/resumeMusic() already do. Sent
+    // blindly to Yandex, the mobile ⏮ button mutated a tab that this module had
+    // deliberately paused while a YouTube song played.
+    if (this._ytPlayerActive) {
+      this.log("⏮ Prev ignored — a YouTube track is playing (no previous-track concept)");
+      return;
+    }
     bridge.send("prev", null, "yandex");
     this.log("⏮ Prev (remote)");
   }

@@ -214,6 +214,12 @@ export class EchowireModule extends BaseModule {
     if (match) {
       const commandText = match[2]; // Text after the bot name
       this._forwardToLLM(commandText);
+    } else if (!this._echowireEnabled()) {
+      // The SAME off switch has to cover this branch. It gated only the
+      // chat-injection path, so with the toggle OFF a spoken phrase still
+      // switched the live OBS scene and fired Minecraft item uses — the
+      // loudest half of what an always-on microphone can do.
+      this.log(`⚠️ Voice action suppressed — Echowire forwarding disabled`);
     } else {
       // Check VOICE_ACTIONS — key is regex, whole phrase must match
       const trimmed = phrase.trim();
@@ -263,6 +269,21 @@ export class EchowireModule extends BaseModule {
    * Injects into chat history and triggers normal message processing
    * @private
    */
+  /**
+   * The operator's off switch for an always-on microphone.
+   *
+   * Deliberately NOT gated on the LLM module being connected: an off switch
+   * whose effect depends on another module's connection state is not an off
+   * switch. The setting lives in the LLM module's config panel, so it is read
+   * from there whether or not that module is up.
+   * @private
+   */
+  _echowireEnabled() {
+    const llmModule = this.moduleManager?.get("llm");
+    if (!llmModule) return true; // no LLM module registered: nothing to gate on
+    return llmModule.getConfigBool("echowire_enabled", true);
+  }
+
   _forwardToLLM(text) {
     const llmModule = this.moduleManager.get("llm");
 
@@ -275,15 +296,9 @@ export class EchowireModule extends BaseModule {
     // fired CHAT_ACTIONS (saying "!voice ..." near the mic spoke it on stream).
     // An off switch whose effect depends on another module's connection state
     // is not an off switch. Read the setting whether or not LLM is up.
-    if (llmModule) {
-      // getConfigBool, not a hand-rolled string compare: ui-builder stores
-      // checkbox state as "true"/"false" and getConfigValue returns it
-      // verbatim, so the original `!echowireEnabled` test saw the string
-      // "false" as truthy and this toggle disabled nothing for months.
-      if (!llmModule.getConfigBool("echowire_enabled", true)) {
-        this.log("⚠️ Echowire forwarding disabled in LLM config");
-        return;
-      }
+    if (!this._echowireEnabled()) {
+      this.log("⚠️ Echowire forwarding disabled in LLM config");
+      return;
     }
 
     // Get Twitch Chat module

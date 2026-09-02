@@ -282,13 +282,16 @@ async function fetchUsername(token) {
 // ============================
 
 async function connectModules(token, username) {
-  // Connect Music Queue (always enabled)
+  // Music Queue honours its checkbox like every other module. It was connected
+  // unconditionally under an "always enabled" comment, and BaseModule.connect()
+  // does not check this.enabled — so a module the operator had switched off came
+  // back on every page load, silently overriding the persisted
+  // music_queue_enabled=false.
   const musicModule = moduleManager.get("music-queue");
-  if (musicModule) {
+  if (musicModule?.isEnabled()) {
     await musicModule.connect().catch((err) => {
       log(`⚠️ Music Queue connection failed: ${err.message}`);
     });
-
   }
 
   // Connect LLM (if enabled)
