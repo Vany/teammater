@@ -309,6 +309,13 @@ export class MusicQueueModule extends BaseModule {
         source:        info.source       ?? "yandex",
         url:           info.url          ?? "",
       };
+      // Same pending-pause reconciliation as youtube_ready: a Yandex `song`
+      // command reloads the tab, so a pause tapped while it was loading is
+      // wiped by the reload and has to be re-applied when it reports in.
+      if (this._musicPaused) {
+        this.log("⏸️ Applying pause requested while the track was loading");
+        bridge.send("pause", null, "yandex");
+      }
       this.log(`🎵 Now playing: ${this.nowPlaying.title} by ${this.nowPlaying.artist}`);
       this._broadcastNowPlaying();
       this._refreshStatusDisplay();
@@ -336,6 +343,15 @@ export class MusicQueueModule extends BaseModule {
         url:           info.url           ?? "",
       };
       this._ytPlayerActive = true;
+      // Apply a pause requested while this tab was still loading. pauseMusic
+      // can only reach the YouTube tab once _ytPlayerActive is true, and that
+      // does not flip until right here — so a pause tapped during the 1-12s
+      // load window went to Yandex instead and the video then started at full
+      // volume while the phone, the widget and the flag all said paused.
+      if (this._musicPaused) {
+        this.log("⏸️ Applying pause requested while the track was loading");
+        bridge.send("pause", null, "youtube");
+      }
       this.log(`▶️ YouTube ready: ${this.nowPlaying.title} by ${this.nowPlaying.artist}`);
       this._broadcastNowPlaying();
       this._refreshStatusDisplay();
@@ -506,12 +522,29 @@ export class MusicQueueModule extends BaseModule {
         // nothing. Hold and re-probe instead; the deck is the thing we cannot
         // get back.
         if (!this._confirmedTabs.has(tabType)) {
-          this.log(`⏸️ Watchdog: no ${tabType} tab has ever answered — holding ${this.queue.size()} song(s) instead of advancing`);
+          // PUT THE SONG BACK. Holding it as currentlyPlaying was a lie — the
+          // track never started — and the lie wedged its own recovery: _probe
+          // returns early on `if (this.currentlyPlaying) return`, so the 30s
+          // retry scheduled here could never fire, and a stray music_done from
+          // any unrelated tab would have been accepted as this phantom's end
+          // and silently skipped the paid song. Restoring the deck and clearing
+          // the track is the only honest description of "we could not start it".
+          const stalled = this.currentlyPlaying;
+          this._resetTrack();
+          if (stalled && stalled !== this._emptyUrl) this.queue.unshift(stalled);
+          this.log(`⏸️ Watchdog: no ${tabType} tab has ever answered — ${this.queue.size()} song(s) held, retrying every 30s`);
           this._cancelProbe();
           this._probeRetry = setTimeout(() => this._probe(), 30000);
           return;
         }
         this.log(`⚠️ Watchdog: no pong from ${tabType} — advancing queue`);
+        // DEMOTE the tab type. _confirmedTabs answered "did this ever exist",
+        // but the question that justifies eating a paid request is "does one
+        // exist NOW" — so a tab closed mid-set looked like a fresh death on
+        // every miss and drained the whole deck at one song per ~65s. After one
+        // advance the type is unconfirmed again, so the NEXT miss takes the
+        // hold branch above: at most one song is lost to a genuinely dying tab.
+        this._confirmedTabs.delete(tabType);
         this._resetTrack();
         this._playNext();
       }, 5000);
