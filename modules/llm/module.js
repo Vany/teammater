@@ -1608,6 +1608,10 @@ Disallowed (use mute tool):
     const shiftsAtStart = chatModule.getChatHistoryShifts();
     const processedUpTo = chatHistory.length;
 
+    // lore-ok[8ce78476]: fixed in commitMarker just below — the committed
+    // marker is now clamped to the LIVE history length, so a Clear during the
+    // cycle can no longer leave marker >= length on an emptied buffer. The
+    // finding was anchored here, at the cycle, while the fix is in the commit.
     /** Re-base the snapshot onto the current buffer and commit it. */
     const commitMarker = () => {
       const shifted = chatModule.getChatHistoryShifts() - shiftsAtStart;
