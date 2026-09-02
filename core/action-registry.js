@@ -195,6 +195,14 @@ export class ActionRegistry {
   async executeRewardAction(rewardId, userName, userInput, context) {
     const actionClosure = this.rewardActions.get(rewardId);
 
+    // lore-ok[75e53c36]: the conflation is fixed at the REGISTRATION side, in
+    // setRewardActions and registerRewardAction above — a reward of ours whose
+    // action is not callable is now named in an error log as it is dropped,
+    // instead of arriving here indistinguishable from a stranger's reward. It
+    // still reaches this branch (the Map genuinely does not hold it) and is
+    // still left alone, which is right: cancelling would refund and destroy a
+    // redemption over OUR misconfiguration. README.md's `action: "reward_key"`
+    // string form, which is what made this shape common, is corrected too.
     if (!actionClosure || typeof actionClosure !== 'function') {
       this.log(`⏭️ Reward ${rewardId} is not ours — leaving redemption alone`);
       return "UNOWNED";
