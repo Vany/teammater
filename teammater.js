@@ -507,6 +507,24 @@
       }
 
       video.addEventListener("ended", () => {
+        // YouTube plays pre-roll ads in the SAME video element, and `ended`
+        // fires when the ad ends too — which would report the song as finished
+        // (and stopVideo() would kill the ad→content transition) before it ever
+        // started. Ignore an `ended` that arrives while the player still says
+        // an ad is showing, or that fires far short of the known duration.
+        // NOTE: not verified against live YouTube — flagged by review as
+        // unconfirmed, and this guard is written to be harmless if ads do not
+        // in fact share the element: a real track end has ad-showing false and
+        // currentTime at the duration, so it still passes.
+        if (document.querySelector(".ad-showing")) {
+          log("ended during an ad — ignoring");
+          return;
+        }
+        const dur = info.duration;
+        if (dur > 0 && video.currentTime > 0 && video.currentTime < dur * 0.5) {
+          log(`ended at ${video.currentTime}s of ${dur}s — too early, ignoring`);
+          return;
+        }
         player.stopVideo?.();
         const clean = cleanYoutubeUrl(location.href);
         log(`ended → music_done: ${clean}`);

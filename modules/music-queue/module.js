@@ -286,6 +286,20 @@ export class MusicQueueModule extends BaseModule {
     });
 
     this._on("music_start", (info) => {
+      // Same inactive-source guard status_reply has. The Yandex tab's pause is
+      // page-lifetime closure state in the UserScript, so a reload or a freshly
+      // opened music.yandex.ru during a YouTube track auto-plays My Vibes —
+      // genuinely playing, so the UserScript's own paused-gate passes — and
+      // that music_start would otherwise replace the YouTube track on the
+      // overlay and in the paid "What's Playing" answer.
+      const source = info?.source ?? "yandex";
+      if (this._ytPlayerActive && source !== "youtube") {
+        this.log(`🚫 Ignoring music_start from ${source} while a YouTube track is active`);
+        // Put it back where the module expects it, rather than leaving a second
+        // audible track running under the stream.
+        bridge.send("pause", null, "yandex");
+        return;
+      }
       this.nowPlaying = {
         title:         info.title        ?? "",
         artist:        info.artist       ?? "",
@@ -621,12 +635,17 @@ export class MusicQueueModule extends BaseModule {
 
   resumeMusic() {
     this._musicPaused = false;
-    bridge.send("resume", null, "yandex");
-    // Mirror pauseMusic: it pauses BOTH players when a YouTube tab is active,
-    // so resuming only Yandex left the current YouTube track paused forever
-    // while Yandex started playing its own track audibly underneath — the
-    // widget said playing, the audio was a different song entirely.
-    if (this._ytPlayerActive) bridge.send("resume", null, "youtube");
+    // Resume ONLY the active player. Pause is asymmetric on purpose: while a
+    // YouTube track plays, the Yandex tab is already held in the 200ms
+    // re-pause loop _playSong put it in, so pausing it again is a no-op.
+    // Resuming it is NOT — mirroring resume to both lifted that hold and
+    // restarted the Yandex track underneath the YouTube video, two songs at
+    // once. The earlier mirror fixed the reverse case and created this one.
+    if (this._ytPlayerActive) {
+      bridge.send("resume", null, "youtube");
+    } else {
+      bridge.send("resume", null, "yandex");
+    }
     this._obsSend({ type: "music_resume" });
     this._broadcastNowPlaying();
     this.log("▶ Music resumed (remote)");

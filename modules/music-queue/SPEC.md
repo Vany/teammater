@@ -293,7 +293,15 @@ Deep validation (category, views, duration) runs in the YouTube tab after naviga
 
 ## Known Limitations
 
-- `music_done` fires only on audio/video `ended` — if user manually navigates the tab, `currentlyPlaying` stays stale until the watchdog fires (up to 65s)
+- `music_done` fires only on audio/video `ended` — if the user manually
+  navigates the tab, `currentlyPlaying` stays stale until the watchdog fires
+  (up to 65s). **This recovery does NOT cover SPA navigation inside the YouTube
+  tab** (clicking a related video): the tab stays alive and answers every ping
+  regardless of what it is now playing, so the watchdog — which only asks "is
+  the tab still there" — never fires and the queue wedges indefinitely.
+  Detecting it needs the ping reply to carry the video id and the module to
+  compare it against `currentlyPlaying`; the bridge protocol has no such
+  correlation today (see the note at the end of this file).
 - If YouTube tab is closed mid-song by the user, watchdog recovers within 65s
 - No per-user request cooldown or deduplication
 - YouTube validation requires page load; invalid songs cause a brief tab navigation before rejection
@@ -305,3 +313,35 @@ Deep validation (category, views, duration) runs in the YouTube tab after naviga
   "Official Video" counts as ONE keyword, not two; a non-Music upload therefore
   needs two genuinely different signals. Covers and unofficial uploads can still
   fail if their metadata is sparse.
+
+
+---
+
+## Known structural gap: the bridge has no track ownership
+
+Several defects in this module have the same shape, and patching them
+individually has repeatedly produced new ones:
+
+- a tab opened for a track that was then skipped reports in 1-12s later and is
+  acted on (`9ee98de2`)
+- a skipped-but-open tab answers `query_status` forever and gets resurrected
+  (`ca63b33e`)
+- a paused Yandex tab's reply overwrites the YouTube track on the overlay
+  (`734c6889`, `c4a30551`)
+- a reloaded Yandex tab auto-plays My Vibes over a YouTube track (`364fc82f`)
+- SPA navigation inside the player tab is undetectable (`cfc9be4f`)
+- the master's `_ytTab` handle dies with a panel reload, so
+  `closeYoutubePlayer()` becomes a permanent no-op while the tab lives on
+  (`f4a00604`)
+
+All of them are the same missing concept: **the bridge protocol identifies tab
+TYPES, never the track a message is about, and never a tab's identity across a
+master reload.** Every guard added so far reconstructs that by inference —
+comparing `source`, or video ids, or which tab last ponged — and each inference
+has its own hole.
+
+The structural fix is a correlation id: the module issues a token when it starts
+a track, every command carries it, and every reply echoes it. A reply whose
+token is not the current one is discarded without further reasoning, which
+collapses all six defects above into one rule. That is a protocol change across
+`module.js` and `teammater.js` and is NOT yet done.
