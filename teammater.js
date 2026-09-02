@@ -128,10 +128,18 @@
       // directly returned null for a first-class input — and a null id makes
       // the claim unscoped again, which is the whole defect this scoping was
       // added to close.
+      // Clean ONCE and use it for both the claim id and the tab we open. The
+      // raw url was being opened while only the id was computed from the clean
+      // one — so `list=`/`index=` survived into the player tab and YouTube
+      // autoadvanced into a playlist, which is the exact thing cleanYoutubeUrl
+      // exists to prevent (SPEC.md, and teammater.test.js asserts the purpose).
+      // The cleaning only ever ran on the `song`-to-YouTube path, which the
+      // module never sends — every real playback goes through here.
+      const cleanUrl = cleanYoutubeUrl(url);
       let videoId = null;
-      try { videoId = new URL(cleanYoutubeUrl(url)).searchParams.get("v"); } catch { /* keep null */ }
+      try { videoId = new URL(cleanUrl).searchParams.get("v"); } catch { /* keep null */ }
       GM_setValue("yt_next_is_player", { videoId, at: Date.now() });
-      _ytTab = GM_openInTab(url, { active: true });
+      _ytTab = GM_openInTab(cleanUrl, { active: true });
     };
 
     unsafeWindow.closeYoutubePlayer = () => {

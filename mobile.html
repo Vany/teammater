@@ -970,26 +970,43 @@ function togglePause() {
 }
 
 // ─── Scene picker ─────────────────────────────────────────────────────────────
-function openScenePicker() {
-  renderSceneList();
-  document.getElementById('scene-modal').classList.add('open');
-  // Push a history entry so Android's back button closes the MODAL, as
-  // SPEC.md promises. Without one, back navigated off /mobile entirely —
-  // dropping the bus socket and releasing the wake lock mid-stream.
-  history.pushState({ scenePicker: true }, '');
+// ─── Overlay back-dismiss ─────────────────────────────────────────────────────
+// ONE mechanism for every overlay on the page. Written per-modal the first
+// time, it covered the scene picker and silently missed the user menu — where
+// Android back then navigated off /mobile entirely, dropping the bus socket and
+// releasing the wake lock mid-stream, which is the exact harm the scene-picker
+// fix existed to prevent. Any new overlay must go through these two functions.
+const _openOverlays = [];
+
+function openOverlay(id) {
+  document.getElementById(id)?.classList.add('open');
+  _openOverlays.push(id);
+  history.pushState({ overlay: id }, '');
+}
+
+function closeOverlay(id) {
+  const el = document.getElementById(id);
+  if (!el?.classList.contains('open')) return;
+  el.classList.remove('open');
+  const i = _openOverlays.lastIndexOf(id);
+  if (i !== -1) _openOverlays.splice(i, 1);
+  // Consume the entry we pushed, so a later back does not need two presses.
+  // The popstate this triggers is a no-op: the id is already off the stack.
+  if (history.state?.overlay === id) history.back();
 }
 
 window.addEventListener('popstate', () => {
-  const modal = document.getElementById('scene-modal');
-  if (modal?.classList.contains('open')) modal.classList.remove('open');
+  const id = _openOverlays.pop();
+  if (id) document.getElementById(id)?.classList.remove('open');
 });
 
+function openScenePicker() {
+  renderSceneList();
+  openOverlay('scene-modal');
+}
+
 function closeScenePicker() {
-  const wasOpen = document.getElementById('scene-modal').classList.contains('open');
-  document.getElementById('scene-modal').classList.remove('open');
-  // Consume the entry we pushed, so a later back does not have to be pressed
-  // twice to leave the page.
-  if (wasOpen && history.state?.scenePicker) history.back();
+  closeOverlay('scene-modal');
 }
 
 function onModalBackdrop(e) {
@@ -1062,11 +1079,11 @@ let menuUser = null;
 function openUserMenu(user) {
   menuUser = user;
   document.getElementById('user-menu-name').textContent = '@' + user;
-  document.getElementById('user-menu').classList.add('open');
+  openOverlay('user-menu');
 }
 
 function closeUserMenu() {
-  document.getElementById('user-menu').classList.remove('open');
+  closeOverlay('user-menu');
   menuUser = null;
 }
 
@@ -1173,7 +1190,19 @@ async function acquireWakeLock() {
     try {
       wakeLock = await navigator.wakeLock.request('screen');
       wakeErr = '';
-      wakeLock.addEventListener('release', () => { wakeLock = null; renderWakeDot(); });
+      wakeLock.addEventListener('release', () => {
+        wakeLock = null;
+        // Start the FALLBACK immediately. Gating the video on the native lock
+        // means a silent release (iOS quirk #3) now leaves nothing holding the
+        // screen, where the always-running video used to cover it instantly.
+        //
+        // Deliberately NOT acquireWakeLock() here: re-requesting from inside a
+        // release handler loops tightly if the OS keeps dropping the lock.
+        // Starting the video is unconditionally safe, and the existing 30s
+        // heartbeat / visibilitychange / touchstart paths retry the native lock.
+        if (_noSleepVideo.paused) _noSleepVideo.play().catch(() => {});
+        renderWakeDot();
+      });
     } catch (e) { wakeErr = e?.name || 'error'; }
   }
   // Hidden looping video — older iOS fallback. Silently fails without prior
@@ -1191,18 +1220,29 @@ async function acquireWakeLock() {
 }
 
 // Live wake-state badge — makes an otherwise invisible failure observable on the phone.
+/**
+ * The ONE computation of wake state. The badge and the diagnostic alert each
+ * derived it separately and disagreed: the alert reported held from the native
+ * lock alone, so a phone whose video fallback was genuinely holding the screen
+ * showed a green badge and an alert saying "held: false".
+ */
+function wakeState() {
+  const supported = 'wakeLock' in navigator;
+  const nativeHeld = !!(wakeLock && !wakeLock.released);
+  // The video counts whenever it is actually playing and has not failed to
+  // decode — NOT only when the API is absent. Keying it on `!supported`
+  // excluded the Low Power Mode case, where the API exists, the request is
+  // rejected (wakeErr = NotAllowedError) and the video is what is holding the
+  // screen: the badge showed red all session while the fallback worked.
+  const videoHeld =
+    !nativeHeld && !_noSleepVideo.paused && wakeErr !== 'videoDecodeError';
+  return { supported, nativeHeld, videoHeld, held: nativeHeld || videoHeld };
+}
+
 function renderWakeDot() {
   const el = document.getElementById('wake-dot');
   if (!el) return;
-  const supported = 'wakeLock' in navigator;
-  // A phone with no Wake Lock API is NOT failing when the video fallback is
-  // actually running. This painted red every session on exactly the devices
-  // the fallback exists for — and it painted the same red, with the same
-  // title, whether or not wakeErr was set, so the videoDecodeError that the
-  // <source> listeners exist to surface was invisible at a glance.
-  const nativeHeld = !!(wakeLock && !wakeLock.released);
-  const videoHeld = !supported && !wakeErr && !_noSleepVideo.paused;
-  const held = nativeHeld || videoHeld;
+  const { supported, videoHeld, held } = wakeState();
   el.textContent = held ? '🔆' : '🌙';
   el.style.background = held ? '#1c7d4a' : (wakeErr || !supported ? '#c33' : '#886600');
   el.title = wakeErr === 'videoDecodeError' ? 'Wake-lock fallback video failed to decode'
@@ -1239,11 +1279,10 @@ acquireWakeLock();
 
 // Tap the badge for the exact state — distinguishes "not granted" from "OS overrides us".
 document.getElementById('wake-dot')?.addEventListener('click', () => {
-  const supported = 'wakeLock' in navigator;
-  const held = !!(wakeLock && !wakeLock.released);
+  const { supported, held, videoHeld } = wakeState();
   alert(
     'Screen Wake Lock\n' +
-    `• held: ${held}\n` +
+    `• held: ${held}${videoHeld ? ' (video fallback)' : ''}\n` +
     `• API supported: ${supported}\n` +
     `• last error: ${wakeErr || 'none'}\n\n` +
     'If held is true but the screen still sleeps, it is an iOS setting the web cannot override:\n' +

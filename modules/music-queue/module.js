@@ -65,6 +65,8 @@ export class MusicQueueModule extends BaseModule {
     this._probeTimer     = null;   // restore-probe deadline
     this._probeRetry     = null;   // held-deck retry
     this._pongTypes      = new Set(); // which tab types answered the last probe
+    this._torndown       = false;  // set by doDisconnect; gates bridge listeners
+    this._confirmedTabs  = new Set(); // tab types that have EVER answered a ping
 
   }
 
@@ -103,6 +105,7 @@ export class MusicQueueModule extends BaseModule {
   // ── Lifecycle ────────────────────────────────────────────
 
   async doConnect() {
+    this._torndown = false;
     this._emptyUrl          = this.getConfigValue("empty_url", "https://music.yandex.ru/");
     this._voteSkipThreshold = this.getConfigInt("vote_skip_threshold", 3);
     this.needVoteSkip       = this._voteSkipThreshold;
@@ -153,7 +156,7 @@ export class MusicQueueModule extends BaseModule {
       // Re-check at FIRE time. The module can be unchecked inside the probe
       // window, and starting here would drain the paid deck with the checkbox
       // off — the same class the index.js isEnabled() fix just closed.
-      if (!this.isEnabled() || !this.connected) {
+      if (!this._live()) {
         this.log("⏸️ Restore probe abandoned — module no longer enabled");
         return;
       }
@@ -173,9 +176,7 @@ export class MusicQueueModule extends BaseModule {
       // tab could satisfy the probe, we would start a Yandex track into a void,
       // and the watchdog — which pings "yandex" specifically — would get no
       // answer and drain the paid deck exactly as before, through a new door.
-      const head = this.queue.peekBottom();
-      const needed = this._isYoutube(head) ? null : "yandex";
-      if (!needed || this._pongTypes.has(needed)) {
+      if (this._canPlay(this.queue.peekBottom())) {
         this.log("🎵 Player tab available — resuming restored queue");
         this._playNext();
         return;
@@ -185,6 +186,28 @@ export class MusicQueueModule extends BaseModule {
     }, 5000);
   }
 
+  /**
+   * Can this URL actually be started right now?
+   *
+   * A YouTube track opens its own tab, so it always can. A Yandex track needs a
+   * Yandex tab that is already open — sending `song` into a void looks like
+   * playback to us, and the watchdog then reads the missing pong as "track
+   * ended" and eats the next paid request, and the next.
+   *
+   * Only meaningful right after a probe, which populates _pongTypes on purpose.
+   * It is deliberately NOT used to gate ordinary advances: on the normal path
+   * no probe has run, _pongTypes is empty, and gating there would refuse to
+   * advance a perfectly healthy queue. The later-advance case is handled in the
+   * watchdog instead, by distinguishing a tab that died from one that never
+   * existed (_confirmedTabs).
+   * @private
+   */
+  _canPlay(url) {
+    if (url === undefined || url === null) return true;   // My Vibes fallback
+    if (this._isYoutube(url)) return true;                 // opens its own tab
+    return this._pongTypes.has("yandex");
+  }
+
   /** @private */
   _cancelProbe() {
     if (this._probeTimer) { clearTimeout(this._probeTimer); this._probeTimer = null; }
@@ -192,6 +215,9 @@ export class MusicQueueModule extends BaseModule {
   }
 
   async doDisconnect() {
+    // Bridge listeners cannot be unregistered (no such API in the UserScript),
+    // so this flag is what stops them acting — see _live()/_on().
+    this._torndown = true;
     this._cancelProbe();
     this._stopWatchdog();
     if (this._obsWs) {
@@ -205,12 +231,46 @@ export class MusicQueueModule extends BaseModule {
 
   // ── Cross-tab listeners ──────────────────────────────────
 
+  /**
+   * May this module act on a bridge event right now?
+   *
+   * registerReplyListener has NO unregister API (teammater.js), so every
+   * listener registered here lives in the UserScript for the life of the page
+   * and keeps firing after doDisconnect. Without this gate, music_done and
+   * youtube_invalid still ran _resetTrack + _playNext with the checkbox off —
+   * the queue drained itself while the module showed disconnected. The probe
+   * got a fire-time check for exactly this reason; these needed the same one,
+   * which is why it lives in a single place both can use.
+   * @private
+   */
+  _live() {
+    // NOT `this.connected`: _setupListeners runs inside doConnect, where
+    // connected is still false, so gating on it would drop the very
+    // status_reply the connect-time probe is waiting for and adoption would
+    // never happen. An explicit teardown flag says what is actually meant —
+    // "this module has been switched off" — with no connect-time race.
+    return this.isEnabled() && !this._torndown;
+  }
+
+  /**
+   * Register a bridge listener that is inert while the module is not live.
+   * Every listener in _setupListeners goes through here, so the check cannot be
+   * forgotten for one of them the way it was forgotten for all of them.
+   * @private
+   */
+  _on(event, fn) {
+    bridge.listen(event, (...args) => {
+      if (!this._live()) return;
+      fn(...args);
+    });
+  }
+
   _setupListeners() {
     if (!bridge.ok) {
       this.log("⚠️ MusicBridge not available (UserScript not loaded?)");
     }
 
-    bridge.listen("music_done", (url) => {
+    this._on("music_done", (url) => {
       // Ignore My Vibes endings — Yandex auto-advances internally
       if (this.currentlyPlaying === this._emptyUrl || this.currentlyPlaying === null) return;
       // A skipped-but-still-loading YouTube tab eventually ends too. Advancing
@@ -225,7 +285,7 @@ export class MusicQueueModule extends BaseModule {
       this._playNext();
     });
 
-    bridge.listen("music_start", (info) => {
+    this._on("music_start", (info) => {
       this.nowPlaying = {
         title:         info.title        ?? "",
         artist:        info.artist       ?? "",
@@ -240,7 +300,7 @@ export class MusicQueueModule extends BaseModule {
       this._refreshStatusDisplay();
     });
 
-    bridge.listen("youtube_ready", (info) => {
+    this._on("youtube_ready", (info) => {
       // A tab opened for a track that has since been skipped finishes loading
       // and reports in anyway — 1-12s later. Acting on it paused whatever is
       // now playing, hijacked nowPlaying, and its eventual music_done advanced
@@ -268,14 +328,14 @@ export class MusicQueueModule extends BaseModule {
       this._startWatchdog("youtube");
     });
 
-    bridge.listen("youtube_invalid", ({ url, reason }) => {
+    this._on("youtube_invalid", ({ url, reason }) => {
       this.log(`❌ YouTube invalid [${reason}]: ${url}`);
       bridge.closeYoutube();
       this._resetTrack();
       this._playNext();
     });
 
-    bridge.listen("status_reply", (data) => {
+    this._on("status_reply", (data) => {
       if (!data?.trackInfo) return;
       const replyId = this._youtubeVideoId(data.url);
 
@@ -335,10 +395,13 @@ export class MusicQueueModule extends BaseModule {
       this._refreshStatusDisplay();
     });
 
-    bridge.listen("pong", ({ type }) => {
+    this._on("pong", ({ type }) => {
       this.log(`🏓 Pong from ${type}`);
       this._pongReceived = true;
-      if (type) this._pongTypes.add(type);
+      if (type) {
+        this._pongTypes.add(type);
+        this._confirmedTabs.add(type); // never cleared: "has existed this session"
+      }
     });
 
     bridge.listen("song", () => {}); // MASTER receives "all" messages; ignore own sends
@@ -421,11 +484,22 @@ export class MusicQueueModule extends BaseModule {
       // an untracked timeout here is a real race, not just untidy cleanup.
       this._watchdogPongTimeout = setTimeout(() => {
         this._watchdogPongTimeout = null;
-        if (!this._pongReceived) {
-          this.log(`⚠️ Watchdog: no pong from ${tabType} — advancing queue`);
-          this._resetTrack();
-          this._playNext();
+        if (this._pongReceived) return;
+        // "Never answered" is NOT "died mid-track", and only the second one
+        // justifies eating a paid request. If this tab type has never once
+        // ponged, the tab does not exist — advancing would shift and persist
+        // away one song every ~65s until the deck was empty, having played
+        // nothing. Hold and re-probe instead; the deck is the thing we cannot
+        // get back.
+        if (!this._confirmedTabs.has(tabType)) {
+          this.log(`⏸️ Watchdog: no ${tabType} tab has ever answered — holding ${this.queue.size()} song(s) instead of advancing`);
+          this._cancelProbe();
+          this._probeRetry = setTimeout(() => this._probe(), 30000);
+          return;
         }
+        this.log(`⚠️ Watchdog: no pong from ${tabType} — advancing queue`);
+        this._resetTrack();
+        this._playNext();
       }, 5000);
     }, 60000);
     this.log(`🐕 Watchdog started for ${tabType}`);
