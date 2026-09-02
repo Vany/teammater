@@ -62,6 +62,10 @@ export class MusicQueueModule extends BaseModule {
     this._watchdogTimer  = null;
     this._watchdogPongTimeout = null; // per-tick "did we get a pong" timer — see _stopWatchdog
     this._pongReceived   = false;
+    this._probeTimer     = null;   // restore-probe deadline
+    this._probeRetry     = null;   // held-deck retry
+    this._pongTypes      = new Set(); // which tab types answered the last probe
+
   }
 
   getDisplayName() { return "🎵 Music Queue"; }
@@ -134,19 +138,71 @@ export class MusicQueueModule extends BaseModule {
    */
   _resumeRestoredQueue() {
     this.log(`🎵 ${this.queue.size()} song(s) restored — probing for a player tab...`);
+    this._probe();
+  }
+
+  /**
+   * Ask whether any player tab is listening, and start the held deck if one is.
+   *
+   * RETRIES until it succeeds, because the previous version probed exactly once
+   * at connect and then told the operator to "open music.yandex.ru to start it"
+   * — advice nothing in the code could act on. With smartAdd now correctly
+   * queueing behind a held deck, that left music silent with no way back except
+   * an undocumented tap on Skip.
+   * @private
+   */
+  _probe() {
+    this._cancelProbe();
     this._pongReceived = false;
-    bridge.send("ping", null, "yandex");
-    setTimeout(() => {
-      if (this._pongReceived) {
-        this.log("🎵 Player tab found — resuming restored queue");
-        this._playNext();
-      } else {
-        this.log("⏸️ No player tab answered — restored queue held (open music.yandex.ru to start it)");
+    this._pongTypes.clear();
+    // "all", not "yandex": a YouTube player tab left over from before a panel
+    // reload must be discovered too, so it can be ADOPTED rather than played
+    // over — see the status_reply listener.
+    bridge.send("query_status", null, "all");
+    bridge.send("ping", null, "all");
+    this._probeTimer = setTimeout(() => {
+      this._probeTimer = null;
+      // Re-check at FIRE time. The module can be unchecked inside the probe
+      // window, and starting here would drain the paid deck with the checkbox
+      // off — the same class the index.js isEnabled() fix just closed.
+      if (!this.isEnabled() || !this.connected) {
+        this.log("⏸️ Restore probe abandoned — module no longer enabled");
+        return;
       }
+      if (this.currentlyPlaying) return; // adopted a live tab meanwhile
+      if (this.queue.size() === 0) {
+        // Nothing left to hold — a skip or a manual clear drained it while we
+        // waited. Stop retrying rather than logging "0 song(s) held" forever.
+        this._cancelProbe();
+        return;
+      }
+
+      // Which tab must exist depends on the deck HEAD. A YouTube track opens
+      // its own tab, so it can always start; a Yandex track needs a Yandex tab
+      // that is already open. Accepting any pong meant a stale PAUSED YouTube
+      // tab could satisfy the probe, we would start a Yandex track into a void,
+      // and the watchdog — which pings "yandex" specifically — would get no
+      // answer and drain the paid deck exactly as before, through a new door.
+      const head = this.queue.peekBottom();
+      const needed = this._isYoutube(head) ? null : "yandex";
+      if (!needed || this._pongTypes.has(needed)) {
+        this.log("🎵 Player tab available — resuming restored queue");
+        this._playNext();
+        return;
+      }
+      this.log(`⏸️ No player tab answered — ${this.queue.size()} song(s) held; open music.yandex.ru and they will start automatically`);
+      this._probeRetry = setTimeout(() => this._probe(), 30000);
     }, 5000);
   }
 
+  /** @private */
+  _cancelProbe() {
+    if (this._probeTimer) { clearTimeout(this._probeTimer); this._probeTimer = null; }
+    if (this._probeRetry) { clearTimeout(this._probeRetry); this._probeRetry = null; }
+  }
+
   async doDisconnect() {
+    this._cancelProbe();
     this._stopWatchdog();
     if (this._obsWs) {
       this._obsWs.onclose = null;
@@ -231,21 +287,42 @@ export class MusicQueueModule extends BaseModule {
 
     bridge.listen("status_reply", (data) => {
       if (!data?.trackInfo) return;
-      // Only believe a YouTube tab that is on the track we think is playing.
-      // A skipped tab is left OPEN and merely paused (see skip()), and it keeps
-      // answering query_status forever — so any status_reply used to resurrect
-      // _ytPlayerActive, after which the next music_resume sent `resume` to it
-      // too and the old video played audibly over the current one.
       const replyId = this._youtubeVideoId(data.url);
-      if (
-        data.type === "youtube" &&
-        !this._ytPlayerActive &&
-        replyId &&
-        replyId === this._youtubeVideoId(this.currentlyPlaying)
-      ) {
-        this._ytPlayerActive = true;
-        this.log("📺 YouTube player tab detected on reconnect");
+
+      if (data.type === "youtube" && !this._ytPlayerActive) {
+        if (!this.currentlyPlaying && data.playing) {
+          // ADOPT. This is the reconnect case the guard existed for and which
+          // the id check had made unreachable: after a panel reload
+          // currentlyPlaying is null, so nothing could ever match. Meanwhile a
+          // YouTube tab is still audibly playing, and starting the deck over it
+          // gave two songs at once. Take ownership of what is already playing
+          // instead of competing with it.
+          this.currentlyPlaying = data.url;
+          this._ytPlayerActive = true;
+          this._cancelProbe();
+          this._startWatchdog("youtube");
+          this.log(`📺 Adopted the YouTube tab already playing: ${data.url}`);
+        } else if (replyId && replyId === this._youtubeVideoId(this.currentlyPlaying)) {
+          // Believe a tab only when it is on the track we think is playing. A
+          // SKIPPED tab is left open and merely paused, and answers forever —
+          // resurrecting from it sent a later `resume` to the wrong video.
+          this._ytPlayerActive = true;
+          this.log("📺 YouTube player tab detected on reconnect");
+        }
       }
+
+      // Do not let an inactive player rewrite what is on screen. The Yandex tab
+      // stays open and answering while a YouTube song plays, so its reply used
+      // to overwrite nowPlaying with a stale track — putting the wrong song on
+      // the OBS overlay and into the paid "What's Playing" answer. Same defect
+      // as the music_start synthesis fixed in the UserScript; this is the
+      // other half of it, on the module side.
+      const activeSource = this._ytPlayerActive ? "youtube" : "yandex";
+      if (data.type && data.type !== activeSource) {
+        this.log(`🚫 Ignoring status_reply from inactive ${data.type} player`);
+        return;
+      }
+
       const parsed = data.title
         ? { title: data.title, artist: data.artist ?? "", version: data.version ?? "" }
         : this._parseSongName(data.trackInfo);
@@ -263,6 +340,7 @@ export class MusicQueueModule extends BaseModule {
     bridge.listen("pong", ({ type }) => {
       this.log(`🏓 Pong from ${type}`);
       this._pongReceived = true;
+      if (type) this._pongTypes.add(type);
     });
 
     bridge.listen("song", () => {}); // MASTER receives "all" messages; ignore own sends
@@ -306,6 +384,16 @@ export class MusicQueueModule extends BaseModule {
   }
 
   _playSong(url) {
+    // Clear the remote pause HERE, not in _playNext: a `song` command reloads
+    // the Yandex tab and wipes the pause the tab was holding, so starting a
+    // track while _musicPaused is true left the flag lying about audible music.
+    // _playNext and smartAdd's idle branch both reach playback through this
+    // one function — putting it in _playNext covered only half the paths,
+    // which is what co-reviewer 14176a52 caught.
+    if (this._musicPaused) {
+      this.log("▶️ Paused state cleared by track change");
+      this._musicPaused = false;
+    }
     if (this._isYoutube(url)) {
       bridge.send("pause", null, "yandex");
       // Delay opening YouTube to let the pause propagate through GM_setValue → Yandex listener
@@ -366,15 +454,6 @@ export class MusicQueueModule extends BaseModule {
 
   _playNext() {
     this._stopWatchdog();
-    // A `song` command reloads the Yandex tab, which wipes the pause the tab
-    // was holding — so skipping while the stream is remotely paused used to
-    // start the next track audibly. The remote's paused state is the operator's
-    // intent and outlives one track, so clear it explicitly rather than letting
-    // a reload silently override it.
-    if (this._musicPaused) {
-      this.log("▶️ Paused state cleared by track change");
-      this._musicPaused = false;
-    }
     if (this.queue.size() > 0) {
       const url = this.queue.shift();
       this.log(`▶️ Playing next (${this.queue.size()} remaining): ${url}`);
