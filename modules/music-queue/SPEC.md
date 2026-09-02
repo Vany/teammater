@@ -37,10 +37,23 @@ Each tab ignores messages where `target` does not match its type (or `"all"`).
 |-----|-------------|------|---------------|
 | MASTER | `localhost:8443/**` | Sends commands, receives replies, manages tab handles | `i_am_a_master = true` |
 | Yandex CLIENT | `music.yandex.ru/**` | Handles Yandex commands, fires replies | — |
-| YouTube CLIENT | `youtube.com/**` | Handles YouTube commands, fires replies | `i_am_youtube_player = true` (sessionStorage) |
+| YouTube CLIENT | `youtube.com/**` | Handles YouTube commands, fires replies | `sessionStorage.yt_player === "1"` |
 
-YouTube player role persists across navigations via `sessionStorage.yt_player`.
-New tab is designated via `GM_getValue("yt_next_is_player")` flag set before `GM_openInTab`.
+YouTube player role persists across navigations via `sessionStorage.yt_player`,
+which is per-TAB and survives the full page load that the `song` command's own
+`window.location =` assignment causes. (This was documented long before it was
+true, along with a `window.i_am_youtube_player` flag that never existed. Until
+2026-09-01 the only marker was the one-shot GM flag below, consumed on first
+load — so every navigation after the first demoted the player to an observer
+that answered nothing and stalled the master until its 65s watchdog.)
+
+A new tab is designated via `GM_setValue("yt_next_is_player", {videoId, at})`
+before `GM_openInTab`. The claim names the video it was opened FOR, and a
+loading tab only takes it when the id matches its own `?v=`: the flag is GM
+storage, shared across every tab, so a bare `true` could be claimed by any
+youtube.com page that happened to load next — including one the streamer opened
+themselves, which would then drive the queue while `closeYoutubePlayer()` closed
+the innocent tab.
 
 ### API exposed on `unsafeWindow` (MASTER tab)
 

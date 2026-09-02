@@ -28,7 +28,8 @@
 // Roles:
 //   MASTER       — localhost:8443  (i_am_a_master = true on window)
 //   Yandex CLIENT — music.yandex.ru
-//   YouTube CLIENT — youtube.com, with yt_player in sessionStorage
+//   YouTube CLIENT — youtube.com, with yt_player === "1" in sessionStorage
+//                     (claimed via a videoId-scoped GM flag; see role dispatch)
 // ─────────────────────────────────────────────────────────────
 
 (function () {
@@ -118,7 +119,13 @@
     unsafeWindow.openYoutubePlayer = (url) => {
       log(`openYoutubePlayer: ${url}`);
       if (_ytTab) { log("closing previous YT tab"); _ytTab.close(); _ytTab = null; }
-      GM_setValue("yt_next_is_player", true);
+      // Name the video the claim is FOR. A bare `true` was claimable by any
+      // youtube.com page that happened to load next — including one the
+      // streamer opened themselves — which then drove the queue with the wrong
+      // video while closeYoutubePlayer() closed the innocent tab.
+      let videoId = null;
+      try { videoId = new URL(url).searchParams.get("v"); } catch { /* keep null */ }
+      GM_setValue("yt_next_is_player", { videoId, at: Date.now() });
       _ytTab = GM_openInTab(url, { active: true });
     };
 
@@ -251,8 +258,13 @@
         case "prev":         safeClick('button[aria-label="Previous song"]'); break;
         case "query_status": {
           sendToMaster("status_reply", status());
-          const info = readCurrentTrack();
-          if (info.title) sendToMaster("music_start", info);
+          // music_start means "a track STARTED", per SPEC — it must not be
+          // synthesised from whatever the playerbar happens to show. This tab
+          // is paused whenever a YouTube track is playing, and the master
+          // overwrites nowPlaying unconditionally, so firing here put the stale
+          // Yandex track on the OBS overlay and into the "What's Playing"
+          // reward while entirely different audio was on stream.
+          sendCurrentTrackToMaster();
           break;
         }
         case "ping":         sendToMaster("pong", { type: "yandex" }); break;
@@ -281,6 +293,13 @@
     }
 
     function sendCurrentTrackToMaster() {
+      // Single gate for every music_start this tab emits. Paused means this is
+      // not our track: either the streamer paused, or the master paused us
+      // because a YouTube song took over.
+      if (!audioEl || audioEl.paused) {
+        log("music_start suppressed — audio not playing");
+        return;
+      }
       const info = readCurrentTrack();
       if (!info.title) return;
       log(`music_start: "${info.title}" by "${info.artist}" cover=${info.cover}`);
@@ -320,9 +339,11 @@
       }
       const ws = new WebSocket(`wss://localhost:8443/obs?token=${encodeURIComponent(token)}`);
       ws.onopen = () => {
-        // Re-send current track info so master has up-to-date artist on reconnect/reload
-        const info = readCurrentTrack();
-        if (info.title) sendCurrentTrackToMaster();
+        // Re-send current track info so master has up-to-date artist on
+        // reconnect/reload — but ONLY if this tab is the one actually playing.
+        // A server restart or sleep/wake used to republish a paused tab's last
+        // track as if it had just started.
+        sendCurrentTrackToMaster();
       };
       ws.onmessage = ({ data }) => {
         try {
@@ -581,14 +602,37 @@
   }
 
   if (isYoutube) {
-    const flag = GM_getValue("yt_next_is_player");
-    log(`YouTube tab — yt_next_is_player=${flag}`);
-    if (flag) {
-      GM_deleteValue("yt_next_is_player");
-      log("designated as PLAYER (flag)");
+    // Role persistence, for real this time. sessionStorage is per-TAB and
+    // survives navigation, which is exactly the property the header comment and
+    // SPEC.md have always claimed and the code never had: the GM flag is
+    // global and one-shot, so the first full page load consumed it and every
+    // load after that — including the `song` command's own
+    // `window.location = clean` — demoted the player to a dead observer that
+    // answers nothing and stalls the master until its 65s watchdog.
+    if (sessionStorage.getItem("yt_player") === "1") {
+      log("role: YouTube PLAYER (restored from sessionStorage)");
       initYoutube();
       return;
     }
+
+    // The designation names the VIDEO it was opened for. It used to be a bare
+    // `true`, claimable by whichever youtube.com page loaded first — so a tab
+    // the streamer opened themselves could steal it, play their own video,
+    // drive the queue with it, and leave closeYoutubePlayer() closing the
+    // innocent tab instead.
+    const claim = GM_getValue("yt_next_is_player");
+    const wantId = claim && typeof claim === "object" ? claim.videoId : null;
+    const thisId = new URL(location.href).searchParams.get("v");
+    log(`YouTube tab — claim=${JSON.stringify(claim)} thisVideo=${thisId}`);
+
+    if (claim && (!wantId || wantId === thisId)) {
+      GM_deleteValue("yt_next_is_player");
+      sessionStorage.setItem("yt_player", "1");
+      log(`designated as PLAYER (claim${wantId ? " for " + wantId : ""})`);
+      initYoutube();
+      return;
+    }
+
     log("role: YouTube observer (not a player tab)");
     return;
   }

@@ -188,7 +188,18 @@ export class MusicQueueModule extends BaseModule {
 
     bridge.listen("status_reply", (data) => {
       if (!data?.trackInfo) return;
-      if (data.type === "youtube" && !this._ytPlayerActive) {
+      // Only believe a YouTube tab that is on the track we think is playing.
+      // A skipped tab is left OPEN and merely paused (see skip()), and it keeps
+      // answering query_status forever — so any status_reply used to resurrect
+      // _ytPlayerActive, after which the next music_resume sent `resume` to it
+      // too and the old video played audibly over the current one.
+      const replyId = this._youtubeVideoId(data.url);
+      if (
+        data.type === "youtube" &&
+        !this._ytPlayerActive &&
+        replyId &&
+        replyId === this._youtubeVideoId(this.currentlyPlaying)
+      ) {
         this._ytPlayerActive = true;
         this.log("📺 YouTube player tab detected on reconnect");
       }
@@ -230,6 +241,26 @@ export class MusicQueueModule extends BaseModule {
   // ── Routing ──────────────────────────────────────────────
 
   _isYoutube(url) { return YOUTUBE_RE.test(url); }
+
+  /**
+   * Video id from any YouTube URL form, or null.
+   *
+   * Compared instead of whole URLs because the two sides never hold the same
+   * string: the module stores the URL as REQUESTED, while the tab reports
+   * location.href after navigating to the cleaned form (and YouTube may add
+   * its own params). The id is the only stable identity.
+   * @private
+   */
+  _youtubeVideoId(url) {
+    if (!url) return null;
+    try {
+      const u = new URL(url);
+      if (u.hostname === "youtu.be") return u.pathname.slice(1) || null;
+      return u.searchParams.get("v");
+    } catch {
+      return null;
+    }
+  }
 
   _playSong(url) {
     if (this._isYoutube(url)) {
