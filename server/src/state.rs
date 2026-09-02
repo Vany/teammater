@@ -38,6 +38,11 @@ pub struct AppState {
     pub last_sysinfo: Mutex<Option<String>>,
     pub last_now_playing: Mutex<Option<String>>,
     pub last_climate: Mutex<Option<String>>,
+    /// Latest `friends_present`, replayed to new clients like the sensors above.
+    /// Presence changes only on JOIN/PART/first message, which on a quiet
+    /// channel can be an hour apart — a phone opened mid-stream would otherwise
+    /// show an empty friends widget while three friends were watching.
+    pub last_friends: Mutex<Option<String>>,
     pub lan_ip: String,
     /// Shared secret required to open /obs. The bus is not a read-only feed:
     /// it carries `twitch_timeout`, `twitch_shoutout` and cmd_* record/scene
@@ -70,6 +75,7 @@ impl AppState {
             last_sysinfo: Mutex::new(None),
             last_now_playing: Mutex::new(None),
             last_climate: Mutex::new(None),
+            last_friends: Mutex::new(None),
             lan_ip,
             bus_token: load_or_create_bus_token(),
         };

@@ -62,6 +62,7 @@ async fn send_welcome(tx: &mut WsSink, state: &AppState) -> bool {
         state.last_sysinfo.lock().unwrap().clone(),
         state.last_now_playing.lock().unwrap().clone(),
         state.last_climate.lock().unwrap().clone(),
+        state.last_friends.lock().unwrap().clone(),
     ]
     .into_iter()
     .flatten()
@@ -183,6 +184,16 @@ async fn route_incoming(
                 }
                 ring.push_back(text.clone());
             }
+            let _ = obs_broadcast.send(ObsMessage {
+                sender_id: client_id,
+                text,
+            });
+        }
+        "friends_present" => {
+            // Same reasoning as now_playing below: broadcast-on-change only,
+            // so a late joiner must be handed the current state or wait for the
+            // next change, which may never come during their session.
+            *state.last_friends.lock().unwrap() = Some(text.clone());
             let _ = obs_broadcast.send(ObsMessage {
                 sender_id: client_id,
                 text,

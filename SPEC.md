@@ -645,7 +645,7 @@ All messages are JSON. Two directions: **server→clients** (broadcasts from ser
 {"type": "climate", "temperature": 23.4, "humidity": 61.8}
 ```
 
-The server caches the latest `sysinfo`, `now_playing`, and `climate` and replays them
+The server caches the latest `sysinfo`, `now_playing`, `climate` and `friends_present` and replays them
 to every newly-connected client (see `send_welcome`), so a reconnecting overlay shows
 current values immediately rather than waiting for the next slow sensor report.
 
