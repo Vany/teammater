@@ -553,7 +553,11 @@ A remote control page served at `/mobile`, accessible to any device on the local
 - **Heart rate widget** (hidden until first `heartrate` bus message):
   - Animated 🩵 pulse at actual BPM rate
   - Color zones: ≤100 green, 101–125 yellow, ≥126 red (number + glow)
-- **Song section** (hidden until first `now_playing` bus message):
+- **Song section** (ALWAYS visible; shows `—` until the first `now_playing`):
+  Kept visible because the transport buttons below it are always visible (see
+  "Three buttons always visible"), and a control row floating above nothing
+  reads as broken. This line said "hidden until first now_playing" until
+  2026-09-01, contradicting both the code and the sentence four lines down.
   - Track title (+ version if present, joined with `·`)
   - Artist name below title
   - Both truncated with ellipsis

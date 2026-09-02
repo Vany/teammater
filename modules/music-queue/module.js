@@ -112,19 +112,12 @@ export class MusicQueueModule extends BaseModule {
     this._setupListeners();
     this._connectObs();
 
-    if (this.queue.size() === 0) {
-      // My Vibes fallback consumes nothing, so it is always safe to start.
-      this._playNext();
-    } else {
-      // NEVER consume a restored deck on faith. Calling _playNext() here
-      // unconditionally (which is what the first attempt at this fix did) arms
-      // the watchdog against a player tab that may not be open at all — and the
-      // watchdog reads "no pong" as "track ended", so it shifted and PERSISTED
-      // away one paid request every ~65s until the deck was empty, having
-      // played nothing. Strictly worse than the stall it was meant to fix.
-      // Probe first; start only if something is actually listening.
-      this._resumeRestoredQueue();
-    }
+    // ALWAYS probe first, empty deck or not. Starting anything synchronously
+    // here races the status_reply that would tell us a YouTube tab from before
+    // this reload is still audibly playing — and the empty-deck branch used to
+    // start My Vibes straight over it. What to do once the probe answers
+    // depends on the deck, and _probe decides that at fire time.
+    this._probe();
 
     this.log(`✅ Music Queue initialized (${this.queue.size()} queued)`);
   }
@@ -136,11 +129,6 @@ export class MusicQueueModule extends BaseModule {
    * and the next request will queue behind it rather than jumping it.
    * @private
    */
-  _resumeRestoredQueue() {
-    this.log(`🎵 ${this.queue.size()} song(s) restored — probing for a player tab...`);
-    this._probe();
-  }
-
   /**
    * Ask whether any player tab is listening, and start the held deck if one is.
    *
@@ -171,9 +159,11 @@ export class MusicQueueModule extends BaseModule {
       }
       if (this.currentlyPlaying) return; // adopted a live tab meanwhile
       if (this.queue.size() === 0) {
-        // Nothing left to hold — a skip or a manual clear drained it while we
-        // waited. Stop retrying rather than logging "0 song(s) held" forever.
+        // No deck to protect: hand to My Vibes, which consumes nothing and
+        // arms no watchdog. Reached only after the probe window, so a live
+        // YouTube tab has had its chance to be adopted first.
         this._cancelProbe();
+        this._playNext();
         return;
       }
 
@@ -289,7 +279,8 @@ export class MusicQueueModule extends BaseModule {
       if (!data?.trackInfo) return;
       const replyId = this._youtubeVideoId(data.url);
 
-      if (data.type === "youtube" && !this._ytPlayerActive) {
+      const isYoutubeReply = (data.source ?? data.type) === "youtube";
+      if (isYoutubeReply && !this._ytPlayerActive) {
         if (!this.currentlyPlaying && data.playing) {
           // ADOPT. This is the reconnect case the guard existed for and which
           // the id check had made unreachable: after a panel reload
@@ -317,9 +308,16 @@ export class MusicQueueModule extends BaseModule {
       // the OBS overlay and into the paid "What's Playing" answer. Same defect
       // as the music_start synthesis fixed in the UserScript; this is the
       // other half of it, on the module side.
+      // Match on `source`, NOT `type`. status_reply and pong are different
+      // payloads: pong carries {type} from BOTH tabs, but status_reply carries
+      // `type` only from YouTube — Yandex's status() has `source: "yandex"` and
+      // no type at all. Testing `data.type` therefore never fired for the one
+      // tab this guard exists to block, so the first version of it was inert.
+      // Both status() implementations do carry `source`.
+      const replySource = data.source ?? data.type;
       const activeSource = this._ytPlayerActive ? "youtube" : "yandex";
-      if (data.type && data.type !== activeSource) {
-        this.log(`🚫 Ignoring status_reply from inactive ${data.type} player`);
+      if (replySource && replySource !== activeSource) {
+        this.log(`🚫 Ignoring status_reply from inactive ${replySource} player`);
         return;
       }
 
@@ -479,7 +477,7 @@ export class MusicQueueModule extends BaseModule {
     // A non-empty deck is NOT idle even when nothing is playing yet: that is
     // exactly the restored-queue state above, and playing immediately there
     // would jump the paid songs being held. This is the ordering half of the
-    // original bug; _resumeRestoredQueue is the starting half.
+    // original bug; the connect-time probe (_probe) is the starting half.
     const idle =
       (this.currentlyPlaying === null || this.currentlyPlaying === this._emptyUrl) &&
       this.queue.size() === 0;

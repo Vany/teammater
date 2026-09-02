@@ -632,7 +632,15 @@ function connect() {
   };
 
   ws.onmessage = ({ data }) => {
-    try { handleMsg(JSON.parse(data)); } catch {}
+    // Never swallow silently (PROG.md). This catch hides BOTH malformed frames
+    // and any exception thrown inside a render function, on a device with no
+    // devtools — which is precisely how a producer-shape drift can blank a
+    // widget with no signal anywhere. Log it and keep the socket alive.
+    try {
+      handleMsg(JSON.parse(data));
+    } catch (e) {
+      appendLog('💥 Bad bus message: ' + (e?.message || e));
+    }
   };
 
   ws.onclose = () => {
@@ -662,8 +670,16 @@ function sendCmd(type, extra = {}) {
     appendLog('⚠️ OBS is offline — command not sent: ' + type);
     return;
   }
-  if (ws?.readyState === WebSocket.OPEN)
-    ws.send(JSON.stringify({ type, ...extra }));
+  if (ws?.readyState !== WebSocket.OPEN) {
+    // Say so. Every caller's UI is optimistic — doMute/doShoutout close the
+    // menu, toggleMusicPause flips the button — so a silent drop meant the
+    // phone CONFIRMED a moderator action that never left the device. The
+    // OBS-offline branch above already logs; the bus-down case, which covers
+    // twitch_timeout and twitch_shoutout, said nothing at all.
+    appendLog('⚠️ Not connected to the bus — not sent: ' + type);
+    return;
+  }
+  ws.send(JSON.stringify({ type, ...extra }));
 }
 
 // ─── Message routing ──────────────────────────────────────────────────────────
@@ -957,10 +973,23 @@ function togglePause() {
 function openScenePicker() {
   renderSceneList();
   document.getElementById('scene-modal').classList.add('open');
+  // Push a history entry so Android's back button closes the MODAL, as
+  // SPEC.md promises. Without one, back navigated off /mobile entirely —
+  // dropping the bus socket and releasing the wake lock mid-stream.
+  history.pushState({ scenePicker: true }, '');
 }
 
+window.addEventListener('popstate', () => {
+  const modal = document.getElementById('scene-modal');
+  if (modal?.classList.contains('open')) modal.classList.remove('open');
+});
+
 function closeScenePicker() {
+  const wasOpen = document.getElementById('scene-modal').classList.contains('open');
   document.getElementById('scene-modal').classList.remove('open');
+  // Consume the entry we pushed, so a later back does not have to be pressed
+  // twice to leave the page.
+  if (wasOpen && history.state?.scenePicker) history.back();
 }
 
 function onModalBackdrop(e) {
@@ -1149,7 +1178,15 @@ async function acquireWakeLock() {
   }
   // Hidden looping video — older iOS fallback. Silently fails without prior
   // user gesture; touchstart handler below activates it on first touch.
-  if (_noSleepVideo.paused) _noSleepVideo.play().catch(() => {});
+  // Only run the video when the native lock is NOT doing the job. It is the
+  // older-iOS fallback, and leaving it decoding for the whole session on a
+  // phone that already holds a real wake lock is pure battery for nothing.
+  const nativeHeld = !!(wakeLock && !wakeLock.released);
+  if (nativeHeld) {
+    if (!_noSleepVideo.paused) _noSleepVideo.pause();
+  } else if (_noSleepVideo.paused) {
+    _noSleepVideo.play().catch(() => {});
+  }
   renderWakeDot();
 }
 
@@ -1158,10 +1195,19 @@ function renderWakeDot() {
   const el = document.getElementById('wake-dot');
   if (!el) return;
   const supported = 'wakeLock' in navigator;
-  const held = !!(wakeLock && !wakeLock.released);
+  // A phone with no Wake Lock API is NOT failing when the video fallback is
+  // actually running. This painted red every session on exactly the devices
+  // the fallback exists for — and it painted the same red, with the same
+  // title, whether or not wakeErr was set, so the videoDecodeError that the
+  // <source> listeners exist to surface was invisible at a glance.
+  const nativeHeld = !!(wakeLock && !wakeLock.released);
+  const videoHeld = !supported && !wakeErr && !_noSleepVideo.paused;
+  const held = nativeHeld || videoHeld;
   el.textContent = held ? '🔆' : '🌙';
-  el.style.background = held ? '#1c7d4a' : (!supported || wakeErr ? '#c33' : '#886600');
-  el.title = held ? 'Screen kept awake'
+  el.style.background = held ? '#1c7d4a' : (wakeErr || !supported ? '#c33' : '#886600');
+  el.title = wakeErr === 'videoDecodeError' ? 'Wake-lock fallback video failed to decode'
+    : videoHeld ? 'Screen kept awake (video fallback)'
+    : held ? 'Screen kept awake'
     : !supported ? 'Wake Lock API unsupported'
     : `Not held${wakeErr ? ' (' + wakeErr + ')' : ''}`;
 }
