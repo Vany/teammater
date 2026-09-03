@@ -67,10 +67,25 @@ export class MusicQueueModule extends BaseModule {
     this._pongTypes      = new Set(); // which tab types answered the last probe
     this._torndown       = false;  // set by doDisconnect; gates bridge listeners
     this._confirmedTabs  = new Set(); // tab types that have EVER answered a ping
-
   }
 
   getDisplayName() { return "🎵 Music Queue"; }
+
+  /**
+   * Can a request actually REACH a player right now?
+   *
+   * isConnected() only reports this module's checkbox: doConnect deliberately
+   * warns rather than throwing when the MusicBridge UserScript is absent
+   * (the script may initialise after this module, so failing there would be
+   * wrong), and the module stays green. But the UserScript IS the delivery
+   * path — without it every command is dropped, so a paid Music Request was
+   * accepted, marked FULFILLED, and vanished. Callers that spend a viewer's
+   * points must ask this, not isConnected().
+   * @returns {boolean}
+   */
+  canDeliver() {
+    return bridge.ok;
+  }
 
   getConfig() {
     return {
@@ -125,13 +140,6 @@ export class MusicQueueModule extends BaseModule {
     this.log(`✅ Music Queue initialized (${this.queue.size()} queued)`);
   }
 
-  /**
-   * Start a deck restored from localStorage, but only once a player tab has
-   * answered. Silence here is not an error — it usually just means the
-   * streamer has not opened music.yandex.ru yet — so the deck is left intact
-   * and the next request will queue behind it rather than jumping it.
-   * @private
-   */
   /**
    * Ask whether any player tab is listening, and start the held deck if one is.
    *

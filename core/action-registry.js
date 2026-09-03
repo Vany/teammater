@@ -16,7 +16,7 @@
  *   registry.setRewardActions(rewardConfigs);
  *
  *   // Execute chat action
- *   await registry.executeChatAction(message, context);
+ *   await registry.executeChatAction(message, messageData, context);
  *
  *   // Execute reward action
  *   await registry.executeRewardAction(rewardId, user, input, context);
@@ -153,15 +153,19 @@ export class ActionRegistry {
     }
 
     try {
-      // Add message-specific data to context
-      const fullContext = {
-        ...context,
-        userId: messageData.userId,
-        messageId: messageData.messageId,
-      };
+      // Augment the ORIGINAL context, not a shallow copy. Actions record state
+      // by writing onto the context they are handed — hate() and love() both do
+      // `context.love_timer = Date.now()` — and index.js calls
+      // syncStateFromContext(context) on the ORIGINAL afterwards. A copy meant
+      // every primitive write was thrown away on the chat path, so love
+      // protection redeemed via chat never took effect. (throttle survived only
+      // because it is an object whose properties are shared by reference, which
+      // is exactly what made the loss hard to notice.)
+      context.userId = messageData.userId;
+      context.messageId = messageData.messageId;
 
       // Execute action
-      await actionClosure(fullContext, messageData.username, extractedMessage);
+      await actionClosure(context, messageData.username, extractedMessage);
 
       return true;
     } catch (error) {

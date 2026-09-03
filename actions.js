@@ -237,6 +237,18 @@ export function music() {
       return false;
     }
 
+    // Green module is NOT a delivery path. doConnect only WARNS when the
+    // MusicBridge UserScript is missing (it may initialise after this module,
+    // so throwing there would be wrong) and the module stays connected — but
+    // without the script every command is dropped, so a paid request was
+    // accepted, marked FULFILLED, and vanished. Refuse instead.
+    if (!musicQueue.canDeliver()) {
+      log(`❌ Music request from ${user} refused: MusicBridge UserScript not loaded`);
+      if (send_twitch)
+        send_twitch(`@${user} Music is unavailable right now — the player bridge is not running.`);
+      return false;
+    }
+
     // Normalize Yandex .com → .ru
     const url = isYandex ? raw.replace(/yandex\.com/, "yandex.ru") : raw;
     const result = musicQueue.smartAdd(url);
@@ -707,9 +719,21 @@ export const delete_ = delete_message;
  * @param {string} source - Input source name to refresh (browser source)
  * @returns {Function} - closure(context, user, message) => void
  */
+/**
+ * Switch OBS scene and refresh a source.
+ *
+ * Both arguments are OPTIONAL. Omitted, they are read from the OBS module's
+ * `glasses_scene` / `glasses_source` config fields at call time — the same
+ * fields the panel's "👓 Glasses + Refresh" button uses. They used to be
+ * hard-coded at the VOICE_ACTIONS call site, so editing the config changed the
+ * button and silently did nothing to the spoken trigger: one behaviour, two
+ * sources of truth, and the config field misled whoever edited it.
+ */
 export function obs_scene(scene, source) {
   return async (context, user, message) => {
     const { obs, log } = context;
+    scene  = scene  ?? obs?.getConfigValue("glasses_scene", "Glasses");
+    source = source ?? obs?.getConfigValue("glasses_source", "G");
     if (!obs || !obs.isConnected()) {
       if (log) log(`❌ obs_scene: OBS not connected`);
       return;

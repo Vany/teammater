@@ -60,7 +60,10 @@ export const VOICE_ACTIONS = {
   "^рюкзак$": minaret_use(8),
   "^сундук$": minaret_use(7),
   "^(babakh|бабах)$": apply_effect("dead_blow"),
-  "^(сцена очки|glasses)$": obs_scene("Glasses", "G"),
+  // No arguments: obs_scene falls back to the OBS module's glasses_scene /
+  // glasses_source config, so the spoken trigger and the panel button follow
+  // the same setting instead of diverging silently.
+  "^(сцена очки|glasses)$": obs_scene(),
   "^(сцена экран|game)$": obs_scene("Game", "Screen"),
 };
 

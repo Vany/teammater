@@ -55,8 +55,11 @@ The application uses a clean modular architecture with **8 independent modules**
 - `module-manager.js` - Module lifecycle management (register, initialize, connect, disconnect)
 - `ui-builder.js` - Auto-generates UI from config schemas (forms, inputs, panels)
 - `action-registry.js` - Centralized action management (chat actions, reward actions)
-- `context-builder.js` - Builds unified execution context for actions
-- `base-module.js` - Base class for all modules with common lifecycle and UI logic
+- `modules/base-module.js` - Base class for all modules with common lifecycle and
+  UI logic. NOTE: it lives in `modules/`, not `core/`.
+  (`core/context-builder.js` was listed here for a long time and does not exist:
+  context building was merged into ModuleManager — see its "Context builder
+  state (merged from ContextBuilder)" comment.)
 
 **Modules (`modules/`):**
 
