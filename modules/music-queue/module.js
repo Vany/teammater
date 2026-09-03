@@ -140,6 +140,14 @@ export class MusicQueueModule extends BaseModule {
     this.log(`✅ Music Queue initialized (${this.queue.size()} queued)`);
   }
 
+  // lore-ok[aa6784dc]: fixed here. The finding named _resumeRestoredQueue, a
+  // one-shot 5s probe with no way to act on its own "open music.yandex.ru"
+  // advice; that function no longer exists. Both hold paths now arm a 30s
+  // _probeRetry — this one below, and the watchdog's in _startWatchdog — and
+  // the watchdog hold also unshifts the stalled song back and calls
+  // _resetTrack(), so currentlyPlaying is null and the retry is not blocked by
+  // _probe's own `if (this.currentlyPlaying) return` guard. Opening the tab
+  // later therefore does start the held deck, which is what the log promises.
   /**
    * Ask whether any player tab is listening, and start the held deck if one is.
    *
