@@ -485,6 +485,18 @@ export class OBSModule extends BaseModule {
     this.lastAlertTime = now;
     const cumulativeRate = totalFrames > 0 ? (totalDropped / totalFrames * 100).toFixed(1) : "?";
     this.log(`⚠️ Stream: ${deltaDropped} new dropped frames (cumulative: ${totalDropped}, ${cumulativeRate}%)`);
+
+    // The 👻 Boo checkbox on the control panel gates only the SOUND — the log
+    // line above always happens, because silencing the alert must not also
+    // hide the fact that frames are dropping.
+    //
+    // Defaults to ON when the element is absent (the module also runs with the
+    // panel not yet rendered): this is a default-checked control, so a missing
+    // element must not silently mean "off". Read live rather than cached, so
+    // toggling it takes effect on the next drop without a reload.
+    const booEl = document.getElementById("booCheckbox");
+    if (booEl && !booEl.checked) return;
+
     if (window.mp3) window.mp3("startup", 0.2);
   }
 }
