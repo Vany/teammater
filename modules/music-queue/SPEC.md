@@ -68,7 +68,7 @@ closeYoutubePlayer()     // closes the stored GM tab handle
 
 | Command | Payload | Effect |
 |---------|---------|--------|
-| `song` | URL string | Navigate to URL (or resume if already there) |
+| `song` | URL string | Navigate to URL. If ALREADY on that URL: the My Vibes root is (re)started by clicking its play button, anything else is resumed. "Already on the root" does not mean playing — the page goes idle when a track ends, and the audio element captured for that track is spent, so resuming it there produced an instant `ended` and My Vibes never started. |
 | `pause` | — | `audio.pause()` + hold via 200ms interval + mute |
 | `resume` | — | Clear pause interval, unmute, `audio.play()` |
 | `next` | — | Click "Next song" button |

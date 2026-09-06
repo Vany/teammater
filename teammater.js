@@ -190,10 +190,40 @@
       audioEl.play();
     }
 
+    /** The My Vibes page, compared by ORIGIN+PATH so a query string or hash
+     *  does not make an equal page look different. */
+    function isMyVibes(url) {
+      try {
+        const u = new URL(url, location.href);
+        return u.origin === "https://music.yandex.ru" && (u.pathname === "/" || u.pathname === "");
+      } catch { return false; }
+    }
+
+    /** Start My Vibes by clicking its play button. The ONLY way this page
+     *  begins playing — there is nothing to resume until it does. */
+    function startMyVibes() {
+      log("starting My Vibes");
+      hookAudio();
+      setTimeout(() => safeClick('button[class*="AlbumCover_playButton"]'), 4000);
+    }
+
     function navigateOrResume(url) {
       if (!url) { warn("song: empty url"); return; }
       log(`song url=${url} current=${location.href}`);
       if (location.href !== url) { log("navigating"); window.location = url; }
+      else if (isMyVibes(url)) {
+        // ALREADY HERE IS NOT ALREADY PLAYING. When the queue empties, the
+        // master sends `song <root>` while the tab is already sitting on the
+        // root — the previous track finished here and the page went idle. The
+        // old branch called resume(), which play()s the audio element captured
+        // for that finished track: a spent element (a real status_reply showed
+        // duration 0.015s), so it ended within milliseconds, emitted an instant
+        // music_done, re-announced the PREVIOUS song as music_start, and My
+        // Vibes never started at all. The play button is the only thing that
+        // starts this page, and until it is clicked there is nothing to resume.
+        log("already on My Vibes but idle — starting it rather than resuming");
+        startMyVibes();
+      }
       else { log("already on URL, resuming"); resume(); }
     }
 
@@ -214,7 +244,16 @@
       };
     }
 
+    let audioHooked = false;
+
     function hookAudio() {
+      // Install ONCE per page. It replaces HTMLMediaElement.prototype.play with
+      // a wrapper that closes over the previous one, so calling it again stacks
+      // another layer — harmless once, but startMyVibes() now runs on every
+      // queue drain without a reload, which would pile up wrappers for the life
+      // of the tab.
+      if (audioHooked) { log("audio already hooked"); return; }
+      audioHooked = true;
       log("hooking HTMLMediaElement.prototype.play");
       const origPlay = HTMLMediaElement.prototype.play;
       HTMLMediaElement.prototype.play = function (...args) {
@@ -252,10 +291,9 @@
           if (btn) { log("clicking track Playback"); btn.click(); }
           else { log("track already playing — no click needed"); }
         }, 4000);
-      } else if (location.href === "https://music.yandex.ru/") {
+      } else if (isMyVibes(location.href)) {
         log("My Vibes URL — clicking play in 4s");
-        hookAudio();
-        setTimeout(() => safeClick('button[class*="AlbumCover_playButton"]'), 4000);
+        startMyVibes();
       } else {
         log(`no autoplay for ${location.href}, hooking audio only`);
         hookAudio();
