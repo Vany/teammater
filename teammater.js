@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MusicBridge
 // @namespace    http://tampermonkey.net/
-// @version      2026-04-06
+// @version      2026-09-06.1
 // @description  Bridges Yandex Music and YouTube into a unified stream music queue
 // @author       ME
 // @match        https://music.yandex.ru/**
@@ -199,12 +199,47 @@
       } catch { return false; }
     }
 
+    // The My Vibes play button. Yandex has redesigned this page before (SPEC
+    // records the v4 change that broke the artist selector), so treat a miss as
+    // "the markup moved", not "wait longer".
+    const MY_VIBES_PLAY = 'button[class*="AlbumCover_playButton"]';
+
     /** Start My Vibes by clicking its play button. The ONLY way this page
      *  begins playing — there is nothing to resume until it does. */
     function startMyVibes() {
       log("starting My Vibes");
       hookAudio();
-      setTimeout(() => safeClick('button[class*="AlbumCover_playButton"]'), 4000);
+
+      // RETRY rather than one shot at a fixed 4s. That delay was a guess about
+      // how long this SPA takes to render, and it loses the race on a cold load
+      // — the button simply is not there yet and the single click is spent.
+      let tries = 0;
+      const timer = setInterval(() => {
+        tries++;
+        const btn = document.querySelector(MY_VIBES_PLAY);
+        if (btn) {
+          log(`My Vibes play button found after ${tries}s — clicking`);
+          btn.click();
+          clearInterval(timer);
+          return;
+        }
+        if (tries < 15) return;
+        clearInterval(timer);
+
+        // Still nothing after 15s: the selector is stale, not slow. Name what IS
+        // on the page so the correct selector is one console paste away instead
+        // of a round of guessing.
+        warn(`My Vibes play button NOT FOUND after ${tries}s — selector "${MY_VIBES_PLAY}" is stale`);
+        const candidates = [...document.querySelectorAll("button")]
+          .map((b) => ({
+            cls: typeof b.className === "string" ? b.className : "",
+            aria: b.getAttribute("aria-label") || "",
+            test: b.getAttribute("data-test-id") || "",
+          }))
+          .filter((c) => /play|vibe|Слушать|Воспроизв/i.test(`${c.cls} ${c.aria} ${c.test}`))
+          .slice(0, 12);
+        warn(`candidate play buttons on this page: ${JSON.stringify(candidates, null, 1)}`);
+      }, 1000);
     }
 
     function navigateOrResume(url) {
