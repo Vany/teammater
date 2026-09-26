@@ -155,6 +155,16 @@ scope- and affiliate-status theory was dead on arrival, and the cause had to be
 something common to the request itself. The bug had been "root cause unknown"
 for two weeks while the message describing it sat in git.
 
+## Recent Improvements (2026-09)
+
+### ANNOUNCE hook: `text` is bound in the eval scope (2026-09-26, `92c62db`)
+- After a Twitch profile switch, Vany's localStorage hook threw `text is not defined`:
+  its body uses `text`, but its parameter has another name or it has none. The page
+  now does `var text = value` right before the direct eval, so either hook style works.
+  Keep it `var`: a `const` breaks hooks that have their own top-level `var text` with
+  a SyntaxError (checked in V8). The hook itself was never seen, because macOS blocks
+  this shell from Chrome's data dir.
+
 ## Recent Improvements (2026-08)
 
 ### Lore review continued: 10 more fixes, review PASSED (2026-08-21)
