@@ -8,6 +8,30 @@ live confirmation run.)
 
 ## Recent Improvements (2026-09)
 
+### MusicBridge: requested Yandex tracks that "change URL but never play" (2026-09-26, `d1f5395`)
+- Two defects in the track path of `autoPlay()`, and either one gives exactly that symptom:
+  1. Bare `/track/N` links passed `actions.js` `YANDEX_RE`, but the userscript's own
+     regex required `/album/N/`. Yandex doesn't redirect the bare form (HTTP 200,
+     SPA keeps the URL), so autoPlay fell through to "no autoplay". Now `isYandexTrack()`,
+     pinned to `YANDEX_RE` by `teammater.test.js`.
+  2. One click attempt at a fixed 4s, and a MISSING button was logged as "already playing".
+     Now `startTrack()`, the same 1s/15s retry-and-report shape as `startMyVibes()` (`2ffcdb5`).
+- NOT verified: which defect hit Vany, or whether the May-era selector
+  (`TrackModalControls_controlsContainer` + aria-label `Playback`/`Pause`) still matches.
+  Logged-out headless Yandex renders no player buttons at all, so it can't be checked from here.
+  A stale selector now shows up as a console warning that lists the candidate buttons.
+- Deploy: the userscript gained `@updateURL`/`@downloadURL` (`http://localhost:8442/teammater.js`,
+  served from the repo). This one install is manual; after that it's Tampermonkey's
+  "Check for userscript updates". Bump `@version` on every change.
+
+### ANNOUNCE hook: `text` is bound in the eval scope (2026-09-26, `92c62db`)
+- After a Twitch profile switch, Vany's localStorage hook threw `text is not defined`:
+  its body uses `text`, but its parameter has another name or it has none. The page
+  now does `var text = value` right before the direct eval, so either hook style works.
+  Keep it `var`: a `const` breaks hooks that have their own top-level `var text` with
+  a SyntaxError (checked in V8). The hook itself was never seen, because macOS blocks
+  this shell from Chrome's data dir.
+
 ### Whole-tree lore review (2026-09-01) — 13 findings, `passed_partial`
 
 `rev_9HMnzyqCBr6f4BUEQWO4YhtW`, folder mode over `.`. Full attestation, findings
@@ -154,16 +178,6 @@ the whole answer — `channel.raid` and `stream.online` need no scope, so every
 scope- and affiliate-status theory was dead on arrival, and the cause had to be
 something common to the request itself. The bug had been "root cause unknown"
 for two weeks while the message describing it sat in git.
-
-## Recent Improvements (2026-09)
-
-### ANNOUNCE hook: `text` is bound in the eval scope (2026-09-26, `92c62db`)
-- After a Twitch profile switch, Vany's localStorage hook threw `text is not defined`:
-  its body uses `text`, but its parameter has another name or it has none. The page
-  now does `var text = value` right before the direct eval, so either hook style works.
-  Keep it `var`: a `const` breaks hooks that have their own top-level `var text` with
-  a SyntaxError (checked in V8). The hook itself was never seen, because macOS blocks
-  this shell from Chrome's data dir.
 
 ## Recent Improvements (2026-08)
 
