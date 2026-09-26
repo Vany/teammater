@@ -192,6 +192,18 @@
                                 return;
                             }
                             try {
+                                // `text` is bound here too, not only passed as
+                                // the argument: a hook whose body says `text`
+                                // while its parameter has another name (or
+                                // none) threw "text is not defined" (seen
+                                // 2026-09-26, after a Twitch profile switch).
+                                // Direct eval lets the hook's closure see this
+                                // binding. `var`, not const: a lexical `text`
+                                // would turn a hook's own top-level
+                                // `var text`/`function text` into a SyntaxError
+                                // (eval won't hoist a var over a like-named
+                                // lexical binding); a var just shares the slot.
+                                var text = value;
                                 eval(announceSrc);
                                 const result = await ANNOUNCE(value);
                                 console.log("[announce] sent:", value, result);
