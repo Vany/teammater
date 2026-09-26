@@ -183,12 +183,15 @@ Install UserScript manager:
 - Chrome/Edge: Install Tampermonkey extension
 - Firefox: Install Greasemonkey or Tampermonkey
 
-Add the included UserScript:
-1. Open `teammater.js` from project folder
-2. Copy contents
-3. Create new script in Tampermonkey
-4. Paste and save
-5. Navigate to music.yandex.ru (script activates automatically)
+Add the included UserScript (the server must be running):
+1. Tampermonkey → Utilities → **Install from URL** → `http://localhost:8442/teammater.js`
+2. Navigate to music.yandex.ru (script activates automatically)
+
+Updates: Tampermonkey → **Check for userscript updates**. The script's `@updateURL`
+points at the local server, which serves it straight from the repo; Tampermonkey only
+takes a version whose `@version` is higher than the installed one. A copy installed
+before `@updateURL` existed (before 2026-09-26) has no update URL and must be
+reinstalled once as above.
 
 **What it does:**
 - Cross-tab communication for music queue

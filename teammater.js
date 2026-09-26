@@ -1,8 +1,10 @@
 // ==UserScript==
 // @name         MusicBridge
 // @namespace    http://tampermonkey.net/
-// @version      2026-09-06.1
+// @version      2026-09-26.1
 // @description  Bridges Yandex Music and YouTube into a unified stream music queue
+// @updateURL    http://localhost:8442/teammater.js
+// @downloadURL  http://localhost:8442/teammater.js
 // @author       ME
 // @match        https://music.yandex.ru/**
 // @match        https://www.youtube.com/**
@@ -19,6 +21,13 @@
 // @connect      localhost
 // @run-at       document-end
 // ==/UserScript==
+//
+// Updates: Tampermonkey pulls new versions from @updateURL — the local server
+// serves this file straight from the repo — but ONLY installs one whose
+// @version is higher than the installed one. Bump @version on every change or
+// the fix never arrives. Plain http on :8442 on purpose: the https listener
+// uses a self-signed cert, and an extension's background update fetch should
+// not depend on whether that cert is trusted outside a clicked-through tab.
 
 // ─────────────────────────────────────────────────────────────
 // Message protocol
@@ -199,6 +208,32 @@
       } catch { return false; }
     }
 
+    /** A track page: exactly what the request validator (actions.js YANDEX_RE)
+     *  accepts — album-prefixed OR bare `/track/N`. This used to require the
+     *  album prefix, so a bare link passed validation, the tab navigated to it,
+     *  and autoPlay fell through to "no autoplay": request accepted, points
+     *  spent, nothing played. Yandex does not redirect the bare form (checked
+     *  2026-09-26: HTTP 200, URL unchanged in the SPA). teammater.test.js pins
+     *  this against YANDEX_RE so the two cannot drift apart again. */
+    function isYandexTrack(url) {
+      return /^https:\/\/music\.yandex\.(ru|com)\/(album\/\d+\/)?track\/\d+/.test(url);
+    }
+
+    /** When a play selector misses, name what IS on the page so the correct
+     *  selector is one console paste away instead of a round of guessing. */
+    function warnPlayCandidates() {
+      const candidates = [...document.querySelectorAll("button")]
+        .map((b) => ({
+          cls: typeof b.className === "string" ? b.className : "",
+          aria: b.getAttribute("aria-label") || "",
+          test: b.getAttribute("data-test-id") || "",
+          inTrackModal: !!b.closest('[class*="TrackModal"]'),
+        }))
+        .filter((c) => /play|pause|vibe|Слушать|Воспроизв|Пауза/i.test(`${c.cls} ${c.aria} ${c.test}`))
+        .slice(0, 12);
+      warn(`candidate play buttons on this page: ${JSON.stringify(candidates, null, 1)}`);
+    }
+
     // The My Vibes play button. Yandex has redesigned this page before (SPEC
     // records the v4 change that broke the artist selector), so treat a miss as
     // "the markup moved", not "wait longer".
@@ -226,19 +261,52 @@
         if (tries < 15) return;
         clearInterval(timer);
 
-        // Still nothing after 15s: the selector is stale, not slow. Name what IS
-        // on the page so the correct selector is one console paste away instead
-        // of a round of guessing.
+        // Still nothing after 15s: the selector is stale, not slow.
         warn(`My Vibes play button NOT FOUND after ${tries}s — selector "${MY_VIBES_PLAY}" is stale`);
-        const candidates = [...document.querySelectorAll("button")]
-          .map((b) => ({
-            cls: typeof b.className === "string" ? b.className : "",
-            aria: b.getAttribute("aria-label") || "",
-            test: b.getAttribute("data-test-id") || "",
-          }))
-          .filter((c) => /play|vibe|Слушать|Воспроизв/i.test(`${c.cls} ${c.aria} ${c.test}`))
-          .slice(0, 12);
-        warn(`candidate play buttons on this page: ${JSON.stringify(candidates, null, 1)}`);
+        warnPlayCandidates();
+      }, 1000);
+    }
+
+    // The track page's header controls. Scoped to TrackModalControls so it can
+    // never hit the player-bar button (that one resumes whatever played last).
+    // aria-label is "Playback" while paused and "Pause" while playing.
+    const TRACK_PLAY  = 'div[class*="TrackModalControls_controlsContainer"] button[aria-label="Playback"]';
+    const TRACK_PAUSE = 'div[class*="TrackModalControls_controlsContainer"] button[aria-label="Pause"]';
+
+    /** Start a requested track. Same retry-and-report shape as startMyVibes,
+     *  for the same two reasons: the old one-shot click at a fixed 4s lost the
+     *  race on a slow load, and a MISSING button was logged as "track already
+     *  playing — no click needed". So a stale selector and a slow page both
+     *  looked like success while the URL changed and nothing played. Now
+     *  "already playing" must be positively observed (Pause shown, or the
+     *  hooked audio element running); a miss after 15s is a loud warning with
+     *  the candidates. */
+    function startTrack() {
+      hookAudio();
+      let tries = 0;
+      const timer = setInterval(() => {
+        tries++;
+        if (audioEl && !audioEl.paused) {
+          log(`track audio already running after ${tries}s — no click needed`);
+          clearInterval(timer);
+          return;
+        }
+        if (document.querySelector(TRACK_PAUSE)) {
+          log(`track shows Pause after ${tries}s — already playing, no click needed`);
+          clearInterval(timer);
+          return;
+        }
+        const btn = document.querySelector(TRACK_PLAY);
+        if (btn) {
+          log(`track Playback button found after ${tries}s — clicking`);
+          btn.click();
+          clearInterval(timer);
+          return;
+        }
+        if (tries < 15) return;
+        clearInterval(timer);
+        warn(`track play button NOT FOUND after ${tries}s on ${location.href} — selector "${TRACK_PLAY}" is stale; nothing is playing`);
+        warnPlayCandidates();
       }, 1000);
     }
 
@@ -314,20 +382,11 @@
     }
 
     function autoPlay() {
-      const trackRe = /^https:\/\/music\.yandex\.(ru|com)\/album\/\d+\/track\/\d+/;
-      if (trackRe.test(location.href)) {
-        log("track URL — clicking play in 4s if needed");
-        hookAudio();
-        setTimeout(() => {
-          // Scoped to page header to avoid hitting the player bar button.
-          // aria-label="Playback" only when paused; "Pause" when already playing — skip click in that case.
-          // TrackModalControls = track-specific header (not the album header, not the player bar)
-          const btn = document.querySelector('div[class*="TrackModalControls_controlsContainer"] button[aria-label="Playback"]');
-          if (btn) { log("clicking track Playback"); btn.click(); }
-          else { log("track already playing — no click needed"); }
-        }, 4000);
+      if (isYandexTrack(location.href)) {
+        log("track URL — starting it");
+        startTrack();
       } else if (isMyVibes(location.href)) {
-        log("My Vibes URL — clicking play in 4s");
+        log("My Vibes URL — starting it");
         startMyVibes();
       } else {
         log(`no autoplay for ${location.href}, hooking audio only`);

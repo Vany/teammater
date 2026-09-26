@@ -152,8 +152,13 @@ On invalid: MASTER logs error, skips to next in queue.
 
 `song` command causes a full page reload in the CLIENT tab. UserScript re-initializes:
 
-- **Yandex track URL** (`/album/N/track/N`): `hookYandexAudio()` + click play after 4s
-- **Yandex root URL** (`music.yandex.ru/`): `hookYandexAudio()` + click "Play My Vibe" after 4s
+- **Yandex track URL** (`/album/N/track/N` or bare `/track/N`, exactly what `actions.js`
+  `YANDEX_RE` accepts; `teammater.test.js` pins the two together): `startTrack()` —
+  `hookAudio()`, then every 1s for up to 15s: done if the hooked audio is running or the
+  header shows Pause; click the header Playback button when it appears; after 15s with
+  neither, a loud warning naming the stale selector plus the candidate buttons on the page
+- **Yandex root URL** (`music.yandex.ru/`): `startMyVibes()` — same 1s/15s retry on the
+  "Play My Vibe" button, same loud warning with candidates on a miss
 - **YouTube watch URL**: `setupYoutubePlayer()` — wait for globals, validate, `player.playVideo()`
 
 ---

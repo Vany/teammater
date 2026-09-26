@@ -143,3 +143,51 @@ test("punctuation-ending entries are matchable", () => {
 test("a plainly non-music upload scores nothing", () => {
   assert.equal(distinctHits("How to replace a kitchen tap in 10 minutes"), 0);
 });
+
+// ── isYandexTrack vs the request validator ──────────────────────────────
+//
+// The validator (actions.js YANDEX_RE) decides whether a music request is
+// ACCEPTED; isYandexTrack decides whether the Yandex tab tries to PLAY it. They
+// used to disagree on bare `/track/N` links: accepted, points spent, the tab
+// navigated, and autoPlay fell through to "no autoplay" — silent, every time.
+// Both regexes are read from the real source files, so neither can drift
+// without this failing.
+
+const isYandexTrack = extractFunction("isYandexTrack");
+
+const YANDEX_RE = (() => {
+  const actions = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "actions.js"),
+    "utf8",
+  );
+  const m = actions.match(/const YANDEX_RE = (\/.+\/[a-z]*);/);
+  assert.ok(m, "YANDEX_RE not found in actions.js");
+  // eslint-disable-next-line no-new-func
+  return new Function(`return ${m[1]};`)();
+})();
+
+const SAMPLES = [
+  "https://music.yandex.ru/album/15848141/track/83943930",
+  "https://music.yandex.ru/album/15848141/track/83943930?utm_source=web&utm_medium=copy_link",
+  "https://music.yandex.ru/track/83943930",
+  "https://music.yandex.com/album/15848141/track/83943930",
+  "https://music.yandex.ru/album/15848141",
+  "https://music.yandex.ru/",
+  "https://music.yandex.ru/artist/123",
+  "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+];
+
+test("the tab plays exactly what the validator accepts", () => {
+  for (const url of SAMPLES) {
+    assert.equal(isYandexTrack(url), YANDEX_RE.test(url), `disagreement on ${url}`);
+  }
+});
+
+test("bare /track/N links are treated as tracks", () => {
+  assert.equal(isYandexTrack("https://music.yandex.ru/track/83943930"), true);
+});
+
+test("album pages and My Vibes are not tracks", () => {
+  assert.equal(isYandexTrack("https://music.yandex.ru/album/15848141"), false);
+  assert.equal(isYandexTrack("https://music.yandex.ru/"), false);
+});
