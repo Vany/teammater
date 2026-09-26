@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MusicBridge
 // @namespace    http://tampermonkey.net/
-// @version      2026-09-26.2
+// @version      2026-09-26.3
 // @description  Bridges Yandex Music and YouTube into a unified stream music queue
 // @updateURL    http://localhost:8442/teammater.js
 // @downloadURL  http://localhost:8442/teammater.js
@@ -219,19 +219,95 @@
       return /^https:\/\/music\.yandex\.(ru|com)\/(album\/\d+\/)?track\/\d+/.test(url);
     }
 
-    /** When a play selector misses, name what IS on the page so the correct
-     *  selector is one console paste away instead of a round of guessing. */
+    // ── Finding a track's play button by the data React attached to it ────
+    // Class names are CSS-module hashes and Yandex redesigns markup (the track
+    // view moved from a modal to a page header by 2026-09-26). What survives a
+    // redesign: the component that renders a track's play button is handed
+    // that track. React keeps each element's fiber on the node itself under a
+    // randomized `__reactFiber$<suffix>` key, so walking `.return` up the
+    // fiber tree and looking for the requested track's id in each component's
+    // props finds the button that plays THIS track — not the similar-track
+    // rows or album cards that carry the same aria-label.
+    // Measured on Vany's tab (track 117712328): of 14 "Playback" buttons
+    // exactly ONE carried the id — the track row's PlayButtonWithPosition, 7
+    // fiber hops up. The header control carried it nowhere within reach,
+    // which is why the class selector stays as the fallback.
+    // aria-label stays as the "this is play" signal: data alone cannot tell
+    // Play from Like or Share, which are handed the same track.
+
+    function reactFiber(el) {
+      const key = Object.keys(el).find((k) =>
+        k.startsWith("__reactFiber$") || k.startsWith("__reactInternalInstance$"));
+      return key ? el[key] : null;
+    }
+
+    /** Does `value` hold, within `depth` levels, an object whose `id` is `id`?
+     *  Shape-agnostic on purpose: depends on "the track's data is in here",
+     *  never on what Yandex names the prop. `budget.left` bounds the whole
+     *  walk so a pathological props graph cannot stall the tab mid-stream. */
+    function carriesId(value, id, budget, depth = 3, seen = new Set()) {
+      try {
+        if (!value || typeof value !== "object" || depth < 0 || seen.has(value)) return false;
+        if (value.$$typeof) return false; // a React element (children), not data
+        if (--budget.left < 0) return false;
+        seen.add(value);
+        if (String(value.id) === id) return true;
+        return Object.values(value).slice(0, 40)
+          .some((v) => v && typeof v === "object" && carriesId(v, id, budget, depth - 1, seen));
+      } catch { return false; } // exotic getters/proxies: not evidence either way
+    }
+
+    /** Fiber hops from `el` up to the nearest component whose props carry
+     *  `id`; Infinity when none does within 15 hops. */
+    function hopsToId(el, id, budget) {
+      let f = reactFiber(el);
+      for (let hop = 0; f && hop <= 15; hop++, f = f.return) {
+        if (carriesId(f.memoizedProps, id, budget)) return hop;
+      }
+      return Infinity;
+    }
+
+    /** The track id this page is for (album-prefixed or bare track URL). */
+    function pageTrackId() {
+      return location.pathname.match(/\/track\/(\d+)/)?.[1] ?? null;
+    }
+
+    /** The `aria-label=<label>` button whose React data is closest to this
+     *  page's track, or null when no such button carries it. */
+    function trackButtonByData(label) {
+      const id = pageTrackId();
+      if (!id) return null;
+      const budget = { left: 200000 };
+      let best = null;
+      let bestHops = Infinity;
+      for (const b of document.querySelectorAll(`button[aria-label="${label}"]`)) {
+        const h = hopsToId(b, id, budget);
+        if (h < bestHops) { best = b; bestHops = h; }
+      }
+      if (budget.left < 0) warn(`React data search ran out of budget on ${location.href} — result may be incomplete`);
+      return best ? { btn: best, hops: bestHops, id } : null;
+    }
+
+    /** When a play selector misses, name what IS on the page — including how
+     *  close each button's React data is to this page's track (-1 = never) —
+     *  so the fix is one console paste away instead of a round of guessing. */
     function warnPlayCandidates() {
+      const id = pageTrackId();
+      const budget = { left: 200000 };
       const candidates = [...document.querySelectorAll("button")]
-        .map((b) => ({
-          cls: typeof b.className === "string" ? b.className : "",
-          aria: b.getAttribute("aria-label") || "",
-          test: b.getAttribute("data-test-id") || "",
-          inTrackModal: !!b.closest('[class*="TrackModal"]'),
-        }))
+        .map((b) => {
+          const hops = id ? hopsToId(b, id, budget) : Infinity;
+          return {
+            cls: typeof b.className === "string" ? b.className : "",
+            aria: b.getAttribute("aria-label") || "",
+            test: b.getAttribute("data-test-id") || "",
+            react: !!reactFiber(b),
+            hopsToTrack: hops === Infinity ? -1 : hops,
+          };
+        })
         .filter((c) => /play|pause|vibe|Слушать|Воспроизв|Пауза/i.test(`${c.cls} ${c.aria} ${c.test}`))
-        .slice(0, 12);
-      warn(`candidate play buttons on this page: ${JSON.stringify(candidates, null, 1)}`);
+        .slice(0, 16);
+      warn(`candidate play buttons on this page (track ${id ?? "none"}): ${JSON.stringify(candidates, null, 1)}`);
     }
 
     // The My Vibes play button. Yandex has redesigned this page before (SPEC
@@ -287,17 +363,18 @@
      *  one-shot click at a fixed 4s lost the race on a slow load, and a
      *  MISSING button was logged as "already playing", so a stale selector
      *  and a slow page both looked like success. Playing must now be observed
-     *  (the hooked audio running, or Pause shown), before OR after the click.
-     *  Two loud failures: no button within 15s, or a click that starts
-     *  nothing within 10s. The second covers the case this whole fix is
-     *  about: a click can land and still not start the track. */
+     *  (the hooked audio running, or a Pause button for this track), before
+     *  OR after the click. The button is picked by React data first (see
+     *  trackButtonByData), by class selector only when no button carries the
+     *  track. Two loud failures: no button within 15s, or a click that starts
+     *  nothing within 10s — a click can land and still not start the track. */
     function startTrack() {
       hookAudio();
       let tries = 0;
       let clickedAt = 0;
       const timer = setInterval(() => {
         tries++;
-        if ((audioEl && !audioEl.paused) || document.querySelector(TRACK_PAUSE)) {
+        if ((audioEl && !audioEl.paused) || trackButtonByData("Pause") || document.querySelector(TRACK_PAUSE)) {
           log(clickedAt
             ? `track playing ${tries - clickedAt}s after the click`
             : `track already playing after ${tries}s — no click needed`);
@@ -305,9 +382,12 @@
           return;
         }
         if (!clickedAt) {
-          const btn = document.querySelector(TRACK_PLAY);
+          const byData = trackButtonByData("Playback");
+          const btn = byData?.btn ?? document.querySelector(TRACK_PLAY);
           if (btn) {
-            log(`track Playback button found after ${tries}s — clicking`);
+            log(byData
+              ? `track ${byData.id} play button found by React data (${byData.hops} hops) after ${tries}s — clicking`
+              : `track play button found by CLASS selector after ${tries}s (no button carried the track's data) — clicking`);
             btn.click();
             clickedAt = tries;
             return;

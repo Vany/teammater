@@ -26,13 +26,12 @@ const SRC = readFileSync(
   "utf8",
 );
 
-/** Pull `function name(...) { ... }` out of the source by brace matching. */
-function extractFunction(name) {
+/** Source text of `function name(...) { ... }`, by brace matching. */
+function extractSource(name) {
   const start = SRC.indexOf(`function ${name}(`);
   assert.notEqual(start, -1, `function ${name} not found in teammater.js`);
   let depth = 0;
   let i = SRC.indexOf("{", start);
-  const bodyStart = i;
   for (; i < SRC.length; i++) {
     if (SRC[i] === "{") depth++;
     else if (SRC[i] === "}") {
@@ -41,9 +40,19 @@ function extractFunction(name) {
     }
   }
   assert.ok(i < SRC.length, `unbalanced braces extracting ${name}`);
-  const src = SRC.slice(start, i + 1);
+  return SRC.slice(start, i + 1);
+}
+
+/** Pull one function out of the source and evaluate it in isolation. */
+function extractFunction(name) {
   // eslint-disable-next-line no-new-func
-  return new Function(`${src}; return ${name};`)();
+  return new Function(`${extractSource(name)}; return ${name};`)();
+}
+
+/** Several functions evaluated in ONE scope, for ones that call each other. */
+function extractFunctions(...names) {
+  // eslint-disable-next-line no-new-func
+  return new Function(`${names.map(extractSource).join("\n")}; return { ${names.join(", ")} };`)();
 }
 
 const cleanYoutubeUrl = extractFunction("cleanYoutubeUrl");
@@ -190,4 +199,63 @@ test("bare /track/N links are treated as tracks", () => {
 test("album pages and My Vibes are not tracks", () => {
   assert.equal(isYandexTrack("https://music.yandex.ru/album/15848141"), false);
   assert.equal(isYandexTrack("https://music.yandex.ru/"), false);
+});
+
+// ── Picking the play button by React data ───────────────────────────────
+//
+// The Yandex tab clicks the "Playback" button whose React data carries the
+// requested track's id. Measured on Vany's tab (track 117712328): exactly one
+// of 14 such buttons did, the track row's own button, 7 fiber hops up. These
+// pin the two pure parts, the props search and the fiber walk, with fake
+// fibers, since there is no DOM or React here.
+
+const { carriesId, hopsToId } = extractFunctions("reactFiber", "carriesId", "hopsToId");
+const budget = () => ({ left: 200000 });
+
+/** A fake element whose fiber chain carries `propsUpward`, element first. */
+function fakeElement(...propsUpward) {
+  let fiber = null;
+  for (const p of [...propsUpward].reverse()) fiber = { memoizedProps: p, return: fiber };
+  return { "__reactFiber$x1y2": fiber };
+}
+
+test("carriesId finds the id up to 3 levels into props, number or string", () => {
+  assert.equal(carriesId({ track: { id: 117712328 } }, "117712328", budget()), true);
+  assert.equal(carriesId({ a: { b: { c: { id: "117712328" } } } }, "117712328", budget()), true);
+  assert.equal(carriesId({ track: { id: 1 } }, "117712328", budget()), false);
+});
+
+test("carriesId stops at its depth limit", () => {
+  assert.equal(carriesId({ a: { b: { c: { d: { id: 7 } } } } }, "7", budget()), false);
+});
+
+test("carriesId ignores React elements, survives cycles and throwing getters", () => {
+  const cyclic = { a: {} };
+  cyclic.a.back = cyclic;
+  assert.equal(carriesId(cyclic, "7", budget()), false);
+  const element = { $$typeof: Symbol.for("react.element"), props: { id: 7 } };
+  assert.equal(carriesId({ children: element }, "7", budget()), false);
+  const hostile = { get boom() { throw new Error("getter"); } };
+  assert.equal(carriesId(hostile, "7", budget()), false);
+});
+
+test("carriesId gives up when its budget runs out", () => {
+  assert.equal(carriesId({ track: { id: 7 } }, "7", { left: 1 }), false);
+  assert.equal(carriesId({ track: { id: 7 } }, "7", { left: 2 }), true);
+});
+
+test("hopsToId counts fiber hops to the nearest props carrying the id", () => {
+  // Vany's measured shape: the track's data 7 hops above the button.
+  const btn = fakeElement({}, {}, {}, {}, {}, {}, {}, { track: { id: 117712328 } });
+  assert.equal(hopsToId(btn, "117712328", budget()), 7);
+});
+
+test("hopsToId is Infinity for another track's button and for non-React nodes", () => {
+  assert.equal(hopsToId(fakeElement({ track: { id: 1 } }), "117712328", budget()), Infinity);
+  assert.equal(hopsToId({}, "117712328", budget()), Infinity);
+});
+
+test("hopsToId does not look past 15 hops", () => {
+  const far = fakeElement(...Array(16).fill({}), { track: { id: 7 } }); // carried at hop 16
+  assert.equal(hopsToId(far, "7", budget()), Infinity);
 });

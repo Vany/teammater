@@ -26,6 +26,14 @@ live confirmation run.)
   from his logged-in tab.
 - `startTrack()` also fails loud if a click starts nothing within 10s, not only on a missing
   button.
+- Then, at Vany's request, DATA instead of class names (`2026-09-26.3`). A probe on his tab
+  (track 117712328): of 14 `Playback` buttons, exactly one's React fiber ancestry carries the
+  track id, the track row's `PlayButtonWithPosition`, 7 hops up. The header control, the
+  similar tracks and the album cards carry it nowhere. `trackButtonByData()` picks the closest
+  carrier, and the class selector is only the fallback. aria-label is kept as the "is Play"
+  signal because a Like button carries the same track (shown in the e2e check). Verified on
+  real React 18 in headless Chrome with the shipped functions, plus 7 node tests on the pure
+  search/walk.
 - Deploy: the userscript gained `@updateURL`/`@downloadURL` (`http://localhost:8442/teammater.js`,
   served from the repo). This one install is manual; after that it's Tampermonkey's
   "Check for userscript updates". Bump `@version` on every change.
