@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MusicBridge
 // @namespace    http://tampermonkey.net/
-// @version      2026-09-26.1
+// @version      2026-09-26.2
 // @description  Bridges Yandex Music and YouTube into a unified stream music queue
 // @updateURL    http://localhost:8442/teammater.js
 // @downloadURL  http://localhost:8442/teammater.js
@@ -267,45 +267,60 @@
       }, 1000);
     }
 
-    // The track page's header controls. Scoped to TrackModalControls so it can
-    // never hit the player-bar button (that one resumes whatever played last).
-    // aria-label is "Playback" while paused and "Pause" while playing.
-    const TRACK_PLAY  = 'div[class*="TrackModalControls_controlsContainer"] button[aria-label="Playback"]';
-    const TRACK_PAUSE = 'div[class*="TrackModalControls_controlsContainer"] button[aria-label="Pause"]';
+    // The track page's own play control. Yandex moved the track view from a
+    // modal (TrackModalControls, what this matched until 2026-09-26) to a
+    // regular page header: Vany's tab showed `button.CommonPageHeader_
+    // playControl__gYOuR[aria-label="Playback"]`, labelled "Listen". Class
+    // names are CSS-module hashes, so match the stable prefix, never the
+    // suffix. Scoped to the page header on purpose: the player-bar button
+    // resumes whatever played LAST, not the requested track. The old modal
+    // selector stays as a fallback in case the modal comes back.
+    // aria-label is "Playback" while paused, "Pause" while playing.
+    const TRACK_PLAY =
+      'button[class*="CommonPageHeader_playControl"][aria-label="Playback"], ' +
+      'div[class*="TrackModalControls_controlsContainer"] button[aria-label="Playback"]';
+    const TRACK_PAUSE =
+      'button[class*="CommonPageHeader_playControl"][aria-label="Pause"], ' +
+      'div[class*="TrackModalControls_controlsContainer"] button[aria-label="Pause"]';
 
-    /** Start a requested track. Same retry-and-report shape as startMyVibes,
-     *  for the same two reasons: the old one-shot click at a fixed 4s lost the
-     *  race on a slow load, and a MISSING button was logged as "track already
-     *  playing — no click needed". So a stale selector and a slow page both
-     *  looked like success while the URL changed and nothing played. Now
-     *  "already playing" must be positively observed (Pause shown, or the
-     *  hooked audio element running); a miss after 15s is a loud warning with
-     *  the candidates. */
+    /** Start a requested track: retry-and-report, like startMyVibes. The old
+     *  one-shot click at a fixed 4s lost the race on a slow load, and a
+     *  MISSING button was logged as "already playing", so a stale selector
+     *  and a slow page both looked like success. Playing must now be observed
+     *  (the hooked audio running, or Pause shown), before OR after the click.
+     *  Two loud failures: no button within 15s, or a click that starts
+     *  nothing within 10s. The second covers the case this whole fix is
+     *  about: a click can land and still not start the track. */
     function startTrack() {
       hookAudio();
       let tries = 0;
+      let clickedAt = 0;
       const timer = setInterval(() => {
         tries++;
-        if (audioEl && !audioEl.paused) {
-          log(`track audio already running after ${tries}s — no click needed`);
+        if ((audioEl && !audioEl.paused) || document.querySelector(TRACK_PAUSE)) {
+          log(clickedAt
+            ? `track playing ${tries - clickedAt}s after the click`
+            : `track already playing after ${tries}s — no click needed`);
           clearInterval(timer);
           return;
         }
-        if (document.querySelector(TRACK_PAUSE)) {
-          log(`track shows Pause after ${tries}s — already playing, no click needed`);
+        if (!clickedAt) {
+          const btn = document.querySelector(TRACK_PLAY);
+          if (btn) {
+            log(`track Playback button found after ${tries}s — clicking`);
+            btn.click();
+            clickedAt = tries;
+            return;
+          }
+          if (tries < 15) return;
           clearInterval(timer);
+          warn(`track play button NOT FOUND after ${tries}s on ${location.href} — selector is stale; nothing is playing`);
+          warnPlayCandidates();
           return;
         }
-        const btn = document.querySelector(TRACK_PLAY);
-        if (btn) {
-          log(`track Playback button found after ${tries}s — clicking`);
-          btn.click();
-          clearInterval(timer);
-          return;
-        }
-        if (tries < 15) return;
+        if (tries - clickedAt < 10) return;
         clearInterval(timer);
-        warn(`track play button NOT FOUND after ${tries}s on ${location.href} — selector "${TRACK_PLAY}" is stale; nothing is playing`);
+        warn(`clicked Playback ${tries - clickedAt}s ago on ${location.href} but nothing is playing`);
         warnPlayCandidates();
       }, 1000);
     }

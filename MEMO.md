@@ -16,10 +16,16 @@ live confirmation run.)
      pinned to `YANDEX_RE` by `teammater.test.js`.
   2. One click attempt at a fixed 4s, and a MISSING button was logged as "already playing".
      Now `startTrack()`, the same 1s/15s retry-and-report shape as `startMyVibes()` (`2ffcdb5`).
-- NOT verified: which defect hit Vany, or whether the May-era selector
-  (`TrackModalControls_controlsContainer` + aria-label `Playback`/`Pause`) still matches.
-  Logged-out headless Yandex renders no player buttons at all, so it can't be checked from here.
-  A stale selector now shows up as a console warning that lists the candidate buttons.
+- The one that hit Vany was a THIRD problem, the selector itself. Yandex moved the track view
+  from a modal (`TrackModalControls`) to a page header. The play control is now
+  `button.CommonPageHeader_playControl__<hash>[aria-label="Playback"]`, labelled "Listen";
+  Vany pasted it from his tab. It's matched by class PREFIX, since the suffix is a CSS-module
+  hash, and the modal selector stays as a fallback. Verified in headless Chrome against his
+  exact markup: matches paused, detects Pause, ignores a player-bar `Playback` button, and the
+  fallback still matches. Logged-out Yandex renders no player buttons, so markup has to come
+  from his logged-in tab.
+- `startTrack()` also fails loud if a click starts nothing within 10s, not only on a missing
+  button.
 - Deploy: the userscript gained `@updateURL`/`@downloadURL` (`http://localhost:8442/teammater.js`,
   served from the repo). This one install is manual; after that it's Tampermonkey's
   "Check for userscript updates". Bump `@version` on every change.
