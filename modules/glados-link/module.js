@@ -10,7 +10,8 @@
  * the pinned key before anything runs, and this module proves its own.
  * The hub's certificate is self-signed: open https://c.local:8095 once in this browser and accept.
  *
- * Commands glados can send: say {text, lang?, rate?, pitch?, voice?}, sound {name}, voices, ping.
+ * Commands glados can send: say {text, emotion?, voice?, rate?, pitch?, lang?} (see
+ * shared/tts-contract.md: server voice first, browser voice as fallback), sound {name}, voices, ping.
  */
 
 import { BaseModule } from "../base-module.js";
@@ -47,6 +48,7 @@ export class GladosLinkModule extends BaseModule {
         hub_url: { type: "text", label: "Hub URL", default: "wss://c.local:8095", stored_as: "glados_hub_url" },
         device_id: { type: "text", label: "Device id", default: "teammater", stored_as: "glados_device_id" },
         pairing_code: { type: "text", label: "Pairing code (once)", default: "", required: false, stored_as: "glados_pairing_code" },
+        tts_url: { type: "text", label: "TTS endpoint (teammater server)", default: "https://localhost:8443/api/tts", required: false, stored_as: "glados_tts_url" },
         reconnect_delay: { type: "number", label: "Reconnect Delay (ms)", default: 5000, min: 1000, max: 60000, step: 1000, stored_as: "glados_reconnect_delay" },
       },
     };
@@ -220,11 +222,26 @@ export class GladosLinkModule extends BaseModule {
         return speechSynthesis.getVoices().map((v) => ({ name: v.name, lang: v.lang }));
       case "say": {
         if (typeof a.text !== "string" || a.text.trim() === "") throw new Error("say: text required");
+        // The server speaks with a real voice model (contract: shared/tts-contract.md); without it,
+        // the browser's own voice, so the stream never goes mute.
+        const tts = this.getConfigValue("tts_url", "");
+        if (tts) {
+          try {
+            const r = await fetch(tts, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(a) });
+            if (r.ok) {
+              this.log(`🗣️ GLaDOS (server): ${a.text}`);
+              return "spoken by server";
+            }
+          } catch {
+            // fall through to the browser voice
+          }
+        }
         const u = new SpeechSynthesisUtterance(a.text);
         const v = a.voice ? speechSynthesis.getVoices().find((x) => x.name === a.voice) : pickVoice(a.lang ?? "ru-RU");
         if (v) u.voice = v;
-        if (a.rate) u.rate = Number(a.rate);
-        if (a.pitch) u.pitch = Number(a.pitch);
+        const e = a.emotion ?? {};
+        u.rate = Number(a.rate ?? 1) * (1 + 0.25 * (Number(e.arousal ?? 0.3) - 0.3));
+        u.pitch = 1 + Number(a.pitch ?? 0) + 0.2 * Number(e.valence ?? 0);
         speechSynthesis.speak(u);
         this.log(`🗣️ GLaDOS: ${a.text}`);
         return "spoken";
