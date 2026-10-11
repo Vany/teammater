@@ -10,7 +10,7 @@
  * the pinned key before anything runs, and this module proves its own.
  * The hub's certificate is self-signed: open https://c.local:8095 once in this browser and accept.
  *
- * Commands glados can send: say {text, emotion?, voice?, rate?, pitch?, lang?} (see
+ * Commands glados can send: say {text with [emotion] tags, voice?, lang?} (see
  * shared/tts-contract.md: server voice first, browser voice as fallback), sound {name}, voices, ping.
  */
 
@@ -236,14 +236,21 @@ export class GladosLinkModule extends BaseModule {
             // fall through to the browser voice
           }
         }
-        const u = new SpeechSynthesisUtterance(a.text);
+        // Browser fallback: [tags] carry the emotion (shared/tts-contract.md); the browser voice
+        // can't act, so a mood only nudges rate and pitch, and no tag is ever read aloud.
+        const MOOD = { sarcastic: [0.95, 0.9], happy: [1.1, 1.15], excited: [1.2, 1.2], sad: [0.85, 0.85], tender: [0.9, 1.05], calm: [0.95, 1], deadpan: [0.9, 0.8], solemn: [0.85, 0.85], angry: [1.1, 0.9], scared: [1.15, 1.2], whispers: [0.9, 1], shouts: [1.1, 1.1], slowly: [0.8, 1], quickly: [1.25, 1] };
+        const tags = [...a.text.matchAll(/\[([a-z ]+)\]/gi)].map((m) => m[1].toLowerCase());
+        const mood = tags.find((t) => MOOD[t]);
+        const plain = a.text.replace(/\[[^\]]*\]/g, " ").replace(/\s+/g, " ").trim();
+        if (!plain) return "nothing to say";
+        const u = new SpeechSynthesisUtterance(plain);
         const v = a.voice ? speechSynthesis.getVoices().find((x) => x.name === a.voice) : pickVoice(a.lang ?? "ru-RU");
         if (v) u.voice = v;
-        const e = a.emotion ?? {};
-        u.rate = Number(a.rate ?? 1) * (1 + 0.25 * (Number(e.arousal ?? 0.3) - 0.3));
-        u.pitch = 1 + Number(a.pitch ?? 0) + 0.2 * Number(e.valence ?? 0);
+        const [rate, pitch] = mood ? MOOD[mood] : [1, 1];
+        u.rate = rate;
+        u.pitch = pitch;
         speechSynthesis.speak(u);
-        this.log(`🗣️ GLaDOS: ${a.text}`);
+        this.log(`🗣️ GLaDOS: ${plain}`);
         return "spoken";
       }
       case "sound": {
