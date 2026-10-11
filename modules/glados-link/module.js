@@ -94,8 +94,9 @@ export class GladosLinkModule extends BaseModule {
     test.onclick = async () => {
       result.textContent = "testing…";
       try {
-        const r = await fetch(url, { cache: "no-store" });
-        result.textContent = r.ok ? "✅ hub reachable, certificate accepted" : `⚠️ hub answered ${r.status}`;
+        // no-cors: the hub sends no CORS headers; an opaque answer still proves TLS and reachability.
+        const r = await fetch(url, { cache: "no-store", mode: "no-cors" });
+        result.textContent = r.type === "opaque" || r.ok ? "✅ hub reachable, certificate accepted" : `⚠️ hub answered ${r.status}`;
       } catch {
         result.textContent = "❌ not reachable — or the certificate isn't accepted yet: open the link above";
       }
