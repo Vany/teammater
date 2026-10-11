@@ -52,6 +52,75 @@ export class GladosLinkModule extends BaseModule {
     };
   }
 
+  hasControlPanel() {
+    return true;
+  }
+
+  getControlPanelIcon() {
+    return "🤖";
+  }
+
+  /** The hub's https address: where a browser accepts its self-signed certificate. */
+  _httpsUrl() {
+    return this.getConfigValue("hub_url", "wss://c.local:8095").replace(/^wss:/, "https:").replace(/^ws:/, "http:");
+  }
+
+  /**
+   * Control panel: the hub URL with a link to accept its certificate, a connection test, and the
+   * pairing state (vany 2026-10-11: "put the URL and a URL test in the module's panel").
+   */
+  renderControlPanel() {
+    const box = document.createElement("div");
+    box.style.cssText = "display:flex;flex-direction:column;gap:8px;font-size:13px;";
+    const url = this._httpsUrl();
+    const row = (label, el) => {
+      const r = document.createElement("div");
+      r.style.cssText = "display:flex;gap:8px;align-items:center;";
+      const l = document.createElement("span");
+      l.textContent = label;
+      l.style.minWidth = "90px";
+      r.append(l, el);
+      return r;
+    };
+    const link = document.createElement("a");
+    link.href = url;
+    link.target = "_blank";
+    link.rel = "noopener";
+    link.textContent = url + "  (open once, accept the certificate)";
+    const result = document.createElement("span");
+    result.textContent = "—";
+    const test = document.createElement("button");
+    test.textContent = "Test";
+    test.onclick = async () => {
+      result.textContent = "testing…";
+      try {
+        const r = await fetch(url, { cache: "no-store" });
+        result.textContent = r.ok ? "✅ hub reachable, certificate accepted" : `⚠️ hub answered ${r.status}`;
+      } catch {
+        result.textContent = "❌ not reachable — or the certificate isn't accepted yet: open the link above";
+      }
+    };
+    const pairing = document.createElement("span");
+    pairing.textContent = "…";
+    idb("get", "hubKey").then((k) => {
+      pairing.textContent = k ? `paired · hub key ${k.slice(0, 12)}…` : "not paired — ask GLaDOS for a code";
+    });
+    const conn = document.createElement("span");
+    conn.textContent = this.isConnected() ? "🟢 connected" : "🔴 not connected";
+    const forget = document.createElement("button");
+    forget.textContent = "Forget pairing";
+    forget.onclick = async () => {
+      await idb("delete", "hubKey");
+      pairing.textContent = "not paired — ask GLaDOS for a code";
+      this.ws?.close(1000, "unpaired");
+    };
+    const t = document.createElement("div");
+    t.style.cssText = "display:flex;gap:8px;align-items:center;";
+    t.append(test, result);
+    box.append(row("Hub", link), row("Check", t), row("Pairing", pairing), row("Link", conn), forget);
+    return box;
+  }
+
   async _keys() {
     let kp = await idb("get", "keypair");
     if (!kp) {
