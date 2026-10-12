@@ -13,6 +13,7 @@ import { LLMModule } from "./modules/llm/module.js";
 import { MusicQueueModule } from "./modules/music-queue/module.js";
 import { MinecraftModule } from "./modules/minecraft/module.js";
 import { EchowireModule } from "./modules/echowire/module.js";
+import { GladosLinkModule } from "./modules/glados-link/module.js";
 import { TwitchChatModule } from "./modules/twitch-chat/module.js";
 import { TwitchEventSubModule } from "./modules/twitch-eventsub/module.js";
 import { TwitchStreamModule } from "./modules/twitch-stream/module.js";
@@ -165,6 +166,7 @@ function registerModules() {
   moduleManager.register("music-queue", new MusicQueueModule());
   moduleManager.register("minecraft", new MinecraftModule());
   moduleManager.register("echowire", new EchowireModule());
+  moduleManager.register("glados-link", new GladosLinkModule());
   moduleManager.register("obs", new OBSModule());
 
   // Twitch integration
@@ -315,6 +317,14 @@ async function connectModules(token, username) {
   if (echowireModule?.isEnabled()) {
     await echowireModule.connect().catch((err) => {
       log(`⚠️ Echowire connection failed: ${err.message}`);
+    });
+  }
+
+  // Connect GLaDOS (if enabled)
+  const gladosModule = moduleManager.get("glados-link");
+  if (gladosModule?.isEnabled()) {
+    await gladosModule.connect().catch((err) => {
+      log(`⚠️ GLaDOS link failed: ${err.message}`);
     });
   }
 
