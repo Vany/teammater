@@ -10,7 +10,19 @@ import { createMouth, bounce } from "./mouth.js";
 const params = new URLSearchParams(location.search);
 const threshold = Number(params.get("threshold")) || 0.02;
 const box = document.getElementById("kira");
-if (params.get("shape") === "card") box.classList.add("card");
+
+// Blink while idle, every 3–6 s for 150 ms (random, so it never looks like a metronome).
+// The frame is a wink until a closed-eyes frame exists; ?blink=0 turns it off.
+if (params.get("blink") !== "0") {
+  const blink = () => {
+    if (!box.classList.contains("speaking")) {
+      box.classList.add("blink");
+      setTimeout(() => box.classList.remove("blink"), 150);
+    }
+    setTimeout(blink, 3000 + Math.random() * 3000);
+  };
+  setTimeout(blink, 3000);
+}
 
 const mouth = createMouth({ threshold, holdMs: 200 });
 let holdTimer = null;

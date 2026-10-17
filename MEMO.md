@@ -7,14 +7,23 @@ see "Bug sweep (2026-09-01)" below and TODO.md for the two that still need one
 live confirmation run.)
 
 ## Kira PNG-tuber overlay (2026-10-17, branch `kira/pngtuber`)
-- OBS browser source `https://localhost:8443/kira-avatar/` (`?threshold=0.02`, `?shape=card`).
+- OBS browser source `https://localhost:8443/kira-avatar/` (`?threshold=0.02`, `?blink=0`).
   Position and size are set in OBS. The page is transparent and the avatar fills the box.
 - glados-link `_play()` measures each clip (`level-meter.js`, AnalyserNode on the playing
   element) and sends `kira_level` on the /obs bus. The bus relays unknown types, so there's
   no server change. Overlay rules (threshold, 200 ms hold, bounce) live in `kira-avatar/mouth.js`.
-- Frames: `kira-warm` (idle) and `kira-grin` (speaking), 512 px JPEG copies of
-  ~/kira/overlay. The sources have a background and no alpha, hence the circle crop. Per-frame
-  `--fx/--fy` in index.html line the two differently posed faces up.
+- Frames (2026-10-17 later): `frames/*.webp`, 640 px with real alpha, from vany's
+  ~/kira/overlay/avatar/ set (originals untouched). All frames share one pose, so they swap
+  in place with no crop. idle = "Warm…Portrait", talk = "Cheerful…Vtuber Portrait" (both had
+  real alpha). The rest had a PAINTED checkerboard; `kira-avatar/dechecker.py` makes real
+  alpha (bright and colourless pixels connected to the border or to a mid-grey checker pixel,
+  so enclosed pockets go too while pure-white glints stay; 1px erode + 0.6px blur) and writes
+  `*-alpha.png` next to the originals. There's no closed-eyes frame: the blink shows `wink`.
+  happy/pouty/sleepy/surprised/tender/thoughtful are exported for the later tag mapping.
+  "Violet Fox Guardian…" is a full scene, not a frame, and was skipped.
+- ImageMagick traps hit here: `c` is reserved in -fx (cyan); fx output is greyscale, so a
+  colour flood-fill marker is lost; `-draw` adds an opaque alpha channel, which CopyOpacity
+  then copies instead of the mask.
 - The bus client in `kira-avatar/avatar.js` is a copy of obs.js's (obs.html was live); merge later.
 - Verified: unit tests; meter on a real WAV in the browser (RMS 0.354 for a 0.5 sine);
   screenshots of both frames. NOT verified: the full path hub → index.html → bus → overlay,
