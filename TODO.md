@@ -11,6 +11,17 @@ Estimated reduction: ~950 lines (from ~4500 to ~3500 LOC), zero functionality lo
       OGG/WAV; `autoplay` error seen once in a fresh tab (no click yet). Needs Kira's hub side.
 - [ ] Vany: review and merge `kira/glados-link-2`; drop `PLAN-kira.md` if not wanted on master.
 
+## Kira PNG-tuber (2026-10-17)
+
+- [x] Overlay `kira-avatar/` + level metering in glados-link (`kira/pngtuber`).
+- [ ] Add the OBS browser source, run a live `say`, and tune `threshold` and the crop.
+- [ ] Later: VRM via three-vrm (makise's notes; watch the overrideMouth trap).
+- [ ] Merge the kira-avatar and obs.js bus clients when the overlay is not live.
+
+## MemeAlerts (2026-10-17) — paused
+
+- [ ] Waiting for MemeAlerts support to register the app; plan on branch `kira/memealerts`.
+
 ## BUG
 
 - [x] **Russian TTS spoken by an English voice** — fixed `9b9cbe4`. Both TTS

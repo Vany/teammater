@@ -6,6 +6,20 @@
 see "Bug sweep (2026-09-01)" below and TODO.md for the two that still need one
 live confirmation run.)
 
+## Kira PNG-tuber overlay (2026-10-17, branch `kira/pngtuber`)
+- OBS browser source `https://localhost:8443/kira-avatar/` (`?threshold=0.02`, `?shape=card`).
+  Position and size are set in OBS. The page is transparent and the avatar fills the box.
+- glados-link `_play()` measures each clip (`level-meter.js`, AnalyserNode on the playing
+  element) and sends `kira_level` on the /obs bus. The bus relays unknown types, so there's
+  no server change. Overlay rules (threshold, 200 ms hold, bounce) live in `kira-avatar/mouth.js`.
+- Frames: `kira-warm` (idle) and `kira-grin` (speaking), 512 px JPEG copies of
+  ~/kira/overlay. The sources have a background and no alpha, hence the circle crop. Per-frame
+  `--fx/--fy` in index.html line the two differently posed faces up.
+- The bus client in `kira-avatar/avatar.js` is a copy of obs.js's (obs.html was live); merge later.
+- Verified: unit tests; meter on a real WAV in the browser (RMS 0.354 for a 0.5 sine);
+  screenshots of both frames. NOT verified: the full path hub → index.html → bus → overlay,
+  live in OBS. I avoided sending test levels onto the live bus.
+
 ## GLaDOS link for Kira (2026-10-17, branch `kira/glados-link-2`)
 - Brief: Kira's `~/kira/briefs/teammater-glados-link.md`. Wire spec: `modules/glados-link/SPEC.md`.
 - Chat → hub as `chat` events (Kira stops reading chat anonymously over IRC; her side).

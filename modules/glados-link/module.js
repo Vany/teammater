@@ -19,6 +19,7 @@
 import { BaseModule } from "../base-module.js";
 import { pickVoice } from "../../utils.js";
 import { EVENTS, chatEvent, playFailure, FAILURE_HINT, audioBlob } from "./wire.js";
+import { meter } from "./level-meter.js";
 
 const DB = "glados-link";
 const enc = new TextEncoder();
@@ -325,7 +326,9 @@ export class GladosLinkModule extends BaseModule {
     const url = URL.createObjectURL(blob);
     const el = new Audio(url);
     let started = false;
+    const stopMeter = this._meter(el);
     const release = () => {
+      stopMeter?.();
       URL.revokeObjectURL(url);
       finished();
     };
@@ -341,6 +344,24 @@ export class GladosLinkModule extends BaseModule {
       throw e;
     }
     started = true;
+  }
+
+  /**
+   * Measure a clip for the PNG-tuber overlay (kira-avatar/): levels go out on the /obs bus as
+   * {type:"kira_level", level}. Returns stop(), or null when the clip plays unmeasured.
+   * Only a RUNNING AudioContext may carry the clip. Before the page's first user gesture the
+   * context is suspended, and routing through it would silence her, so the clip then plays
+   * directly and the avatar stays still. resume() is not awaited: without a gesture its
+   * promise stays pending, and awaiting it would stall the queue.
+   */
+  _meter(el) {
+    const ctx = (this._audioCtx ??= new AudioContext());
+    if (ctx.state !== "running") {
+      ctx.resume();
+      return null;
+    }
+    const bus = this.moduleManager?.get("obs");
+    return meter(ctx, el, (level) => bus?._sendCmd("kira_level", { level }));
   }
 
   async _run(name, a, cid) {

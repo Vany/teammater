@@ -37,6 +37,14 @@ A certificate that isn't accepted, or a hub that is down, breaks the link itself
 arrive as an event. It shows in teammater's status line, and the module retries every
 `reconnect_delay`.
 
+## Voice level → overlay (/obs bus, not the hub)
+While a `say` clip plays, the module sends `{type:"kira_level", level}` on the /obs bus every 50 ms.
+`level` is the RMS of the samples (0 = silence; speech is roughly 0.05–0.3), and the last
+message of each clip is `0`. `kira-avatar/` turns it into the speaking frame and bounce.
+If the page has had no user gesture yet, the AudioContext is suspended. The clip then plays
+unmeasured, because routing it through a suspended graph would mute it, and the avatar stays idle.
+The browser-voice fallback can't be measured and doesn't move the avatar.
+
 ## Status (teammater UI)
 A line under the module header, mirrored in the control panel: 🟢/🔴 link, last event
 (`←` from the hub, `→` to it, name, time), last error.

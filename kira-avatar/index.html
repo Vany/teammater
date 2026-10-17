@@ -1,0 +1,51 @@
+<!doctype html>
+<!--
+  Kira PNG-tuber overlay (vany 2026-10-17). Its own OBS browser source: position and size are
+  the source's transform in OBS; the page fills whatever box it gets, background transparent.
+  URL: https://localhost:8443/kira-avatar/  params: ?threshold=0.02  ?shape=circle|card
+  Levels arrive on the /obs bus as {type:"kira_level", level} from teammater's glados-link.
+-->
+<html lang="en">
+    <meta charset="utf-8" />
+    <title>Kira</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body { width: 100%; height: 100%; background: transparent; overflow: hidden; }
+        body { display: flex; align-items: center; justify-content: center; }
+
+        /* Square box, as large as the source allows, leaving room for the bounce. */
+        #kira {
+            position: relative;
+            width: 88vmin;
+            height: 88vmin;
+            overflow: hidden;
+            border-radius: 50%;
+            border: 0.8vmin solid rgba(170, 120, 255, 0.85);
+            box-shadow: 0 0 4vmin rgba(150, 90, 255, 0.45);
+            transform: translateY(calc(var(--amp, 0) * -3vmin)) scale(calc(1 + var(--amp, 0) * 0.06));
+            transition: transform 60ms linear, box-shadow 120ms;
+        }
+        #kira.card { border-radius: 8%; }
+        #kira.speaking { box-shadow: 0 0 6vmin rgba(190, 130, 255, 0.8); }
+
+        /*
+          The frames are full 2:3 illustrations with a room behind her (no alpha), and she is
+          posed differently in each, so each frame is zoomed (--z) and shifted to put ITS head
+          (--fx, --fy, fractions of the image) at the box centre; the faces then line up.
+        */
+        #kira img {
+            position: absolute;
+            width: calc(var(--z) * 100%);
+            left: calc(50% - var(--fx) * var(--z) * 100%);
+            top: calc(50% - var(--fy) * var(--z) * 150%);
+        }
+        #idle { --z: 1.2; --fx: 0.49; --fy: 0.33; }
+        #talk { --z: 1.2; --fx: 0.44; --fy: 0.31; opacity: 0; }
+        #kira.speaking #talk { opacity: 1; }
+    </style>
+    <div id="kira">
+        <img id="idle" src="kira-warm.jpg" alt="" />
+        <img id="talk" src="kira-grin.jpg" alt="" />
+    </div>
+    <script type="module" src="avatar.js"></script>
+</html>
