@@ -45,6 +45,13 @@ If the page has had no user gesture yet, the AudioContext is suspended. The clip
 unmeasured, because routing it through a suspended graph would mute it, and the avatar stays idle.
 The browser-voice fallback can't be measured and doesn't move the avatar.
 
+## Emotion → overlay (/obs bus)
+When a `say` clip starts (audio playing, or browser speech `onstart`), the module sends
+`{type:"kira_emotion", emotion}` if the text has a `[tag]` with a frame. The table lives in
+`kira-avatar/mood.js` (`TAG_FRAME`): e.g. happy/excited→happy, sleepy/tired→sleepy,
+thinking→thoughtful, surprised/scared→surprised, sympathetic/sad→tender,
+playful/sarcastic→wink, annoyed/angry/deadpan→pouty. A tag without a frame sends nothing.
+
 ## Status (teammater UI)
 A line under the module header, mirrored in the control panel: 🟢/🔴 link, last event
 (`←` from the hub, `→` to it, name, time), last error.

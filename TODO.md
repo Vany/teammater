@@ -17,7 +17,7 @@ Estimated reduction: ~950 lines (from ~4500 to ~3500 LOC), zero functionality lo
 - [x] Real-alpha frames from vany's 10-frame set (dechecker.py); idle/talk/blink in the overlay.
 - [ ] Add the OBS browser source, run a live `say`, and tune `threshold`.
 - [ ] A real closed-eyes blink frame (blink uses `wink` for now).
-- [ ] Map `[emotion]` tags to happy/pouty/sleepy/surprised/tender/thoughtful frames.
+- [x] Map `[emotion]` tags to emotion frames; idle yawn after 5 min (`kira/emotions`).
 - [ ] Music ducking while `say` plays (overdemon 16:40Z: SetInputVolume via the OBS module).
 - [ ] Yandex Music song requests broken (vany 16:41Z), on its own branch.
 - [ ] Later: VRM via three-vrm (makise's notes; watch the overrideMouth trap).

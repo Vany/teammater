@@ -20,6 +20,7 @@ import { BaseModule } from "../base-module.js";
 import { pickVoice } from "../../utils.js";
 import { EVENTS, chatEvent, playFailure, FAILURE_HINT, audioBlob } from "./wire.js";
 import { meter } from "./level-meter.js";
+import { emotionOf } from "../../kira-avatar/mood.js";
 
 const DB = "glados-link";
 const enc = new TextEncoder();
@@ -318,7 +319,7 @@ export class GladosLinkModule extends BaseModule {
    * when this clip starts; a failure later in the clip arrives as an `error` event, since the
    * command's result is already sent by then.
    */
-  async _play(blob, cid) {
+  async _play(blob, cid, emotion = null) {
     const prev = this._audioTail ?? Promise.resolve();
     let finished;
     this._audioTail = new Promise((r) => (finished = r));
@@ -344,6 +345,7 @@ export class GladosLinkModule extends BaseModule {
       throw e;
     }
     started = true;
+    this._announceEmotion(emotion);
   }
 
   /**
@@ -364,6 +366,15 @@ export class GladosLinkModule extends BaseModule {
     return meter(ctx, el, (level) => bus?._sendCmd("kira_level", { level }));
   }
 
+  /**
+   * Tell the avatar overlay (kira-avatar/) which emotion frame to show, when a clip STARTS:
+   * clips queue, so announcing at queue time would show a face for the wrong clip.
+   * {type:"kira_emotion", emotion} on the /obs bus; no tag with a frame → nothing is sent.
+   */
+  _announceEmotion(emotion) {
+    if (emotion) this.moduleManager?.get("obs")?._sendCmd("kira_emotion", { emotion });
+  }
+
   async _run(name, a, cid) {
     switch (name) {
       case "ping":
@@ -375,7 +386,7 @@ export class GladosLinkModule extends BaseModule {
         // (vany 2026-10-11), whose /api/tts endpoint was never built.
         if (a.audio !== undefined) {
           try {
-            await this._play(audioBlob(a.audio, a.mime), cid);
+            await this._play(audioBlob(a.audio, a.mime), cid, emotionOf(a.text));
           } catch (e) {
             throw this._playFailed(e, cid);
           }
@@ -399,6 +410,8 @@ export class GladosLinkModule extends BaseModule {
         // Chrome refuses speech without a user gesture too, but only says so here, after the
         // result is sent; "not-allowed" is the same autoplay block as audio's NotAllowedError.
         u.onerror = (e) => this._playFailed({ name: e.error === "not-allowed" ? "NotAllowedError" : "SpeechError", message: `speech: ${e.error}` }, cid);
+        // Browser voice: announced when speech actually starts (it may wait behind other speech).
+        u.onstart = () => this._announceEmotion(emotionOf(a.text));
         speechSynthesis.speak(u);
         this.log(`🗣️ GLaDOS: ${plain}`);
         return "spoken";

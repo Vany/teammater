@@ -5,8 +5,9 @@
   URL: https://localhost:8443/kira-avatar/  params: ?threshold=0.02  ?blink=0 (no blinking)
   Levels arrive on the /obs bus as {type:"kira_level", level} from teammater's glados-link.
   Frames (frames/*.webp, real alpha, all drawn in the same pose so they swap in place):
-  idle, talk, wink (stands in for blink: no closed-eyes frame exists yet); the emotions
-  happy/pouty/sleepy/surprised/tender/thoughtful wait for the tag mapping.
+  idle, talk, wink (also stands in for blink: no closed-eyes frame exists yet), and the
+  emotions happy/pouty/sleepy/surprised/tender/thoughtful. Which one shows: mood.js.
+  Emotions arrive as {type:"kira_emotion", emotion} when a tagged say clip starts.
 -->
 <html lang="en">
     <meta charset="utf-8" />
@@ -29,17 +30,20 @@
         }
         #kira.speaking { filter: drop-shadow(0 0 2.5vmin rgba(190, 130, 255, 0.7)); }
 
-        /* One frame visible at a time; classes on #kira pick it, and speaking beats blink. */
+        /* One frame visible at a time: avatar.js puts .on on the frame mood.js picks. */
         #kira img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; opacity: 0; }
-        #kira #idle { opacity: 1; } /* "#kira #idle", not "#idle": must outrank "#kira img" */
-        #kira.blink #wink { opacity: 1; }
-        #kira.speaking #talk { opacity: 1; }
-        #kira.blink #idle, #kira.speaking #idle, #kira.speaking #wink { opacity: 0; }
+        #kira img.on { opacity: 1; }
     </style>
     <div id="kira">
         <img id="idle" src="frames/idle.webp" alt="" />
-        <img id="wink" src="frames/wink.webp" alt="" />
         <img id="talk" src="frames/talk.webp" alt="" />
+        <img id="wink" src="frames/wink.webp" alt="" />
+        <img id="happy" src="frames/happy.webp" alt="" />
+        <img id="pouty" src="frames/pouty.webp" alt="" />
+        <img id="sleepy" src="frames/sleepy.webp" alt="" />
+        <img id="surprised" src="frames/surprised.webp" alt="" />
+        <img id="tender" src="frames/tender.webp" alt="" />
+        <img id="thoughtful" src="frames/thoughtful.webp" alt="" />
     </div>
     <script type="module" src="avatar.js"></script>
 </html>

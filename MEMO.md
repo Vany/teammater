@@ -6,6 +6,20 @@
 see "Bug sweep (2026-09-01)" below and TODO.md for the two that still need one
 live confirmation run.)
 
+## Kira avatar emotions + idle yawn (2026-10-17, branch `kira/emotions`)
+- vany 18:50Z: emotion frames by `[tags]` in say's text, and an idle rule (after ~5 min with
+  no say, she yawns now and then). All rules are in `kira-avatar/mood.js` (pure, tested); the
+  overlay renders one frame, re-checked every 250 ms.
+- Only one open-mouth frame exists, so a tagged clip shows its EMOTION frame while she talks
+  (with the bounce), held ≥4 s and 3 s past the last loud moment. Untagged clips use `talk`.
+- glados-link sends `kira_emotion` when a clip STARTS (clips queue), using the same table.
+- Idle: first yawn 5 min after the last voice, then every 1–3 min for 3.5 s; voice wakes her.
+  Blink (the wink frame) only replaces plain idle.
+- Verified: unit tests (frame files exist for every mapping; hold/yawn timings); in a browser on
+  a local static copy with a stubbed bus: idle→talk→idle, pouty with and without voice, happy
+  while speaking; glados-link sends `emotion:wink` for `[sarcastic]` right before the levels,
+  and nothing for `[whispers]`.
+
 ## Kira PNG-tuber overlay (2026-10-17, branch `kira/pngtuber`)
 - OBS browser source `https://localhost:8443/kira-avatar/` (`?threshold=0.02`, `?blink=0`).
   Position and size are set in OBS. The page is transparent and the avatar fills the box.
