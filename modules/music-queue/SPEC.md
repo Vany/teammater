@@ -165,7 +165,11 @@ On invalid: MASTER logs error, skips to next in queue.
   `TrackModalControls`). Two loud failures, each followed by the candidate buttons with their
   hop distance to the track: no button within 15s, or a click that starts nothing within 10s
 - **Yandex root URL** (`music.yandex.ru/`): `startMyVibes()` — same 1s/15s retry on the
-  "Play My Vibe" button, same loud warning with candidates on a miss
+  "Play My Vibe" button, same loud warning with candidates on a miss. The button is
+  `button[class*="VibePlayerControls_playButton"][aria-label="Playback"]` since 2026-10-17
+  (was `AlbumCover_playButton`, kept as fallback). It's done without a click when the hooked
+  audio runs or the same button says "Pause". The main page and the track page use DIFFERENT
+  play controls, so a markup change can break one and not the other.
 - **YouTube watch URL**: `setupYoutubePlayer()` — wait for globals, validate, `player.playVideo()`
 
 ---

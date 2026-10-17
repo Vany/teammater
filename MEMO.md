@@ -19,6 +19,21 @@ live confirmation run.)
   with a fake socket: queueing, decode errors, chat events, status. The `autoplay` reason was
   NOT seen live (the automation profile allows autoplay). Not yet run against the real hub.
 
+## MusicBridge: return to My Vibes broken by Yandex markup (2026-10-17, branch `kira/yandex`)
+- Symptom (live, 17:41Z): Vany's request for album/43773306/track/155338852 played, but
+  after it the queue's "return to My Vibes" never started anything. `startMyVibes()` looked
+  for `AlbumCover_playButton`; the main page now has `VibePlayerControls_playButton__<hash>`
+  with `aria-label="Playback"` (Vany pasted it). The track page's control was unchanged, so
+  requests kept working.
+- Fix: the new class (Playback only) first, the old one as fallback, plus "already playing"
+  detection (audio running or the button says Pause), so a running vibe isn't reported as a
+  stale selector. `teammater.test.js` pins the selector to the pasted button. @version 2026-10-17.1.
+- Open question: the bus log showed "Track finished" 23s after the request, but the track
+  is 227s long (Yandex API). If nobody skipped it, an `ended` from some other audio element
+  reached the master as music_done. Not investigated yet.
+- Not verified live: a logged-out browser renders no player, so this can only be checked in
+  Vany's tab after the switch.
+
 ## Recent Improvements (2026-09)
 
 ### MusicBridge: requested Yandex tracks that "change URL but never play" (2026-09-26, `d1f5395`)

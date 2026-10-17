@@ -259,3 +259,37 @@ test("hopsToId does not look past 15 hops", () => {
   const far = fakeElement(...Array(16).fill({}), { track: { id: 7 } }); // carried at hop 16
   assert.equal(hopsToId(far, "7", budget()), Infinity);
 });
+
+// ── My Vibes play button (Yandex markup, 2026-10-17) ─────────────────────
+// Node has no DOM, so this checks the selector's attribute clauses against the
+// button Vany pasted from the live main page. Only the two clause forms the
+// selector uses are understood: [attr*="v"] and [attr="v"].
+function extractConstString(name) {
+  const start = SRC.indexOf(`const ${name} =`);
+  assert.notEqual(start, -1, `${name} not found in teammater.js`);
+  const end = SRC.indexOf(";", start);
+  // eslint-disable-next-line no-new-func
+  // Parenthesised: the value starts on the next line, and a bare `return\n` returns undefined.
+  return new Function(`return (${SRC.slice(start + `const ${name} =`.length, end)});`)();
+}
+
+function matchesAny(selectorList, attrs) {
+  return selectorList.split(",").some((sel) =>
+    [...sel.matchAll(/\[([\w-]+)(\*?)="([^"]*)"\]/g)].every(([, attr, star, v]) =>
+      star ? (attrs[attr] ?? "").includes(v) : attrs[attr] === v));
+}
+
+const LIVE_VIBE_BUTTON = {
+  class: "cpeagBA1_PblpJn8Xgtv UDMYhpDjiAFT3xUx268O uwk3hfWzB2VT7kE13SQk IlG7b1K0AD7E7AMx6F5p HbaqudSqu7Q3mv3zMPGr undefined qU2apWBO1yyEK0lZ3lPO WsKeF73pWotx9W1tWdYY VibePlayerControls_playButton__vnoer",
+  "aria-label": "Playback",
+};
+
+test("My Vibes selector matches the live main-page play button (2026-10-17)", () => {
+  assert.ok(matchesAny(extractConstString("MY_VIBES_PLAY"), LIVE_VIBE_BUTTON));
+});
+
+test("My Vibes selector never clicks the same button while it says Pause", () => {
+  const playing = { ...LIVE_VIBE_BUTTON, "aria-label": "Pause" };
+  assert.ok(!matchesAny(extractConstString("MY_VIBES_PLAY"), playing));
+  assert.ok(matchesAny(extractConstString("MY_VIBES_PLAYING"), playing));
+});

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MusicBridge
 // @namespace    http://tampermonkey.net/
-// @version      2026-09-26.3
+// @version      2026-10-17.1
 // @description  Bridges Yandex Music and YouTube into a unified stream music queue
 // @updateURL    http://localhost:8442/teammater.js
 // @downloadURL  http://localhost:8442/teammater.js
@@ -313,7 +313,16 @@
     // The My Vibes play button. Yandex has redesigned this page before (SPEC
     // records the v4 change that broke the artist selector), so treat a miss as
     // "the markup moved", not "wait longer".
-    const MY_VIBES_PLAY = 'button[class*="AlbumCover_playButton"]';
+    // 2026-10-17: the main page's button became `VibePlayerControls_playButton__<hash>`
+    // (Vany pasted it from his tab); the track page kept CommonPageHeader_playControl,
+    // which is why requests still played and only the return to My Vibes failed.
+    // aria-label="Playback" means "paused": never click the same button labelled
+    // "Pause", which would stop a vibe that is already running. The old AlbumCover
+    // selector stays as a fallback in case the change is rolled back.
+    const MY_VIBES_PLAY =
+      'button[class*="VibePlayerControls_playButton"][aria-label="Playback"], ' +
+      'button[class*="AlbumCover_playButton"]';
+    const MY_VIBES_PLAYING = 'button[class*="VibePlayerControls_playButton"][aria-label="Pause"]';
 
     /** Start My Vibes by clicking its play button. The ONLY way this page
      *  begins playing — there is nothing to resume until it does. */
@@ -327,6 +336,14 @@
       let tries = 0;
       const timer = setInterval(() => {
         tries++;
+        // Already running (the page auto-started, or a click from an earlier call
+        // landed): done. Without this, a playing vibe shows no Playback button
+        // and would be reported as a stale selector after 15s.
+        if ((audioEl && !audioEl.paused) || document.querySelector(MY_VIBES_PLAYING)) {
+          log(`My Vibes already playing after ${tries}s — no click needed`);
+          clearInterval(timer);
+          return;
+        }
         const btn = document.querySelector(MY_VIBES_PLAY);
         if (btn) {
           log(`My Vibes play button found after ${tries}s — clicking`);
