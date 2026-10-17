@@ -4,6 +4,13 @@ Tracked improvements to reduce duplication, dead code, and structural complexity
 Estimated reduction: ~950 lines (from ~4500 to ~3500 LOC), zero functionality loss.
 
 
+## GLaDOS link (Kira, 2026-10-17)
+
+- [x] Chat → hub events, `say` plays hub audio, error events, status line (`kira/glados-link-2`).
+- [ ] Live check against the hub: hub accepts `t:"event"` and `auth.events`; real `say` with
+      OGG/WAV; `autoplay` error seen once in a fresh tab (no click yet). Needs Kira's hub side.
+- [ ] Vany: review and merge `kira/glados-link-2`; drop `PLAN-kira.md` if not wanted on master.
+
 ## BUG
 
 - [x] **Russian TTS spoken by an English voice** — fixed `9b9cbe4`. Both TTS

@@ -6,6 +6,19 @@
 see "Bug sweep (2026-09-01)" below and TODO.md for the two that still need one
 live confirmation run.)
 
+## GLaDOS link for Kira (2026-10-17, branch `kira/glados-link-2`)
+- Brief: Kira's `~/kira/briefs/teammater-glados-link.md`. Wire spec: `modules/glados-link/SPEC.md`.
+- Chat → hub as `chat` events (Kira stops reading chat anonymously over IRC; her side).
+- `say {audio, mime}` plays the hub's rendered voice via queued `<audio>`. Text → browser voice
+  stays as the fallback. The server-TTS path (`tts_url`, `0724002`) was removed because
+  `/api/tts` never existed. `[emotion]` tags still drive the browser fallback.
+- Playback failures → `error` event `{reason: autoplay|decode|playback}` + status line.
+- Fixed: a connect that failed (hub down / cert) never scheduled a retry; now it does,
+  except when the device isn't paired yet.
+- Pure shapes live in `wire.js` (node-tested). The module was browser-tested on a bare page
+  with a fake socket: queueing, decode errors, chat events, status. The `autoplay` reason was
+  NOT seen live (the automation profile allows autoplay). Not yet run against the real hub.
+
 ## Recent Improvements (2026-09)
 
 ### MusicBridge: requested Yandex tracks that "change URL but never play" (2026-09-26, `d1f5395`)
