@@ -20,7 +20,7 @@ use tokio::sync::broadcast;
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMsg};
 use tracing::{error, info, warn};
 
-const Z2M_ADDR: &str = "ws://c:8081/api";
+const Z2M_ADDR: &str = "ws://c.local:8081/api";
 /// Friendly name of the sensor to watch. Hardcoded per design.
 const Z2M_DEVICE: &str = "T1";
 const Z2M_RECONNECT_DELAY: Duration = Duration::from_secs(5);
