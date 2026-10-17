@@ -33,6 +33,14 @@ live confirmation run.)
   reached the master as music_done. Not investigated yet.
 - Not verified live: a logged-out browser renders no player, so this can only be checked in
   Vany's tab after the switch.
+- Same day, from Vany's Yandex console: Yandex added a CSP (connect-src = its own hosts),
+  so the Yandex tab's own `wss://localhost:8443/obs` socket was blocked on every 3s retry.
+  Removed it (with the now-unused GM_xmlhttpRequest grant and @connect). Phone pause/resume
+  keep working through the master (module.js handles music_pause/resume from the bus and
+  forwards them over GM). @version 2026-10-17.2.
+- Vany answered "2" to "main-page My Vibe button or bottom player bar?". Read as the PLAYER
+  BAR. Expected: on a freshly loaded main page it starts My Vibes. If it resumes the last
+  request instead, the main page's own button is needed (tools/yandex-buttons.js finds it).
 
 ## Recent Improvements (2026-09)
 

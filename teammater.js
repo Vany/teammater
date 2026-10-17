@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MusicBridge
 // @namespace    http://tampermonkey.net/
-// @version      2026-10-17.1
+// @version      2026-10-17.2
 // @description  Bridges Yandex Music and YouTube into a unified stream music queue
 // @updateURL    http://localhost:8442/teammater.js
 // @downloadURL  http://localhost:8442/teammater.js
@@ -16,9 +16,7 @@
 // @grant        GM_getValue
 // @grant        GM_deleteValue
 // @grant        GM_openInTab
-// @grant        GM_xmlhttpRequest
 // @grant        unsafeWindow
-// @connect      localhost
 // @run-at       document-end
 // ==/UserScript==
 //
@@ -563,64 +561,15 @@
       sendToMaster("music_start", info);
     }
 
-    // Direct /obs bus connection — handles pause/resume without Tampermonkey on the remote end
-    // fetch() runs in the PAGE's origin (music.yandex.ru), so a plain fetch
-    // to localhost:8443 is a cross-origin request — the server sends no CORS
-    // headers (never needed one before), so the browser blocks it outright
-    // and the caught error was silent, retrying forever. GM_xmlhttpRequest
-    // runs in the userscript's own privileged context instead, which is
-    // exactly what it's for: bypassing page-origin CORS without having to
-    // open up the server's response headers to a third-party origin.
-    function fetchBusToken() {
-      return new Promise((resolve) => {
-        GM_xmlhttpRequest({
-          method: "GET",
-          url: "https://localhost:8443/api/info",
-          onload: (res) => {
-            try { resolve(JSON.parse(res.responseText).bus_token || null); }
-            catch { resolve(null); }
-          },
-          onerror: () => resolve(null),
-        });
-      });
-    }
-
-    async function connectObsBus() {
-      // The bus requires a token; this script talks to localhost, and
-      // /api/info hands bus_token to loopback callers only.
-      const token = await fetchBusToken();
-      if (!token) {
-        log("no /obs bus token — retrying in 3s");
-        setTimeout(connectObsBus, 3000);
-        return;
-      }
-      const ws = new WebSocket(`wss://localhost:8443/obs?token=${encodeURIComponent(token)}`);
-      ws.onopen = () => {
-        // Re-send current track info so master has up-to-date artist on
-        // reconnect/reload — but ONLY if this tab is the one actually playing.
-        // A server restart or sleep/wake used to republish a paused tab's last
-        // track as if it had just started.
-        sendCurrentTrackToMaster();
-      };
-      ws.onmessage = ({ data }) => {
-        try {
-          const msg = JSON.parse(data);
-          switch (msg.type) {
-            // pause/resume only. music_skip and music_prev are handled by the
-            // MASTER's Music Queue module, which owns the queue and reaches
-            // this tab through the GM transport — acting on them HERE too made
-            // every phone tap advance Yandex twice and desync the queue's
-            // My Vibes fallback position. pause/resume stay because they are
-            // idempotent and must work even with no master running.
-            case "music_pause":  pause(); break;
-            case "music_resume": resume(); break;
-          }
-        } catch {}
-      };
-      ws.onclose = () => setTimeout(connectObsBus, 3000);
-      ws.onerror = () => {};
-    }
-    connectObsBus();
+    // No /obs bus connection from this tab (removed 2026-10-17). Yandex now
+    // sends a Content-Security-Policy whose connect-src lists only its own
+    // hosts, so `new WebSocket("wss://localhost:8443/obs")` is blocked by the
+    // browser on every try, and the 3s retry filled the console. The phone's
+    // pause/resume still arrive: the MASTER's Music Queue module receives
+    // music_pause/music_resume from the bus and forwards them here over the GM
+    // transport (pauseMusic/resumeMusic → "pause"/"resume"). The only loss is
+    // pause/resume while no teammater page is open, which the CSP makes
+    // impossible from this page anyway.
 
     autoPlay();
     log("role: Yandex CLIENT");
